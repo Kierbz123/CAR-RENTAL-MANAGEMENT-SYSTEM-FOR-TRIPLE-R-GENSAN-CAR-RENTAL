@@ -8,6 +8,7 @@ use TripleR\Controllers\MagicLinkController;
 use TripleR\Controllers\SmsWebhookController;
 use TripleR\Controllers\StaffNotificationController;
 use TripleR\Controllers\StaffHomeController;
+use TripleR\Controllers\Fleet\VehicleController;
 use TripleR\Database;
 use TripleR\Http\Request;
 use TripleR\Http\Response;
@@ -19,6 +20,9 @@ use TripleR\Repositories\NotificationRepository;
 use TripleR\Repositories\SecurityLogRepository;
 use TripleR\Repositories\SessionRepository;
 use TripleR\Repositories\StaffUserRepository;
+use TripleR\Repositories\VehicleLocationRepository;
+use TripleR\Repositories\VehicleRepository;
+use TripleR\Repositories\VehicleStatusLogRepository;
 use TripleR\Security\Csrf;
 use TripleR\Security\StaffAuth;
 use TripleR\Services\RateLimiter;
@@ -26,6 +30,8 @@ use TripleR\Services\AuthService;
 use TripleR\Services\MagicLinkService;
 use TripleR\Services\NotificationService;
 use TripleR\Services\SmsMessageCipher;
+use TripleR\Services\VehiclePhotoService;
+use TripleR\Services\VehicleService;
 
 require dirname(__DIR__) . '/app/bootstrap.php';
 
@@ -73,6 +79,11 @@ try {
         new NotificationService($notificationRepository, $inboundRepository, $messageCipher),
     );
     $magicLinks = new MagicLinkController($magicLinkService);
+    $vehicleRepository = new VehicleRepository($db);
+    $vehicleLocations = new VehicleLocationRepository($db);
+    $vehicleService = new VehicleService($db, $vehicleRepository, new VehicleStatusLogRepository($db));
+    $vehiclePhotos = new VehiclePhotoService($db);
+    $fleetVehicles = new VehicleController($authMiddleware, $vehicleRepository, $vehicleLocations, $vehicleService, $vehiclePhotos);
 
     $router = new Router();
     $router->get('/', static fn (Request $request): Response => Response::redirect('/staff'));
@@ -100,6 +111,20 @@ try {
     $router->get('/api/magic-links/session', static fn (Request $request): Response => $magicLinks->sessionContext($request));
     $router->post('/webhooks/sms/inbound', static fn (Request $request): Response => $webhooks->inbound($request));
     $router->post('/webhooks/sms/delivery', static fn (Request $request): Response => $webhooks->delivery($request));
+    $router->get('/fleet/vehicles', static fn (Request $request): Response => $fleetVehicles->index($request));
+    $router->get('/fleet/vehicles/new', static fn (): Response => $fleetVehicles->createForm());
+    $router->get('/fleet/vehicles/edit', static fn (Request $request): Response => $fleetVehicles->editForm($request));
+    $router->get('/fleet/vehicles/detail', static fn (Request $request): Response => $fleetVehicles->detail($request));
+    $router->post('/fleet/vehicles/create', static fn (Request $request): Response => $fleetVehicles->create($request));
+    $router->post('/fleet/vehicles/update', static fn (Request $request): Response => $fleetVehicles->update($request));
+    $router->post('/fleet/vehicles/status', static fn (Request $request): Response => $fleetVehicles->status($request));
+    $router->post('/fleet/vehicles/mileage', static fn (Request $request): Response => $fleetVehicles->mileage($request));
+    $router->post('/fleet/vehicles/photos/upload', static fn (Request $request): Response => $fleetVehicles->uploadPhoto($request));
+    $router->get('/fleet/vehicles/photos/show', static fn (Request $request): Response => $fleetVehicles->photo($request));
+    $router->get('/fleet/locations', static fn (): Response => $fleetVehicles->locations());
+    $router->post('/fleet/locations/create', static fn (Request $request): Response => $fleetVehicles->createLocation($request));
+    $router->post('/fleet/locations/retire', static fn (Request $request): Response => $fleetVehicles->retireLocation($request));
+    $router->post('/fleet/locations/remove', static fn (Request $request): Response => $fleetVehicles->removeLocation($request));
 
     $router->dispatch($request)->send();
 } catch (\Throwable $error) {

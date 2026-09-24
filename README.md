@@ -141,4 +141,9 @@ The built-in PHP server uses `public/router.php`. Apache deployments can point t
 See [docs/FEATURE_E.md](docs/FEATURE_E.md) for the implementation file trace and UI-to-database round trips.
 See [docs/MAGIC_LINKS.md](docs/MAGIC_LINKS.md) for the token schema, API contract, and round trips.
 See [docs/FEATURE_M1.md](docs/FEATURE_M1.md) for role, account-lock, session, and password-change details.
+See [docs/FEATURE_M2.md](docs/FEATURE_M2.md) for the vehicle fleet schema, authenticated photo storage, location lifecycle, mileage correction contract, and fleet acceptance checklist.
 See [docs/RECONNAISSANCE.md](docs/RECONNAISSANCE.md) for the greenfield Step 0 findings and decisions that still need resolution.
+
+## Vehicle fleet (M2)
+
+Migration `004_vehicles.sql` adds vehicles, photos, locations, status history, and mileage history. `php bin/migrate.php` applies it after 001–003. Ensure `STORAGE_PATH` is writable by PHP and outside the public document root; uploaded vehicle photos are stored privately and streamed through an authenticated staff route. `system_admin` and `fleet_manager` can use Fleet → Vehicles and Fleet → Locations. Locations use an active/retired state: retired locations are hidden from new selections while remaining valid in history; `deleted_at` is reserved for removal of unused locations. The FR-01 field list is documented in `docs/FEATURE_M2.md`. No weekly/monthly pricing or GPS device identifier is part of M2.
