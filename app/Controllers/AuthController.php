@@ -5,24 +5,26 @@ namespace TripleR\Controllers;
 
 use TripleR\Http\Request;
 use TripleR\Http\Response;
-use TripleR\Repositories\StaffUserRepository;
+use TripleR\Services\AuthService;
 use TripleR\Security\Csrf;
 use TripleR\Security\StaffAuth;
-use TripleR\Services\RateLimiter;
 
 final class AuthController
 {
     public function __construct(
-        private readonly StaffUserRepository $users,
+        private readonly AuthService $authService,
         private readonly StaffAuth $auth,
-        private readonly RateLimiter $rateLimiter,
     ) {
     }
 
     public function showLogin(): Response
     {
-        if ($this->auth->user() !== null) {
-            return Response::redirect('/staff/notifications');
+        $user = $this->auth->user();
+        if ($user !== null) {
+            if ($user['must_change_password']) {
+                return Response::redirect('/auth/change-password');
+            }
+            return Response::redirect('/staff');
         }
         return $this->render('login.php', ['csrfToken' => Csrf::token(), 'error' => null], 200);
     }
@@ -34,20 +36,50 @@ final class AuthController
         }
         $email = mb_strtolower(trim((string) ($request->form['email'] ?? '')));
         $password = (string) ($request->form['password'] ?? '');
-        $allowedIp = $this->rateLimiter->allow('staff-login-ip', $request->ip, 20, 60);
-        $allowedEmail = $this->rateLimiter->allow('staff-login-email', $email, 5, 60);
-        if (!$allowedIp || !$allowedEmail) {
+        $result = $this->authService->login($email, $password, $request->ip, $request->userAgent);
+        if ($result === 'throttled') {
             return $this->render('login.php', ['csrfToken' => Csrf::token(), 'error' => 'Too many attempts. Wait a minute and try again.'], 429);
         }
-        $user = $this->users->findActiveByEmail($email);
-        if ($user === null || !password_verify($password, (string) $user['password_hash'])) {
+        if ($result === 'failed') {
             return $this->render('login.php', ['csrfToken' => Csrf::token(), 'error' => 'Email or password is incorrect.'], 401);
         }
-        if (!in_array($user['role'], ['system_admin', 'fleet_manager'], true)) {
-            return $this->render('login.php', ['csrfToken' => Csrf::token(), 'error' => 'This account cannot access the staff console.'], 403);
+        if ($result === 'password_change_required') {
+            return Response::redirect('/auth/change-password');
         }
-        $this->auth->login($user);
-        return Response::redirect('/staff/notifications');
+        return Response::redirect('/staff');
+    }
+
+    public function showChangePassword(): Response
+    {
+        $user = $this->auth->user();
+        if ($user === null) {
+            return Response::redirect('/staff/login');
+        }
+        if (!$user['must_change_password']) {
+            return Response::redirect('/staff');
+        }
+        return $this->render('change-password.php', ['csrfToken' => Csrf::token(), 'error' => null], 200);
+    }
+
+    public function changePassword(Request $request): Response
+    {
+        if (!Csrf::valid($request)) {
+            return $this->render('change-password.php', ['csrfToken' => Csrf::token(), 'error' => 'Your session expired. Please try again.'], 403);
+        }
+        $user = $this->auth->user();
+        if ($user === null) {
+            return Response::redirect('/staff/login');
+        }
+        $current = (string) ($request->form['current_password'] ?? '');
+        $password = (string) ($request->form['new_password'] ?? '');
+        $confirmation = (string) ($request->form['confirm_password'] ?? '');
+        if ($password !== $confirmation) {
+            return $this->render('change-password.php', ['csrfToken' => Csrf::token(), 'error' => 'The new passwords do not match.'], 422);
+        }
+        if (!$this->authService->changePassword((int) $user['id'], $current, $password, $request->ip, $request->userAgent)) {
+            return $this->render('change-password.php', ['csrfToken' => Csrf::token(), 'error' => 'The current password is incorrect or the new password does not meet the requirements.'], 422);
+        }
+        return Response::redirect('/staff');
     }
 
     public function logout(Request $request): Response
@@ -55,7 +87,7 @@ final class AuthController
         if (!Csrf::valid($request)) {
             return Response::json(['error' => 'Invalid request token.'], 403);
         }
-        $this->auth->logout();
+        $this->auth->logout($request->ip, $request->userAgent);
         return Response::redirect('/staff/login');
     }
 
@@ -63,7 +95,7 @@ final class AuthController
     {
         extract($data, EXTR_SKIP);
         ob_start();
-        require APP_ROOT . '/app/Views/staff/' . $view;
+        require APP_ROOT . '/app/Views/auth/' . $view;
         $body = (string) ob_get_clean();
         return Response::html($body, $status);
     }

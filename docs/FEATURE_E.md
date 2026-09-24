@@ -47,11 +47,11 @@ This module is the shared SMS service used by later booking, payment, and magic-
 
 ### Explicit trace additions to the originally approved list
 
-The shared Feature E page required a staff session and database-backed rate limiting, so this module adds `users`, `rate_limits`, the login/session controllers and security helpers, plus `bin/seed.php`. The README also documents `bin/migrate.php`, `bin/seed.php`, the staff login, and Windows scheduling; all are implemented above. Auth backlog: **force password change on first login**.
+The shared Feature E page required a staff session and database-backed rate limiting, so this module adds `users`, `rate_limits`, the initial login/session controllers and security helpers, plus `bin/seed.php`. The README also documents `bin/migrate.php`, `bin/seed.php`, the staff login, and Windows scheduling; all are implemented above. M1 upgrades the initial PHP-only staff session to persisted sessions and implements the first-login password-change requirement.
 
 ## End-to-end round trips
 
-1. Staff submits the login form with its CSRF token → `POST /staff/login` → `AuthController` checks IP/email limits and verifies the password against `users` → `StaffAuth` rotates the session ID → browser redirects to `/staff/notifications`.
+1. Staff submits the login form with its CSRF token → `POST /staff/login` → `AuthService` checks IP/email limits and verifies the password against `users` → the session ID is rotated and persisted as a hash → `StaffAuth` resolves that session on later requests. M1 adds role-aware destinations and forced password changes.
 2. Staff opens history → `GET /staff/notifications` returns the staff page → `notifications.js` calls `GET /api/staff/notifications` with the session cookie → controller checks the session → repository reads the latest notification rows and monthly provider-accepted count → JavaScript renders those database values.
 3. A later feature calls `NotificationService::enqueue` → the service normalizes the phone, rejects non-transactional sends until Feature C, checks STOP records, applies its per-phone daily budget and idempotency policy inside a transaction → repository inserts a `queued` row → caller receives its notification ID.
 4. Cron or Task Scheduler runs the worker → repository locks due rows using `SELECT ... FOR UPDATE SKIP LOCKED`, sets `sending` and a unique claim token, and commits → worker checks the STOP/consent gate before any non-transactional send → selected adapter calls the configured SMS provider → a conditional update records the provider message ID and `sent` status, or returns a known retryable failure to `queued` with backoff.

@@ -3,44 +3,26 @@ declare(strict_types=1);
 
 namespace TripleR\Security;
 
-use TripleR\Repositories\StaffUserRepository;
+use TripleR\Services\AuthService;
 
 final class StaffAuth
 {
-    public function __construct(private readonly StaffUserRepository $users)
+    public function __construct(private readonly AuthService $auth)
     {
     }
 
     public function user(): ?array
     {
-        Csrf::startSession();
-        $id = filter_var($_SESSION['staff_user_id'] ?? null, FILTER_VALIDATE_INT);
-        if (!$id) {
-            return null;
-        }
-        $user = $this->users->findActiveById((int) $id);
-        if ($user === null) {
-            unset($_SESSION['staff_user_id']);
-        }
-        return $user;
+        return $this->auth->currentUser();
     }
 
     public function login(array $user): void
     {
-        Csrf::startSession();
-        session_regenerate_id(true);
-        unset($_SESSION['_csrf']);
-        $_SESSION['staff_user_id'] = (int) $user['id'];
+        $this->auth->establishVerifiedSession($user);
     }
 
-    public function logout(): void
+    public function logout(string $ip = '', string $userAgent = ''): void
     {
-        Csrf::startSession();
-        $_SESSION = [];
-        if (ini_get('session.use_cookies')) {
-            $params = session_get_cookie_params();
-            setcookie(session_name(), '', time() - 42000, $params['path'], $params['domain'], $params['secure'], $params['httponly']);
-        }
-        session_destroy();
+        $this->auth->logout($ip, $userAgent);
     }
 }

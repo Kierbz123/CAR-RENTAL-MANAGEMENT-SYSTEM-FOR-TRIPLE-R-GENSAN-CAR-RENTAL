@@ -39,7 +39,7 @@ This project has no Composer dependencies. It uses PDO and PHP's built-in extens
 
    On Bash, use `DB_MIGRATION_USER=triple_r_migrate DB_MIGRATION_PASSWORD='replace-with-a-different-long-password' php bin/migrate.php`, then run `php bin/seed.php`. Migration credentials are read only from the CLI environment and should not be stored in `.env`.
 
-   Login credentials are `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` from `.env`. Example values are `admin@example.test` / `ChangeMe-Now-123!`; replace the password before seeding. Seeding will not reset an existing account's password.
+   Login credentials are `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` from `.env`. Example values are `admin@example.test` / `ChangeMe-Now-123!`; replace the password before seeding. Migration 003 flags existing accounts for a password change at first login. Seeding will not reset an existing account's password.
 
 4. Start the development server from the project root:
 
@@ -47,7 +47,29 @@ This project has no Composer dependencies. It uses PDO and PHP's built-in extens
    php -S 127.0.0.1:8000 -t public public/router.php
    ```
 
-5. Sign in at `http://127.0.0.1:8000/staff/login`; the live history is at `/staff/notifications`.
+5. Sign in at `http://127.0.0.1:8000/staff/login`; `/staff` is the role-aware workspace and the live SMS history is at `/staff/notifications` for `system_admin`, `fleet_manager`, and `support_staff`.
+
+## Staff authentication (M1)
+
+Migration `003_auth_sessions.sql` rebuilds `users.role` so the final ENUM contains exactly `system_admin`, `fleet_manager`, `front_desk`, `driver_coordinator`, `mechanic`, `finance_staff`, `auditor`, and `support_staff`. Existing `system_admin` and `fleet_manager` rows map to the same values. The migration flags all existing users for a password change. The first seeded administrator signs in with the configured seed password and must change it before opening protected pages.
+
+Admin users manage accounts at `/admin/users` and active sessions at `/admin/sessions?user_id=<id>`. A new account receives a cryptographically generated temporary password shown once in the administrator response; deliver it out of band. Only its password hash is stored, and the plaintext credential is excluded from application/security/error logs. Users must change temporary passwords before accessing role-protected pages. Passwords must be at least 14 characters.
+
+Login throttling (20 requests per IP and 5 per normalized email per 60-second window) uses the existing `rate_limits` table. Separately, five consecutive invalid passwords lock a known account. The atomic counter is stored on `users`; a valid login clears a sub-threshold count, while a locked account can only be reset by an administrator. Rate-limited attempts are logged as throttled but do not increment the account counter. Locked and invalid-credential attempts return the same generic failure message. Locking an account invalidates all its existing sessions in the same transaction.
+
+Persisted staff sessions store only a SHA-256 hash of PHP's session ID and expire after `AUTH_SESSION_TTL_SECONDS` (12 hours by default). Session and account changes are checked on protected requests. Admin invalidation takes effect on the next request. `security_logs` is append-only and contains event type, separate actor and subject references, hashed email identity, IP, user agent, and UTC timestamp, never submitted or temporary passwords. The application does not log request or response bodies; production web-server logging must not capture them either.
+
+Run session cleanup every five minutes. Linux/macOS crontab:
+
+```cron
+*/5 * * * * cd /path/to/TripleR-Gensan-Car-Rental && /usr/bin/php bin/sessions-sweep.php >> storage/sessions-sweep.log 2>&1
+```
+
+Windows Task Scheduler (replace paths):
+
+```powershell
+schtasks.exe /Create /F /SC MINUTE /MO 5 /TN "TripleR-Sessions-Sweep" /TR '"C:\php\php.exe" "C:\path\TripleR-Gensan-Car-Rental\bin\sessions-sweep.php"'
+```
 
 ## SMS provider and callbacks
 
@@ -112,14 +134,11 @@ The authoritative SQL definition and append-only triggers are in `database/migra
 
 The built-in PHP server uses `public/router.php`. Apache deployments can point the document root at `public/`; the included `public/.htaccess` sends non-file requests to `index.php`. Enable `mod_rewrite` and `AllowOverride All`, and require HTTPS in the production virtual host.
 
-## Backlog
-
-- Auth feature: force a password change on first login.
-
 ## Configuration and storage
 
 `.env.example` lists every runtime setting. `DB_MIGRATION_USER` and `DB_MIGRATION_PASSWORD` are CLI-only migration settings. Keep `.env`, provider credentials, and webhook secrets out of version control. Runtime logs and private files are kept in `storage/`, outside the public document root.
 
 See [docs/FEATURE_E.md](docs/FEATURE_E.md) for the implementation file trace and UI-to-database round trips.
 See [docs/MAGIC_LINKS.md](docs/MAGIC_LINKS.md) for the token schema, API contract, and round trips.
+See [docs/FEATURE_M1.md](docs/FEATURE_M1.md) for role, account-lock, session, and password-change details.
 See [docs/RECONNAISSANCE.md](docs/RECONNAISSANCE.md) for the greenfield Step 0 findings and decisions that still need resolution.

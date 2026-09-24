@@ -18,6 +18,7 @@ $csrfToken = \TripleR\Security\Csrf::token();
     <a class="brand" href="/staff/notifications">Triple R Gensan</a>
     <div class="staff-actions">
         <span><?= $escape((string) $user['email']) ?></span>
+        <?php if ($user['role'] === 'system_admin'): ?><a href="/admin/users">Manage users</a><?php endif; ?>
         <form method="post" action="/staff/logout">
             <input type="hidden" name="_csrf" value="<?= $escape($csrfToken) ?>">
             <button class="button-secondary" type="submit">Sign out</button>

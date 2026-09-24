@@ -17,8 +17,12 @@
                 window.location.assign('/staff/login');
                 return;
             }
-            if (!response.ok) throw new Error('Could not load notification history.');
             const data = await response.json();
+            if (response.status === 403 && data.code === 'password_change_required') {
+                window.location.assign('/auth/change-password');
+                return;
+            }
+            if (!response.ok) throw new Error('Could not load notification history.');
             const items = Array.isArray(data.notifications) ? data.notifications : [];
             rows.innerHTML = items.length ? items.map((item) => `<tr>
                 <td>${escapeHtml(item.created_at)}</td><td>${escapeHtml(item.recipient_phone)}</td>

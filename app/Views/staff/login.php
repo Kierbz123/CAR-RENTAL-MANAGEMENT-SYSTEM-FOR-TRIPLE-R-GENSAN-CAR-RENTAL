@@ -10,6 +10,7 @@ $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOT
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Staff sign in | Triple R Gensan</title>
     <link rel="stylesheet" href="/assets/css/app.css">
+    <script src="/assets/js/auth.js" defer></script>
 </head>
 <body class="auth-page">
 <main class="auth-card">
