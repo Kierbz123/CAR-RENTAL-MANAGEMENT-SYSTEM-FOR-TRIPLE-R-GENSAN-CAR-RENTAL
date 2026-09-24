@@ -103,3 +103,4 @@ The built-in PHP server uses `public/router.php`. Apache deployments can point t
 `.env.example` lists every runtime setting. `DB_MIGRATION_USER` and `DB_MIGRATION_PASSWORD` are CLI-only migration settings. Keep `.env`, provider credentials, and webhook secrets out of version control. Runtime logs and private files are kept in `storage/`, outside the public document root.
 
 See [docs/FEATURE_E.md](docs/FEATURE_E.md) for the implementation file trace and UI-to-database round trips.
+See [docs/RECONNAISSANCE.md](docs/RECONNAISSANCE.md) for the greenfield Step 0 findings and decisions that still need resolution.
