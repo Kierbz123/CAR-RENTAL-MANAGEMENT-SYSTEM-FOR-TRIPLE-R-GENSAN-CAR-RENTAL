@@ -8,12 +8,14 @@ use TripleR\Http\Response;
 use TripleR\Repositories\NotificationRepository;
 use TripleR\Security\Csrf;
 use TripleR\Security\StaffAuth;
+use TripleR\Services\SmsMessageCipher;
 
 final class StaffNotificationController
 {
     public function __construct(
         private readonly StaffAuth $auth,
         private readonly NotificationRepository $notifications,
+        private readonly SmsMessageCipher $messageCipher,
     ) {
     }
 
@@ -35,8 +37,17 @@ final class StaffNotificationController
         }
         $limit = filter_var($request->query['limit'] ?? 50, FILTER_VALIDATE_INT);
         $limit = $limit === false ? 50 : max(1, min(200, $limit));
+        $history = array_map(function (array $item): array {
+            $item['message_preview'] = $this->messageCipher->staffPreview(
+                (string) $item['rendered_message'],
+                (string) $item['template_key'],
+                (string) $item['recipient_phone'],
+            );
+            unset($item['rendered_message']);
+            return $item;
+        }, $this->notifications->history($limit));
         return Response::json([
-            'notifications' => $this->notifications->history($limit),
+            'notifications' => $history,
             'monthly_sent_count' => $this->notifications->monthlySentCount(),
         ]);
     }

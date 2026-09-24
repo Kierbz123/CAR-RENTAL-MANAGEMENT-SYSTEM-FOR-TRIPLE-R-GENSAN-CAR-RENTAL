@@ -26,6 +26,9 @@ final class Request
                 $headers[$name] ??= $value;
             }
         }
+        if (isset($_SERVER['CONTENT_TYPE'])) {
+            $headers['Content-Type'] ??= (string) $_SERVER['CONTENT_TYPE'];
+        }
         $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
         $path = $path !== '/' ? rtrim($path, '/') : '/';
         return new self(

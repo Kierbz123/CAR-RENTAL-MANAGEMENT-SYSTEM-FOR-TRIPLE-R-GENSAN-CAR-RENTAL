@@ -58,7 +58,9 @@ final class NotificationRepository
             'phone' => $message['recipient_phone'],
             'idempotency_key' => $message['idempotency_key'],
             'template' => $message['template_key'],
-            'body' => $message['message'],
+            'body' => $message['encrypt_at_rest']
+                ? (new \TripleR\Services\SmsMessageCipher())->encrypt($message['message'], \TripleR\Services\SmsMessageCipher::context($message['recipient_phone'], $message['template_key']))
+                : $message['message'],
             'class' => $message['message_class'],
             'provider' => $message['provider'],
             'priority' => $message['priority'],
@@ -96,28 +98,36 @@ final class NotificationRepository
         }
     }
 
+    public function hasDueEncryptedQueued(): bool
+    {
+        $statement = $this->db->query("SELECT 1 FROM notifications WHERE status = 'queued' AND next_attempt_at <= UTC_TIMESTAMP() AND rendered_message LIKE 'smsenc:v1:%' LIMIT 1");
+        return $statement->fetchColumn() !== false;
+    }
+
     public function markSent(int $id, string $claimToken, string $providerMessageId, string $providerStatus): bool
     {
-        $statement = $this->db->prepare("UPDATE notifications SET status = 'sent', provider_message_id = :message_id, provider_status = :provider_status, sent_at = UTC_TIMESTAMP(), claim_token = NULL, claimed_at = NULL, last_error = NULL WHERE id = :id AND status = 'sending' AND claim_token = :token");
+        $statement = $this->db->prepare("UPDATE notifications SET status = 'sent', provider_message_id = :message_id, provider_status = :provider_status, rendered_message = IF(rendered_message LIKE 'smsenc:v1:%', '', rendered_message), sent_at = UTC_TIMESTAMP(), claim_token = NULL, claimed_at = NULL, last_error = NULL WHERE id = :id AND status = 'sending' AND claim_token = :token");
         $statement->execute(['id' => $id, 'token' => $claimToken, 'message_id' => substr($providerMessageId, 0, 191), 'provider_status' => substr($providerStatus, 0, 80)]);
         return $statement->rowCount() === 1;
     }
 
     public function markSuppressed(int $id, string $claimToken, string $reason): bool
     {
-        $statement = $this->db->prepare("UPDATE notifications SET status = 'suppressed', last_error = :reason, claim_token = NULL, claimed_at = NULL WHERE id = :id AND status = 'sending' AND claim_token = :token");
+        $statement = $this->db->prepare("UPDATE notifications SET status = 'suppressed', rendered_message = IF(rendered_message LIKE 'smsenc:v1:%', '', rendered_message), last_error = :reason, claim_token = NULL, claimed_at = NULL WHERE id = :id AND status = 'sending' AND claim_token = :token");
         $statement->execute(['id' => $id, 'token' => $claimToken, 'reason' => substr($reason, 0, 512)]);
         return $statement->rowCount() === 1;
     }
 
-    public function markFailure(int $id, string $claimToken, string $error, bool $retry, int $delaySeconds): bool
+    public function markFailure(int $id, string $claimToken, string $error, bool $retry, int $delaySeconds, bool $preserveEncrypted = false): bool
     {
         $nextAttempt = gmdate('Y-m-d H:i:s', time() + max(1, $delaySeconds));
-        $statement = $this->db->prepare("UPDATE notifications SET status = IF(:retry = 1 AND attempt_count < max_attempts, 'queued', 'failed'), retry_count = retry_count + IF(:retry_count = 1 AND attempt_count < max_attempts, 1, 0), next_attempt_at = IF(:next_retry = 1 AND attempt_count < max_attempts, :next_attempt, next_attempt_at), last_error = :error, claim_token = NULL, claimed_at = NULL WHERE id = :id AND status = 'sending' AND claim_token = :token");
+        $statement = $this->db->prepare("UPDATE notifications SET status = IF(:retry = 1 AND attempt_count < max_attempts, 'queued', 'failed'), rendered_message = IF((:redact = 1 OR attempt_count >= max_attempts) AND rendered_message LIKE 'smsenc:v1:%' AND :preserve = 0, '', rendered_message), retry_count = retry_count + IF(:retry_count = 1 AND attempt_count < max_attempts, 1, 0), next_attempt_at = IF(:next_retry = 1 AND attempt_count < max_attempts, :next_attempt, next_attempt_at), last_error = :error, claim_token = NULL, claimed_at = NULL WHERE id = :id AND status = 'sending' AND claim_token = :token");
         $statement->execute([
             'retry' => $retry ? 1 : 0,
             'retry_count' => $retry ? 1 : 0,
             'next_retry' => $retry ? 1 : 0,
+            'redact' => $retry ? 0 : 1,
+            'preserve' => $preserveEncrypted ? 1 : 0,
             'next_attempt' => $nextAttempt,
             'error' => substr($error, 0, 512),
             'id' => $id,
@@ -144,7 +154,7 @@ final class NotificationRepository
     public function history(int $limit): array
     {
         $limit = max(1, min(200, $limit));
-        $statement = $this->db->query("SELECT id, recipient_phone, template_key, message_class, provider, status, priority, provider_status, attempt_count, retry_count, last_error, created_at, sent_at FROM notifications ORDER BY created_at DESC LIMIT {$limit}");
+        $statement = $this->db->query("SELECT id, recipient_phone, template_key, rendered_message, message_class, provider, status, priority, provider_status, attempt_count, retry_count, last_error, created_at, sent_at FROM notifications ORDER BY created_at DESC LIMIT {$limit}");
         return $statement->fetchAll();
     }
 

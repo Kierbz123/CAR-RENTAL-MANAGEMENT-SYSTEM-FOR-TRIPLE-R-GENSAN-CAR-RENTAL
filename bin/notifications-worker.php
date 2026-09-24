@@ -5,6 +5,7 @@ use TripleR\Database;
 use TripleR\Repositories\InboundSmsEventRepository;
 use TripleR\Repositories\NotificationRepository;
 use TripleR\Services\NotificationService;
+use TripleR\Services\SmsMessageCipher;
 
 require dirname(__DIR__) . '/app/bootstrap.php';
 
@@ -13,6 +14,7 @@ try {
     $service = new NotificationService(
         new NotificationRepository($db),
         new InboundSmsEventRepository($db),
+        new SmsMessageCipher(),
     );
     $result = $service->processBatch(25);
     echo json_encode(['at_utc' => gmdate('c'), ...$result], JSON_UNESCAPED_SLASHES) . PHP_EOL;

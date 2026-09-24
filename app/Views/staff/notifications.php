@@ -38,8 +38,8 @@ $csrfToken = \TripleR\Security\Csrf::token();
         <div class="panel-heading"><h2 id="history-title">Recent notifications</h2><span id="last-updated" class="muted">Loading…</span></div>
         <div class="table-wrap">
             <table>
-                <thead><tr><th>Created</th><th>Recipient</th><th>Template</th><th>Class</th><th>Status</th><th>Priority</th><th>Attempts</th><th>Provider</th><th>Last error</th></tr></thead>
-                <tbody id="notification-rows"><tr><td colspan="9">Loading notifications…</td></tr></tbody>
+                <thead><tr><th>Created</th><th>Recipient</th><th>Template</th><th>Message</th><th>Class</th><th>Status</th><th>Priority</th><th>Attempts</th><th>Provider</th><th>Last error</th></tr></thead>
+                <tbody id="notification-rows"><tr><td colspan="10">Loading notifications…</td></tr></tbody>
             </table>
         </div>
     </section>

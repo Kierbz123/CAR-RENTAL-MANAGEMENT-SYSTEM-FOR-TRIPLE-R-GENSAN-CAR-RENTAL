@@ -16,6 +16,7 @@ final class NotificationService
     public function __construct(
         private readonly NotificationRepository $notifications,
         private readonly InboundSmsEventRepository $inboundEvents,
+        private readonly SmsMessageCipher $messageCipher,
     ) {
     }
 
@@ -26,6 +27,7 @@ final class NotificationService
         string $messageClass = 'transactional',
         string $priority = 'normal',
         ?string $idempotencyKey = null,
+        bool $encryptAtRest = false,
     ): int {
         $phone = PhoneNumber::normalize($recipient);
         if (!in_array($messageClass, ['transactional', 'non_transactional'], true)) {
@@ -54,6 +56,7 @@ final class NotificationService
             'idempotency_key' => $idempotencyKey,
             'template_key' => $templateKey,
             'message' => $message,
+            'encrypt_at_rest' => $encryptAtRest,
             'message_class' => $messageClass,
             'priority' => $priority,
             'provider' => strtolower(Config::get('SMS_PROVIDER', 'semaphore') ?? 'semaphore'),
@@ -99,6 +102,9 @@ final class NotificationService
         if (!in_array($configuredProvider, ['semaphore', 'philsms'], true)) {
             throw new \RuntimeException('SMS_PROVIDER must be semaphore or philsms.');
         }
+        if ($this->notifications->hasDueEncryptedQueued() && !$this->messageCipher->canDecryptConfiguredKey()) {
+            throw new \RuntimeException('A valid SMS_CIPHER_KEY is required before encrypted SMS can be sent.');
+        }
         $claimed = $this->notifications->claimBatch($batchSize);
         $result = ['claimed' => count($claimed), 'sent' => 0, 'suppressed' => 0, 'failed' => 0, 'retrying' => 0];
         if ($claimed === []) {
@@ -120,7 +126,26 @@ final class NotificationService
                     }
                     continue;
                 }
-                $sent = $provider->send((string) $item['recipient_phone'], (string) $item['rendered_message'], (string) $item['priority']);
+                try {
+                    $message = $this->messageCipher->decrypt(
+                        (string) $item['rendered_message'],
+                        SmsMessageCipher::context((string) $item['recipient_phone'], (string) $item['template_key']),
+                    );
+                } catch (\Throwable $error) {
+                    error_log('Encrypted SMS could not be decrypted for notification ' . $id . ': ' . get_class($error));
+                    if ($this->notifications->markFailure(
+                        $id,
+                        $token,
+                        'Encrypted SMS could not be decrypted. Verify SMS_CIPHER_KEY and SMS_CIPHER_KEY_PREVIOUS, then reconcile this row.',
+                        false,
+                        1,
+                        true,
+                    )) {
+                        $result['failed']++;
+                    }
+                    continue;
+                }
+                $sent = $provider->send((string) $item['recipient_phone'], $message, (string) $item['priority']);
                 if ($this->notifications->markSent($id, $token, $sent['message_id'], $sent['status'])) {
                     $result['sent']++;
                 }
@@ -128,20 +153,26 @@ final class NotificationService
                 $this->recordFailure($item, $error->getMessage(), $error->retryable, $result);
             } catch (\Throwable $error) {
                 error_log('SMS worker error for notification ' . $id . ': ' . get_class($error));
-                $this->recordFailure($item, 'SMS provider configuration or response error.', false, $result);
+                $this->recordFailure(
+                    $item,
+                    'SMS provider configuration or response error. Check configuration and reconcile before retrying.',
+                    false,
+                    $result,
+                    $this->messageCipher->isEncrypted((string) $item['rendered_message']),
+                );
             }
         }
         return $result;
     }
 
-    private function recordFailure(array $item, string $message, bool $retryable, array &$result): void
+    private function recordFailure(array $item, string $message, bool $retryable, array &$result, bool $preserveEncrypted = false): void
     {
         $attempt = (int) $item['attempt_count'];
         $retry = $retryable && $attempt < (int) $item['max_attempts'];
         $base = $item['priority'] === 'high' ? 10 : 60;
         $cap = $item['priority'] === 'high' ? 120 : 3600;
         $delay = min($cap, $base * (2 ** min(10, max(0, $attempt - 1))));
-        if ($this->notifications->markFailure((int) $item['id'], (string) $item['claim_token'], $message, $retry, $delay)) {
+        if ($this->notifications->markFailure((int) $item['id'], (string) $item['claim_token'], $message, $retry, $delay, $preserveEncrypted)) {
             $result[$retry ? 'retrying' : 'failed']++;
         }
     }

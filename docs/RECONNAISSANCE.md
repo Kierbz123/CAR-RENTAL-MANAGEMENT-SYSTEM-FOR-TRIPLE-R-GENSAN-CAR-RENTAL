@@ -17,6 +17,6 @@ Recorded against the greenfield checkout before the next feature. The initial re
 
 ## Constraints carried forward
 
-- The master prompt puts shared Magic-Link infrastructure before booking/payment, while its required `booking_access_tokens` rows need `booking_id` and `expires_at = min(48h, bookings.hold_expires_at)`. This greenfield repository has no `bookings` table. The persistence/API boundary must be resolved before implementing that feature; no booking-independent token schema is assumed here.
+- Product owner decision: keep the feature order and create `booking_access_tokens` now with TTL expiry and a nullable `booking_id` reserved for Feature C. Feature C will attach the booking ID and hold expiry; the existing expiry is reduced to the earlier hold time.
 - Existing rental pricing, vehicle availability, user, rules, payment, and driver implementations cannot be reused because this is a greenfield project. Where the plan explicitly says to preserve existing behavior, there is no legacy behavior to preserve; product rules still need to match the canonical master prompt or be clarified where it assumes an existing component.
 - PHP and MySQL executables are unavailable in the development environment, so database version/isolation and runtime behavior remain to be verified locally.
