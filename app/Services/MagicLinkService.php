@@ -43,11 +43,7 @@ final class MagicLinkService
             throw new \DomainException('A secure link cannot be sent right now. Please try later or contact the rental office.');
         }
         $bookingCap = max(1, min(255, Config::int('MAGIC_LINK_MAX_PER_BOOKING', 6)));
-        if ($bookingId !== null) {
-            if ($holdExpiresAt === null) {
-                throw new \InvalidArgumentException('A booking-linked magic link requires its hold expiry.');
-            }
-        } elseif ($holdExpiresAt !== null) {
+        if ($bookingId === null && $holdExpiresAt !== null) {
             throw new \InvalidArgumentException('A hold expiry requires a booking ID.');
         }
 

@@ -22,7 +22,7 @@ This project has no Composer dependencies. It uses PDO and PHP's built-in extens
    GRANT SELECT, INSERT, UPDATE, CREATE, ALTER, INDEX, TRIGGER ON triple_r_rental.* TO 'triple_r_migrate'@'127.0.0.1';
    ```
 
-2. Copy `.env.example` to `.env`, set the runtime database details, set `APP_BASE_URL` to the site's public origin, and change the example seed password. Before issuing magic links, set the dedicated `SMS_CIPHER_KEY` to a base64-encoded 32-byte key generated with `php -r "echo base64_encode(random_bytes(32)), PHP_EOL;"`.
+2. Copy `.env.example` to `.env`, set the runtime database details, set `APP_BASE_URL` to the site's public origin, and change the example seed password. Before sending notifications, set the dedicated `SMS_CIPHER_KEY` to a base64-encoded 32-byte key generated with `php -r "echo base64_encode(random_bytes(32)), PHP_EOL;"`.
 
    PowerShell: `Copy-Item .env.example .env`  
    Bash: `cp .env.example .env`
@@ -77,23 +77,23 @@ Set `SMS_PROVIDER=semaphore` or `SMS_PROVIDER=philsms` and the matching API cred
 
 Configure provider forwarding to `https://your-domain.example/webhooks/sms/inbound` and delivery callbacks to `/webhooks/sms/delivery`. Each request must carry `X-Webhook-Signature: sha256=<hex HMAC-SHA256 of the exact raw request body using SMS_WEBHOOK_SECRET>`. Normalize callback JSON to the fields shown below. Inbound callback fields: `provider_message_id`, `sender_number`, `message`, and optional `provider`. Delivery callback fields: `provider_message_id`, `status`, and optional `error`. Inbound records are stored before a fast HTTP 200 acknowledgement. Invalid/unparseable callbacks also receive HTTP 200 and are discarded. A provider or forwarding gateway must supply stable message IDs.
 
-Feature E enqueues transactional messages. A STOP event blocks later non-transactional sends to its normalized phone number, while transactional messages remain permitted. Non-transactional sends are unavailable until Feature C adds consent acceptance. Feature C must consume STOP records into `rules_acceptances` using the contract below.
+Feature E enqueues transactional messages. M5 imports STOP events into `rules_acceptances`; non-transactional SMS attempts are stored as `suppressed_by_policy` while affirmative opt-in capture is not implemented. Transactional messages remain permitted after STOP by policy.
 
 ## Magic-link infrastructure
 
-Migration `002_magic_links.sql` creates the booking-independent token store. `booking_access_tokens` stores only the SHA-256 token hash, purpose, TTL expiry, use timestamp, and creation timestamp. Its nullable `booking_id` column is reserved for Feature C; when a feature links a token to a booking it must also attach the hold expiry, which caps the token's existing TTL. No booking FK is installed before the bookings table exists. `magic_link_booking_limits` atomically enforces up to six links per booking over its lifetime. Tokens are purpose-scoped and single-use. Only `booking_manage`, `accept_rules`, and `submit_payment` are accepted.
+Migration `002_magic_links.sql` creates the booking-independent token store. `booking_access_tokens` stores only the SHA-256 token hash, purpose, TTL expiry, use timestamp, and creation timestamp. Migration 007 adds a restrictive FK to rental agreements. Reserved-agreement links are capped at hold expiry; confirmed and later agreements use ordinary TTL. `magic_link_booking_limits` atomically enforces up to six links per booking over its lifetime. Tokens are purpose-scoped and single-use. Only `booking_manage`, `accept_rules`, and `submit_payment` are accepted.
 
 ### Redemption API contract
 
 SMS links open `/magic-link#token=<base64url-token>&purpose=<purpose>`. The fragment is read client-side and removed from browser history; fragments are not sent in the initial HTTP request. The redemption endpoint is **POST `/api/magic-links/redeem`** with `Content-Type: application/json` and same-origin `Origin`. Its body is `{"token":"<43-character-base64url-token>","purpose":"booking_manage"}`. **The token is accepted in the POST body only; it must never be sent as a URL path or query parameter.** Wrong-purpose, expired, already-used, and unknown tokens receive the same generic error. A successful redemption consumes the token atomically, records a `token_usages` row, rotates the session ID, and stores a purpose-bound session context through the token's expiry. The response returns `verified` and the purpose only; it does not expose booking PII.
 
-The issue service rate-limits by normalized phone and, when supplied, normalized email (10 per fixed 24-hour window each by default); booking-linked issues have a concurrency-safe lifetime cap of six tokens per booking (initial send plus five re-sends). Redemption is limited by IP and token hash. `GET /api/magic-links/session?purpose=...` checks the purpose-bound session after redemption; its query contains only the non-secret purpose, never the token. The initial Feature C integration will attach booking IDs and cap expiry at `hold_expires_at`. No customer accounts are introduced.
+The issue service rate-limits by normalized phone and, when supplied, normalized email (10 per fixed 24-hour window each by default); booking-linked issues have a concurrency-safe lifetime cap of six tokens per booking (initial send plus five re-sends). Redemption is limited by IP and token hash. `GET /api/magic-links/session?purpose=...` checks the purpose-bound session after redemption; its query contains only the non-secret purpose, never the token. M5 links tokens to rental agreements and presents a minimal booking context only after `booking_manage` redemption. No customer accounts are introduced.
 
 ### SMS body encryption and staff history
 
-Magic-link SMS bodies contain the raw bearer token only in process memory and as AES-256-GCM ciphertext in `notifications.rendered_message` before sending. The encryption key is the dedicated `SMS_CIPHER_KEY` (base64-encoded 32-byte key); it is separate from and must not reuse `APP_KEY` or a session key. The worker decrypts only when sending. Authenticated staff history receives a message preview: normal messages are readable, while `magic_link.*` entries always display `[Magic-link content masked]`; ciphertext is never returned to the browser. If other encrypted templates are added, the staff API decrypts them server-side and masks the preview if decryption is unavailable.
+All newly queued SMS bodies use AES-256-GCM ciphertext in `notifications.rendered_message`; a magic-link bearer token exists raw only in process memory. The encryption key is the dedicated `SMS_CIPHER_KEY` (base64-encoded 32-byte key); it is separate from and must not reuse `APP_KEY` or a session key. The worker decrypts only when sending. Authenticated staff history receives a server-rendered preview: ordinary messages are decrypted for authorized staff, while `magic_link.*` entries always display `[Magic-link content masked]`; ciphertext is never returned to the browser. Sent/failed non-magic bodies remain encrypted for history and key rotation; magic-link bodies are redacted after terminal send/failure.
 
-For rotation, pause the worker, set the new `SMS_CIPHER_KEY` and the former key as `SMS_CIPHER_KEY_PREVIOUS`, then resume. Keep the previous key until no `smsenc:v1:` rows encrypted under it remain in `notifications` (including failed rows retained for key recovery). Drain or securely remove those rows before rotating again; only one previous key is supported. Sent magic-link bodies are redacted after provider acceptance and remain masked in the staff UI.
+For rotation, pause the worker, set the new `SMS_CIPHER_KEY` and the former key as `SMS_CIPHER_KEY_PREVIOUS`, then resume. Keep the previous key until no `smsenc:v1:` rows encrypted under it remain in `notifications` (including failed and policy-suppressed rows retained for history/key recovery). Drain or securely remove retained rows before rotating again; only one previous key is supported. Magic-link bodies are redacted after terminal delivery/failure and remain masked in staff history.
 
 The token and append-only usage schema is defined in `database/migrations/002_magic_links.sql`; Feature E's notification schema remains in `001_notifications.sql`.
 
@@ -144,7 +144,32 @@ See [docs/FEATURE_M1.md](docs/FEATURE_M1.md) for role, account-lock, session, an
 See [docs/FEATURE_M2.md](docs/FEATURE_M2.md) for the vehicle fleet schema, authenticated photo storage, location lifecycle, mileage correction contract, and fleet acceptance checklist.
 See [docs/FEATURE_M3.md](docs/FEATURE_M3.md) for encrypted customer PII, document fingerprints/audit, customer eligibility, and the customer management checklist.
 See [docs/FEATURE_M4.md](docs/FEATURE_M4.md) for driver records, role access, encrypted driver PII, status history, and the M5 overlap handoff.
+See [docs/FEATURE_M5.md](docs/FEATURE_M5.md) for rental costing, lifecycle, consent integration, and acceptance checks.
 See [docs/RECONNAISSANCE.md](docs/RECONNAISSANCE.md) for the greenfield Step 0 findings and decisions that still need resolution.
+
+## Rental agreements and costing (M5)
+
+Migration `007_rentals.sql` adds rental agreements, append-only status/deposit histories and charge corrections, plus STOP-event consent imports. Scheduled rental dates are Manila-calendar `DATE` values by design: billing uses local calendar days, same-day rentals bill as one day, and no UTC conversion or MySQL timezone table is needed. Actual pickup/return times and event timestamps are UTC `DATETIME(6)`. Configure `RESERVATION_HOLD_MINUTES` and `NO_SHOW_GRACE_MINUTES` independently (both default to 60). Reserved booking links expire no later than the hold; links issued from confirmed onward use normal TTL. Chauffeur rentals are hidden and rejected until M6 adds assignment and conflict protection.
+
+Non-transactional SMS is policy-disabled by default. `NON_TRANSACTIONAL_SMS_ENABLED=false` causes attempted messages to be recorded as `suppressed_by_policy`; affirmative opt-in capture is not part of M5, so changing the flag alone still does not enable sends. Transactional booking confirmation, pickup/return notices, and reminders remain permitted after STOP by design. Import STOP callbacks idempotently with `php bin/consume-stop-events.php`.
+
+Run reservation expiry and 24-hour reminder jobs every minute, alongside STOP import. Linux/macOS crontab (replace paths):
+
+```cron
+* * * * * cd /path/to/TripleR-Gensan-Car-Rental && /usr/bin/php bin/rentals-expire.php >> storage/rentals-expire.log 2>&1
+* * * * * cd /path/to/TripleR-Gensan-Car-Rental && /usr/bin/php bin/rentals-reminders.php >> storage/rentals-reminders.log 2>&1
+* * * * * cd /path/to/TripleR-Gensan-Car-Rental && /usr/bin/php bin/consume-stop-events.php >> storage/stop-events.log 2>&1
+```
+
+Windows Task Scheduler (run each as the project service account; replace paths):
+
+```powershell
+schtasks.exe /Create /F /SC MINUTE /MO 1 /TN "TripleR-Rentals-Expiry" /TR '"C:\php\php.exe" "C:\path\TripleR-Gensan-Car-Rental\bin\rentals-expire.php"'
+schtasks.exe /Create /F /SC MINUTE /MO 1 /TN "TripleR-Rental-Reminders" /TR '"C:\php\php.exe" "C:\path\TripleR-Gensan-Car-Rental\bin\rentals-reminders.php"'
+schtasks.exe /Create /F /SC MINUTE /MO 1 /TN "TripleR-Consume-STOP" /TR '"C:\php\php.exe" "C:\path\TripleR-Gensan-Car-Rental\bin\consume-stop-events.php"'
+```
+
+See [docs/FEATURE_M5.md](docs/FEATURE_M5.md) for the exact state graph, lock order, SMS policy, and local acceptance checklist.
 
 ## Vehicle fleet (M2)
 

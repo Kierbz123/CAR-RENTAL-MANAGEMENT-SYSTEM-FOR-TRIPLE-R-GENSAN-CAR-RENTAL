@@ -19,6 +19,11 @@ final class VehicleRepository
         return $stmt->fetchAll();
     }
 
+    public function availableForBooking(): array
+    {
+        return $this->db->query("SELECT v.*,l.name AS location_name FROM vehicles v LEFT JOIN vehicle_locations l ON l.location_id=v.current_location_id WHERE v.deleted_at IS NULL AND v.current_status IN ('available','reserved') ORDER BY v.plate_number")->fetchAll();
+    }
+
     public function find(int $id, bool $lock = false): ?array
     {
         $stmt = $this->db->prepare('SELECT v.*, l.name AS location_name FROM vehicles v LEFT JOIN vehicle_locations l ON l.location_id=v.current_location_id WHERE v.vehicle_id = :id AND v.deleted_at IS NULL' . ($lock ? ' FOR UPDATE' : ''));

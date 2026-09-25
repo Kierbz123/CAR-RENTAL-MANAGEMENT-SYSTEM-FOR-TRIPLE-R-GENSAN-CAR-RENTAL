@@ -115,19 +115,8 @@ final class DriverRepository
 
     public function conflictsWith(int $driverId, string $start, string $end, ?int $excludeAgreementId = null): bool
     {
-        // M4 is built before rental_agreements exists. Return false until M5 creates it;
-        // M5 replaces this direct query with a BookingOverlapService delegation.
-        $table = $this->db->prepare("SELECT 1 FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='rental_agreements' LIMIT 1");
-        $table->execute();
-        if ($table->fetchColumn() === false) return false;
-
-        $sql = "SELECT 1 FROM rental_agreements WHERE driver_id=:driver AND status IN ('reserved','confirmed','active') AND start_date < :end_date AND end_date > :start_date";
-        $params = ['driver'=>$driverId,'start_date'=>$start,'end_date'=>$end];
-        if ($excludeAgreementId !== null) { $sql .= ' AND agreement_id<>:exclude_id'; $params['exclude_id']=$excludeAgreementId; }
-        $sql .= ' LIMIT 1';
-        $stmt = $this->db->prepare($sql);
-        $stmt->execute($params);
-        return $stmt->fetchColumn() !== false;
+        // M5 handoff: BookingOverlapService owns the sole half-open overlap query.
+        return (new \TripleR\Services\BookingOverlapService($this->db))->driverConflicts($driverId,$start,$end,$excludeAgreementId);
     }
 
     public function hasOpenAgreement(int $driverId): bool

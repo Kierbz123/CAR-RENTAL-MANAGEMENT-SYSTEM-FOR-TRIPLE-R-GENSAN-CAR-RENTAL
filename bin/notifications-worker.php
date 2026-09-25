@@ -4,6 +4,7 @@ declare(strict_types=1);
 use TripleR\Database;
 use TripleR\Repositories\InboundSmsEventRepository;
 use TripleR\Repositories\NotificationRepository;
+use TripleR\Repositories\RulesAcceptanceRepository;
 use TripleR\Services\NotificationService;
 use TripleR\Services\SmsMessageCipher;
 
@@ -15,6 +16,7 @@ try {
         new NotificationRepository($db),
         new InboundSmsEventRepository($db),
         new SmsMessageCipher(),
+        new RulesAcceptanceRepository($db),
     );
     $result = $service->processBatch(25);
     echo json_encode(['at_utc' => gmdate('c'), ...$result], JSON_UNESCAPED_SLASHES) . PHP_EOL;

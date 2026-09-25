@@ -25,9 +25,9 @@ New records start active and append an initial status row with `old_status=NULL`
 
 `DriverService::selectableForAssignment()` passes the current Asia/Manila calendar date to a query requiring `status='active'`, `deleted_at IS NULL`, and `license_expiry >= today`. M5/M6 must lock the same driver row with `SELECT ... FOR UPDATE` before repeating these checks and inserting an assignment. This serializes assignment against M4 status changes and soft-delete, which also lock the driver row.
 
-`DriverRepository::conflictsWith(driverId, start, end, excludeAgreementId)` explicitly checks `information_schema` first. Before M5 creates `rental_agreements`, it returns `false` because no agreement can exist yet; this is a deliberate temporary stub with an inline M5 handoff comment. Once the table exists, it checks `reserved`, `confirmed`, and `active` assignments with half-open ranges (`existing.start_date < requested.end_date AND existing.end_date > requested.start_date`), excluding the supplied agreement ID. M5 replaces the direct query with a thin delegate to `BookingOverlapService`, leaving one overlap implementation. Assignment history returns empty while the agreement table/driver link is absent and renders actual rows once available.
+`DriverRepository::conflictsWith(driverId, start, end, excludeAgreementId)` delegates to M5's `BookingOverlapService`, the only implementation of half-open overlap across `reserved`, `confirmed`, and `active` agreements. Same-day ranges occupy one local calendar day; adjacent non-overlapping ranges are allowed. Assignment history returns empty before the agreement table/driver link exists and renders actual rows after migration 007.
 
-The read-only CLI inspection is `php bin/driver-conflict-check.php <driver_id> <start_yyyy-mm-dd> <end_yyyy-mm-dd> [exclude_agreement_id]`. It validates arguments, calls `conflictsWith()`, and prints `CONFLICT` or `NO_CONFLICT`; before M5, the latter reflects the documented no-agreements-yet stub.
+The read-only CLI inspection is `php bin/driver-conflict-check.php <driver_id> <start_yyyy-mm-dd> <end_yyyy-mm-dd> [exclude_agreement_id]`. It validates arguments, calls `conflictsWith()`, and prints `CONFLICT` or `NO_CONFLICT` against the shared M5 overlap implementation.
 
 Soft-delete sets `deleted_at` and preserves all history. It is refused when an open agreement references the driver, once the agreement table has a `driver_id` column.
 
@@ -40,8 +40,8 @@ Set `DRIVER_PII_KEY` in `.env` before opening driver routes, then run `php bin/m
 - Verify initial active status and subsequent changes appear oldest-first in history; attempt UPDATE and DELETE against `driver_status_logs` and confirm triggers reject them.
 - Verify only system_admin/fleet_manager can mutate/reveal; driver_coordinator sees readable master data but all PII remains restricted.
 - Verify contact-primary changes leave no more than one primary per driver/contact type; test concurrent updates to the same driver.
-- Verify conflicts return false before `rental_agreements` exists, then test overlap, adjacency, and exclusion when the M5 schema is present.
+- With migration 007 applied, verify the shared overlap service catches intersections, allows adjacent half-open ranges, handles same-day occupancy, and respects the excluded agreement ID.
 - Run `php bin/driver-conflict-check.php <driver_id> <start> <end> [exclude_agreement_id]` to exercise the repository query path without writes.
 - Verify soft-delete is retained in history and is blocked for drivers assigned to open agreements once those schema fields exist.
 
-No runtime verification was performed in the build environment. The M1–M4 acceptance checks remain for the local run before M5 begins.
+No runtime verification was performed in the build environment. The M1–M4 acceptance checks remain pending for the local acceptance run.

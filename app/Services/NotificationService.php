@@ -7,6 +7,7 @@ use PDOException;
 use TripleR\Config;
 use TripleR\Repositories\InboundSmsEventRepository;
 use TripleR\Repositories\NotificationRepository;
+use TripleR\Repositories\RulesAcceptanceRepository;
 use TripleR\Services\Sms\SmsProviderException;
 use TripleR\Services\Sms\SmsProviderFactory;
 use TripleR\Support\PhoneNumber;
@@ -17,6 +18,7 @@ final class NotificationService
         private readonly NotificationRepository $notifications,
         private readonly InboundSmsEventRepository $inboundEvents,
         private readonly SmsMessageCipher $messageCipher,
+        private readonly ?RulesAcceptanceRepository $rulesAcceptances = null,
     ) {
     }
 
@@ -32,12 +34,6 @@ final class NotificationService
         $phone = PhoneNumber::normalize($recipient);
         if (!in_array($messageClass, ['transactional', 'non_transactional'], true)) {
             throw new \InvalidArgumentException('Unknown SMS message class.');
-        }
-        if ($messageClass === 'non_transactional') {
-            if ($this->inboundEvents->hasStop($phone)) {
-                throw new \DomainException('This number has opted out of non-transactional SMS.');
-            }
-            throw new \DomainException('Non-transactional SMS requires the Feature C consent integration.');
         }
         if (!in_array($priority, ['normal', 'high'], true)) {
             throw new \InvalidArgumentException('Unknown SMS priority.');
@@ -56,13 +52,22 @@ final class NotificationService
             'idempotency_key' => $idempotencyKey,
             'template_key' => $templateKey,
             'message' => $message,
-            'encrypt_at_rest' => $encryptAtRest,
+            // Queue bodies are always encrypted; the argument remains for call-site compatibility.
+            'encrypt_at_rest' => true,
             'message_class' => $messageClass,
             'priority' => $priority,
             'provider' => strtolower(Config::get('SMS_PROVIDER', 'semaphore') ?? 'semaphore'),
         ];
         if (!in_array($entry['provider'], ['semaphore', 'philsms'], true)) {
             throw new \InvalidArgumentException('SMS_PROVIDER must be semaphore or philsms.');
+        }
+
+        if($messageClass==='non_transactional'){
+            $enabled=strtolower(Config::get('NON_TRANSACTIONAL_SMS_ENABLED','false')??'false')==='true';
+            $stopped=$this->hasStop($phone);
+            // Affirmative-consent capture is not shipped yet; even an accidental flag change cannot opt customers in.
+            $entry['suppression_reason']=$stopped?'Suppressed by recorded STOP event':(!$enabled?'Suppressed by policy: NON_TRANSACTIONAL_SMS_ENABLED is false':'Suppressed by policy: affirmative SMS opt-in capture is not available');
+            return $this->insertPolicySuppression($entry);
         }
 
         $budgetDate = date('Y-m-d');
@@ -117,11 +122,9 @@ final class NotificationService
             try {
                 $provider = SmsProviderFactory::create((string) $item['provider']);
                 if ($item['message_class'] === 'non_transactional') {
-                    $hasStopped = $this->inboundEvents->hasStop((string) $item['recipient_phone']);
-                    $reason = $hasStopped
-                        ? 'Suppressed by recorded STOP event'
-                        : 'Suppressed until Feature C consent integration is available';
-                    if ($this->notifications->markSuppressed($id, $token, $reason)) {
+                    $hasStopped = $this->hasStop((string) $item['recipient_phone']);
+                    $reason = $hasStopped ? 'Suppressed by recorded STOP event' : 'Suppressed by policy: affirmative SMS opt-in capture is not available';
+                    if ($this->notifications->markSuppressedByPolicy($id, $token, $reason)) {
                         $result['suppressed']++;
                     }
                     continue;
@@ -176,4 +179,16 @@ final class NotificationService
             $result[$retry ? 'retrying' : 'failed']++;
         }
     }
+
+    private function insertPolicySuppression(array $entry): int
+    {
+        $this->notifications->begin();
+        try{
+            if($entry['idempotency_key']!==null){$existing=$this->notifications->findByIdempotencyKey($entry['idempotency_key']);if($existing!==null){$this->notifications->commit();return $existing;}}
+            $id=$this->notifications->insertSuppressedByPolicy($entry);$this->notifications->commit();return $id;
+        }catch(\Throwable $e){$this->notifications->rollback();if($e instanceof PDOException&&(int)($e->errorInfo[1]??0)===1062&&$entry['idempotency_key']!==null){$existing=$this->notifications->findByIdempotencyKey($entry['idempotency_key']);if($existing!==null)return $existing;}throw $e;}
+    }
+
+    private function hasStop(string $phone): bool
+    { return ($this->rulesAcceptances?->hasStop($phone) ?? false) || $this->inboundEvents->hasStop($phone); }
 }

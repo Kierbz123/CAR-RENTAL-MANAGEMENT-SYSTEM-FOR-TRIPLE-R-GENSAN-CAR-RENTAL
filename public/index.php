@@ -11,6 +11,8 @@ use TripleR\Controllers\StaffHomeController;
 use TripleR\Controllers\Fleet\VehicleController;
 use TripleR\Controllers\Fleet\DriverController;
 use TripleR\Controllers\Customers\CustomerController;
+use TripleR\Controllers\Rentals\AgreementController;
+use TripleR\Controllers\Api\RentalApiController;
 use TripleR\Database;
 use TripleR\Http\Request;
 use TripleR\Http\Response;
@@ -27,6 +29,9 @@ use TripleR\Repositories\VehicleRepository;
 use TripleR\Repositories\VehicleStatusLogRepository;
 use TripleR\Repositories\DriverRepository;
 use TripleR\Repositories\CustomerRepository;
+use TripleR\Repositories\RentalRepository;
+use TripleR\Repositories\ChargeRepository;
+use TripleR\Repositories\RulesAcceptanceRepository;
 use TripleR\Security\Csrf;
 use TripleR\Security\StaffAuth;
 use TripleR\Services\RateLimiter;
@@ -40,6 +45,8 @@ use TripleR\Services\DriverPiiCipher;
 use TripleR\Services\DriverService;
 use TripleR\Services\CustomerPiiCipher;
 use TripleR\Services\CustomerService;
+use TripleR\Services\BookingOverlapService;
+use TripleR\Services\RentalService;
 
 require dirname(__DIR__) . '/app/bootstrap.php';
 
@@ -81,10 +88,12 @@ try {
     $userAdmin = new UserController($db, $authMiddleware, $users, $sessions, $securityLogs);
     $sessionAdmin = new SessionController($db, $authMiddleware, $users, $sessions, $securityLogs);
     $webhooks = new SmsWebhookController($inboundRepository, $notificationRepository);
+    $rulesAcceptanceRepository = new RulesAcceptanceRepository($db);
+    $notificationService = new NotificationService($notificationRepository, $inboundRepository, $messageCipher, $rulesAcceptanceRepository);
     $magicLinkService = new MagicLinkService(
         new MagicLinkRepository($db),
         new RateLimiter($db),
-        new NotificationService($notificationRepository, $inboundRepository, $messageCipher),
+        $notificationService,
     );
     $magicLinks = new MagicLinkController($magicLinkService);
     $vehicleRepository = new VehicleRepository($db);
@@ -100,6 +109,11 @@ try {
     $customerPiiCipher = new CustomerPiiCipher();
     $customerService = new CustomerService($db, $customerRepository, $customerPiiCipher);
     $customerController = new CustomerController($authMiddleware, $customerRepository, $customerService, $customerPiiCipher);
+    $rentalRepository = new RentalRepository($db, new BookingOverlapService($db));
+    $chargeRepository = new ChargeRepository($db);
+    $rentalService = new RentalService($db, $rentalRepository, $chargeRepository, $vehicleRepository, $customerRepository, $customerPiiCipher, $vehicleService, $notificationService, $magicLinkService);
+    $agreements = new AgreementController($authMiddleware, $rentalRepository, $chargeRepository, $rentalService);
+    $rentalApi = new RentalApiController($authMiddleware, $rentalService, $magicLinkService);
 
     $router = new Router();
     $router->get('/', static fn (Request $request): Response => Response::redirect('/staff'));
@@ -169,6 +183,18 @@ try {
     $router->post('/customers/unblacklist', static fn (Request $request): Response => $customerController->unblacklist($request));
     $router->post('/customers/delete', static fn (Request $request): Response => $customerController->softDelete($request));
     $router->post('/customers/reveal', static fn (Request $request): Response => $customerController->reveal($request));
+    $router->get('/rentals', static fn (Request $request): Response => $agreements->index($request));
+    $router->get('/rentals/new', static fn (): Response => $agreements->newForm());
+    $router->get('/rentals/detail', static fn (Request $request): Response => $agreements->detail($request));
+    $router->post('/rentals/reserve', static fn (Request $request): Response => $agreements->create($request));
+    $router->post('/rentals/action', static fn (Request $request): Response => $agreements->action($request));
+    $router->post('/rentals/charge', static fn (Request $request): Response => $agreements->addCharge($request));
+    $router->post('/rentals/charge/reverse', static fn (Request $request): Response => $agreements->reverseCharge($request));
+    $router->post('/rentals/deposit', static fn (Request $request): Response => $agreements->deposit($request));
+    $router->post('/rentals/link', static fn (Request $request): Response => $agreements->issueLink($request));
+    $router->post('/api/rentals', static fn (Request $request): Response => $rentalApi->create($request));
+    $router->get('/api/rentals/booking-context', static fn (Request $request): Response => $rentalApi->bookingContext($request));
+    $router->get('/customer/booking', static function (): Response { ob_start(); require APP_ROOT . '/app/Views/customer/booking.php'; return Response::html((string) ob_get_clean()); });
 
     $router->dispatch($request)->send();
 } catch (\Throwable $error) {

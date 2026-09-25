@@ -54,15 +54,24 @@ final class VehicleService
     public function transitionStatus(int $id, string $next, int $actor): void
     {
         if (!in_array($next,self::STATUSES,true)) throw new RuntimeException('Invalid vehicle status.');
-        $this->db->beginTransaction();
+        $ownsTransaction = !$this->db->inTransaction();
+        if ($ownsTransaction) $this->db->beginTransaction();
         try {
-            $v = $this->vehicles->find($id,true);
-            if (!$v || $v['current_status'] === 'retired' || $v['current_status'] === $next) throw new RuntimeException('Vehicle status cannot be changed from its current state.');
-            $stmt = $this->db->prepare('UPDATE vehicles SET current_status = :status' . ($next === 'retired' ? ', deleted_at = UTC_TIMESTAMP(6)' : '') . ' WHERE vehicle_id = :id AND deleted_at IS NULL');
-            $stmt->execute(['status'=>$next,'id'=>$id]);
-            $this->statusLogs->append($id,$v['current_status'],$next,$v['current_location_id'] === null ? null : (int)$v['current_location_id'],(int)$v['current_mileage'],$actor);
-            $this->db->commit();
-        } catch (\Throwable $e) { if ($this->db->inTransaction()) $this->db->rollBack(); throw $e; }
+            $this->transitionStatusInTransaction($id,$next,$actor);
+            if ($ownsTransaction) $this->db->commit();
+        } catch (\Throwable $e) { if ($ownsTransaction && $this->db->inTransaction()) $this->db->rollBack(); throw $e; }
+    }
+
+    /** Caller must already hold the surrounding rental transaction. */
+    public function transitionStatusInTransaction(int $id, string $next, int $actor): void
+    {
+        if (!$this->db->inTransaction()) throw new RuntimeException('A surrounding transaction is required for this status transition.');
+        if (!in_array($next,self::STATUSES,true)) throw new RuntimeException('Invalid vehicle status.');
+        $v=$this->vehicles->find($id,true);
+        if (!$v || $v['current_status']==='retired' || $v['current_status']===$next) throw new RuntimeException('Vehicle status cannot be changed from its current state.');
+        $stmt=$this->db->prepare('UPDATE vehicles SET current_status=:status'.($next==='retired'?', deleted_at=UTC_TIMESTAMP(6)':'').' WHERE vehicle_id=:id AND deleted_at IS NULL');
+        $stmt->execute(['status'=>$next,'id'=>$id]);
+        $this->statusLogs->append($id,$v['current_status'],$next,$v['current_location_id']===null?null:(int)$v['current_location_id'],(int)$v['current_mileage'],$actor);
     }
 
     public function recordMileage(int $id, int $mileage, ?int $locationId, int $actor, ?int $corrects = null, ?string $reason = null): void

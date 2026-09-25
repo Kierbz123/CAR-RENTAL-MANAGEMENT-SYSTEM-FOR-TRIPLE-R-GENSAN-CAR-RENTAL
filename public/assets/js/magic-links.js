@@ -38,6 +38,10 @@
             if (!sessionResponse.ok || session.verified !== true) {
                 throw new Error(session.error || 'Secure-link access could not be established. Request a new link.');
             }
+            if (result.purpose === 'booking_manage') {
+                window.location.assign('/customer/booking');
+                return;
+            }
             status.textContent = 'Your secure link has been verified. Purpose-bound access is active in this browser session.';
             button.hidden = true;
         } catch (error) {
