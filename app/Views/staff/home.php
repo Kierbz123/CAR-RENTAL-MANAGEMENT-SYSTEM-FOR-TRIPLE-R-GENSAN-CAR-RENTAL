@@ -21,9 +21,10 @@ $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOT
     <section class="panel admin-panel"><div class="panel-heading"><h2>Available tools</h2></div><div class="panel-body">
         <?php if ($canManageUsers): ?><p><a href="/admin/users">Manage staff accounts and sessions</a></p><?php endif; ?>
         <?php if ($canManageFleet): ?><p><a href="/fleet/vehicles">Manage vehicle fleet</a> · <a href="/fleet/locations">Manage fleet locations</a></p><?php endif; ?>
+        <?php if ($canReadDrivers): ?><p><a href="/fleet/drivers">View driver records and eligible drivers</a></p><?php endif; ?>
         <?php if ($canManageCustomers): ?><p><a href="/customers">Manage customers</a></p><?php endif; ?>
         <?php if ($canViewNotifications): ?><p><a href="/staff/notifications">View SMS notification history</a></p><?php endif; ?>
-        <?php if (!$canManageUsers && !$canViewNotifications): ?><p>This account is active. Its rental-management workspace will be available as the corresponding modules are released.</p><?php endif; ?>
+        <?php if (!$canManageUsers && !$canViewNotifications && !$canReadDrivers): ?><p>This account is active. Its rental-management workspace will be available as the corresponding modules are released.</p><?php endif; ?>
     </div></section>
 </main>
 </body>

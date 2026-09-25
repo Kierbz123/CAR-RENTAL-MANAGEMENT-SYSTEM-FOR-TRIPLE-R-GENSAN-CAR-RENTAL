@@ -24,6 +24,7 @@ final class StaffHomeController
         $canManageUsers = $user['role'] === 'system_admin';
         $canViewNotifications = in_array($user['role'], ['system_admin', 'fleet_manager', 'support_staff'], true);
         $canManageFleet = in_array($user['role'], ['system_admin', 'fleet_manager'], true);
+        $canReadDrivers = in_array($user['role'], ['system_admin', 'fleet_manager', 'driver_coordinator'], true);
         $canManageCustomers = in_array($user['role'], ['system_admin', 'front_desk'], true);
         $csrfToken = Csrf::token();
         ob_start();

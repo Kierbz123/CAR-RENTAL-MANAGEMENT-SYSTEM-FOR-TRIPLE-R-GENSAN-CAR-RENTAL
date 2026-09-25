@@ -143,6 +143,7 @@ See [docs/MAGIC_LINKS.md](docs/MAGIC_LINKS.md) for the token schema, API contrac
 See [docs/FEATURE_M1.md](docs/FEATURE_M1.md) for role, account-lock, session, and password-change details.
 See [docs/FEATURE_M2.md](docs/FEATURE_M2.md) for the vehicle fleet schema, authenticated photo storage, location lifecycle, mileage correction contract, and fleet acceptance checklist.
 See [docs/FEATURE_M3.md](docs/FEATURE_M3.md) for encrypted customer PII, document fingerprints/audit, customer eligibility, and the customer management checklist.
+See [docs/FEATURE_M4.md](docs/FEATURE_M4.md) for driver records, role access, encrypted driver PII, status history, and the M5 overlap handoff.
 See [docs/RECONNAISSANCE.md](docs/RECONNAISSANCE.md) for the greenfield Step 0 findings and decisions that still need resolution.
 
 ## Vehicle fleet (M2)
@@ -152,3 +153,7 @@ Migration `004_vehicles.sql` adds vehicles, photos, locations, status history, a
 ## Customer management (M3)
 
 Migration `005_customers.sql` adds customers, encrypted contacts/identity documents, append-only notes, and append-only `customer_identity_document_audit_logs`. Before first customer entry, set a dedicated `CUSTOMER_PII_KEY` in `.env` using a fresh base64-encoded 32-byte random value (`php -r "echo base64_encode(random_bytes(32)), PHP_EOL;"`). Do not use or reuse `APP_KEY` or `SMS_CIPHER_KEY`; back up this key securely because it is required to decrypt existing customer values. Customer routes are available to `system_admin` and `front_desk`. The M3 schema, key contract, migration sequence, and runtime checklist are in `docs/FEATURE_M3.md`.
+
+## Driver records (M4)
+
+Migration `006_drivers.sql` adds encrypted driver records and contacts plus append-only status history. Set `DRIVER_PII_KEY` to a separate base64-encoded 32-byte random value before opening driver pages; generate it with `php -r "echo base64_encode(random_bytes(32)), PHP_EOL;"`. Do not reuse `CUSTOMER_PII_KEY`, `APP_KEY`, or `SMS_CIPHER_KEY`. Back it up securely; key rotation requires re-encrypting driver PII and recomputing license fingerprints before retiring the old key. `system_admin` and `fleet_manager` can manage and reveal driver PII. `driver_coordinator` can browse names, license expiry, and status but cannot decrypt PII or change records. Assignment candidates require active status, no soft deletion, and a license valid through the current Manila date. See `docs/FEATURE_M4.md` for the full contract and local verification checklist.

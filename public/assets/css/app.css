@@ -90,3 +90,6 @@ details form { min-width: 16rem; padding: .5rem; background: #f9fafb; border: 1p
 [data-pii-value] { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .03em; }
 [hidden] { display: none !important; }
 @media (max-width: 650px) { .page-heading { align-items: stretch; flex-direction: column; } .staff-actions > span { display: none; } .metric-card { min-width: 0; } .form-grid, .vehicle-specs { grid-template-columns: 1fr; } .filter-form { align-items: stretch; flex-direction: column; } }
+.driver-facts { display:grid; grid-template-columns:minmax(10rem, .35fr) 1fr; gap:.65rem 1rem; margin:0; }
+.driver-facts dt { font-weight:700; }
+.driver-facts dd { margin:0; overflow-wrap:anywhere; }
