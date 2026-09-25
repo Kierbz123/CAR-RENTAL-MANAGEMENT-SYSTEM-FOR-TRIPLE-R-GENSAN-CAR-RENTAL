@@ -142,8 +142,13 @@ See [docs/FEATURE_E.md](docs/FEATURE_E.md) for the implementation file trace and
 See [docs/MAGIC_LINKS.md](docs/MAGIC_LINKS.md) for the token schema, API contract, and round trips.
 See [docs/FEATURE_M1.md](docs/FEATURE_M1.md) for role, account-lock, session, and password-change details.
 See [docs/FEATURE_M2.md](docs/FEATURE_M2.md) for the vehicle fleet schema, authenticated photo storage, location lifecycle, mileage correction contract, and fleet acceptance checklist.
+See [docs/FEATURE_M3.md](docs/FEATURE_M3.md) for encrypted customer PII, document fingerprints/audit, customer eligibility, and the customer management checklist.
 See [docs/RECONNAISSANCE.md](docs/RECONNAISSANCE.md) for the greenfield Step 0 findings and decisions that still need resolution.
 
 ## Vehicle fleet (M2)
 
 Migration `004_vehicles.sql` adds vehicles, photos, locations, status history, and mileage history. `php bin/migrate.php` applies it after 001–003. Ensure `STORAGE_PATH` is writable by PHP and outside the public document root; uploaded vehicle photos are stored privately and streamed through an authenticated staff route. `system_admin` and `fleet_manager` can use Fleet → Vehicles and Fleet → Locations. Locations use an active/retired state: retired locations are hidden from new selections while remaining valid in history; `deleted_at` is reserved for removal of unused locations. The FR-01 field list is documented in `docs/FEATURE_M2.md`. No weekly/monthly pricing or GPS device identifier is part of M2.
+
+## Customer management (M3)
+
+Migration `005_customers.sql` adds customers, encrypted contacts/identity documents, append-only notes, and append-only `customer_identity_document_audit_logs`. Before first customer entry, set a dedicated `CUSTOMER_PII_KEY` in `.env` using a fresh base64-encoded 32-byte random value (`php -r "echo base64_encode(random_bytes(32)), PHP_EOL;"`). Do not use or reuse `APP_KEY` or `SMS_CIPHER_KEY`; back up this key securely because it is required to decrypt existing customer values. Customer routes are available to `system_admin` and `front_desk`. The M3 schema, key contract, migration sequence, and runtime checklist are in `docs/FEATURE_M3.md`.

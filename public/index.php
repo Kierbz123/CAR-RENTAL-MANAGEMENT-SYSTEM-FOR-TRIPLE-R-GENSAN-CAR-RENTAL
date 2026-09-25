@@ -9,6 +9,7 @@ use TripleR\Controllers\SmsWebhookController;
 use TripleR\Controllers\StaffNotificationController;
 use TripleR\Controllers\StaffHomeController;
 use TripleR\Controllers\Fleet\VehicleController;
+use TripleR\Controllers\Customers\CustomerController;
 use TripleR\Database;
 use TripleR\Http\Request;
 use TripleR\Http\Response;
@@ -23,6 +24,7 @@ use TripleR\Repositories\StaffUserRepository;
 use TripleR\Repositories\VehicleLocationRepository;
 use TripleR\Repositories\VehicleRepository;
 use TripleR\Repositories\VehicleStatusLogRepository;
+use TripleR\Repositories\CustomerRepository;
 use TripleR\Security\Csrf;
 use TripleR\Security\StaffAuth;
 use TripleR\Services\RateLimiter;
@@ -32,6 +34,8 @@ use TripleR\Services\NotificationService;
 use TripleR\Services\SmsMessageCipher;
 use TripleR\Services\VehiclePhotoService;
 use TripleR\Services\VehicleService;
+use TripleR\Services\CustomerPiiCipher;
+use TripleR\Services\CustomerService;
 
 require dirname(__DIR__) . '/app/bootstrap.php';
 
@@ -84,6 +88,10 @@ try {
     $vehicleService = new VehicleService($db, $vehicleRepository, new VehicleStatusLogRepository($db));
     $vehiclePhotos = new VehiclePhotoService($db);
     $fleetVehicles = new VehicleController($authMiddleware, $vehicleRepository, $vehicleLocations, $vehicleService, $vehiclePhotos);
+    $customerRepository = new CustomerRepository($db);
+    $customerPiiCipher = new CustomerPiiCipher();
+    $customerService = new CustomerService($db, $customerRepository, $customerPiiCipher);
+    $customerController = new CustomerController($authMiddleware, $customerRepository, $customerService, $customerPiiCipher);
 
     $router = new Router();
     $router->get('/', static fn (Request $request): Response => Response::redirect('/staff'));
@@ -125,6 +133,22 @@ try {
     $router->post('/fleet/locations/create', static fn (Request $request): Response => $fleetVehicles->createLocation($request));
     $router->post('/fleet/locations/retire', static fn (Request $request): Response => $fleetVehicles->retireLocation($request));
     $router->post('/fleet/locations/remove', static fn (Request $request): Response => $fleetVehicles->removeLocation($request));
+    $router->get('/customers', static fn (Request $request): Response => $customerController->index($request));
+    $router->get('/customers/new', static fn (): Response => $customerController->newForm());
+    $router->get('/customers/edit', static fn (Request $request): Response => $customerController->editForm($request));
+    $router->get('/customers/detail', static fn (Request $request): Response => $customerController->detail($request));
+    $router->post('/customers/create', static fn (Request $request): Response => $customerController->create($request));
+    $router->post('/customers/update', static fn (Request $request): Response => $customerController->update($request));
+    $router->post('/customers/contacts/add', static fn (Request $request): Response => $customerController->addContact($request));
+    $router->post('/customers/contacts/update', static fn (Request $request): Response => $customerController->updateContact($request));
+    $router->post('/customers/contacts/remove', static fn (Request $request): Response => $customerController->removeContact($request));
+    $router->post('/customers/documents/add', static fn (Request $request): Response => $customerController->addDocument($request));
+    $router->post('/customers/documents/update', static fn (Request $request): Response => $customerController->updateDocument($request));
+    $router->post('/customers/notes/add', static fn (Request $request): Response => $customerController->addNote($request));
+    $router->post('/customers/blacklist', static fn (Request $request): Response => $customerController->blacklist($request));
+    $router->post('/customers/unblacklist', static fn (Request $request): Response => $customerController->unblacklist($request));
+    $router->post('/customers/delete', static fn (Request $request): Response => $customerController->softDelete($request));
+    $router->post('/customers/reveal', static fn (Request $request): Response => $customerController->reveal($request));
 
     $router->dispatch($request)->send();
 } catch (\Throwable $error) {
