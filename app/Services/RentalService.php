@@ -82,8 +82,7 @@ final class RentalService
             if(!$this->rentals->setStatus($id,$from,$to,in_array($to,['cancelled','no_show'],true)?$reason:null,$actor,$timeColumn))throw new RuntimeException('The agreement changed in another request. Reload and try again.');
             if($to==='confirmed'&&$vehicle['current_status']==='available')$this->vehicleService->transitionStatusInTransaction((int)$r['vehicle_id'],'reserved',$actor);
             if($to==='active')$this->vehicleService->transitionStatusInTransaction((int)$r['vehicle_id'],'rented',$actor);
-            if($to==='returned'){$next=$this->hasOtherConfirmed((int)$r['vehicle_id'],$id)?'reserved':'available';$this->vehicleService->transitionStatusInTransaction((int)$r['vehicle_id'],$next,$actor);}
-            if(in_array($to,['cancelled','no_show'],true)&&$from==='confirmed'&&$vehicle['current_status']==='reserved'){$next=$this->hasOtherConfirmed((int)$r['vehicle_id'],$id)?'reserved':'available';if($next!==$vehicle['current_status'])$this->vehicleService->transitionStatusInTransaction((int)$r['vehicle_id'],$next,$actor);}
+            if($to==='returned'||(in_array($to,['cancelled','no_show'],true)&&$from==='confirmed'))$this->reconcileVehicleStatus((int)$r['vehicle_id'],$id,$actor);
             if(in_array($to,['completed','cancelled','no_show'],true))$this->invalidateLinks($id);
             $this->db->commit();
         }catch(\Throwable $e){if($this->db->inTransaction())$this->db->rollBack();throw $e;}
@@ -147,7 +146,21 @@ final class RentalService
     private function positiveId(mixed $v,string $name): int { $n=filter_var($v,FILTER_VALIDATE_INT);if($n===false||$n<1)throw new RuntimeException('Choose a valid '.$name.'.');return (int)$n; }
     private function totalCents(int $id): int{$r=$this->rentals->find($id);if(!$r)throw new RuntimeException('Rental agreement not found.');$total=$this->toCents((string)$r['base_amount']);foreach($this->charges->forAgreement($id) as $charge)$total+=$this->toCents((string)$charge['amount'])*self::CHARGE_SIGN[$charge['charge_type']]*($charge['entry_kind']==='reversal'?-1:1);return $total;}
     private function toCents(string $amount): int{[$whole,$fraction]=array_pad(explode('.', $amount,2),2,'0');return ((int)$whole*100)+(int)str_pad(substr($fraction,0,2),2,'0');}
-    private function hasOtherConfirmed(int $vehicleId,int $excludeId): bool{$q=$this->db->prepare("SELECT 1 FROM rental_agreements WHERE vehicle_id=:vehicle AND agreement_id<>:id AND status='confirmed' AND end_date>=:today LIMIT 1 FOR UPDATE");$q->execute(['vehicle'=>$vehicleId,'id'=>$excludeId,'today'=>(new DateTimeImmutable('now',new DateTimeZone('Asia/Manila')))->format('Y-m-d')]);return $q->fetchColumn()!==false;}
+    /** Shared fleet-status reconciliation after a rental releases its vehicle. */
+    private function reconcileVehicleStatus(int $vehicleId,int $excludeAgreementId,int $actor): void
+    {
+        $active=$this->db->prepare("SELECT 1 FROM rental_agreements WHERE vehicle_id=:vehicle AND agreement_id<>:id AND status='active' LIMIT 1 FOR UPDATE");
+        $active->execute(['vehicle'=>$vehicleId,'id'=>$excludeAgreementId]);
+        if($active->fetchColumn()!==false)$target='rented';
+        else{
+            $confirmed=$this->db->prepare("SELECT 1 FROM rental_agreements WHERE vehicle_id=:vehicle AND agreement_id<>:id AND status='confirmed' AND end_date>=:today LIMIT 1 FOR UPDATE");
+            $confirmed->execute(['vehicle'=>$vehicleId,'id'=>$excludeAgreementId,'today'=>(new DateTimeImmutable('now',new DateTimeZone('Asia/Manila')))->format('Y-m-d')]);
+            $target=$confirmed->fetchColumn()!==false?'reserved':'available';
+        }
+        $vehicle=$this->vehicles->find($vehicleId,true);
+        if(!$vehicle)throw new RuntimeException('Vehicle not found while reconciling rental status.');
+        if($vehicle['current_status']!==$target)$this->vehicleService->transitionStatusInTransaction($vehicleId,$target,$actor);
+    }
     private function invalidateLinks(int $id): void { $q=$this->db->prepare('UPDATE booking_access_tokens SET used_at=COALESCE(used_at,UTC_TIMESTAMP(6)),expires_at=LEAST(expires_at,UTC_TIMESTAMP(6)) WHERE booking_id=:id');$q->execute(['id'=>$id]); }
     private function date(string $value,string $label): string { $d=DateTimeImmutable::createFromFormat('!Y-m-d',$value,new DateTimeZone('Asia/Manila'));if(!$d||$d->format('Y-m-d')!==$value)throw new RuntimeException('Enter a valid '.$label.'.');return $value; }
     private function localDateTime(string $value): ?string { if($value==='')return null;$d=DateTimeImmutable::createFromFormat('!Y-m-d\TH:i',$value,new DateTimeZone('Asia/Manila'));if(!$d||$d->format('Y-m-d\TH:i')!==$value)throw new RuntimeException('Enter a valid scheduled pickup and return time.');return $d->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s.u'); }
