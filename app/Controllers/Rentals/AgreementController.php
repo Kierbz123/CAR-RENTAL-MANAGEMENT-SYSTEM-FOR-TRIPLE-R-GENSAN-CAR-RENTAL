@@ -43,7 +43,9 @@ final class AgreementController
     {
         $id=$this->id($request->form['agreement_id']??null);$action=(string)($request->form['action']??'');$roles=match($action){'confirm','cancel','no_show'=>['system_admin','front_desk'],'pickup','return'=>['system_admin','front_desk','fleet_manager'],'complete'=>['system_admin','finance_staff'],default=>[]};
         $user=$this->guard->requireRoles($roles);if($user instanceof Response)return $user;if(!$id)return Response::html('Invalid rental agreement.',422);if(!Csrf::valid($request))return Response::html('Invalid request token.',403);
-        try{$this->service->transition($id,$action,(int)$user['id'],(string)($request->form['reason']??''));$_SESSION['_rental_notice']='Rental agreement updated.';}catch(RuntimeException $e){$_SESSION['_rental_notice']=$e->getMessage();}return Response::redirect('/rentals/detail?agreement_id='.$id);
+        $mileage=null;if(in_array($action,['pickup','return'],true)){$parsed=filter_var($request->form['mileage']??null,FILTER_VALIDATE_INT);if($parsed===false||$parsed<0)return Response::html('Enter a valid whole-kilometer odometer reading.',422);$mileage=$parsed;}
+        $locationId=null;$rawLocation=trim((string)($request->form['location_id']??''));if($rawLocation!==''){$locationId=$this->id($rawLocation);if(!$locationId)return Response::html('Choose a valid active location.',422);}
+        try{$this->service->transition($id,$action,(int)$user['id'],(string)($request->form['reason']??''),$mileage,$locationId);$_SESSION['_rental_notice']='Rental agreement updated.';}catch(RuntimeException $e){$_SESSION['_rental_notice']=$e->getMessage();}return Response::redirect('/rentals/detail?agreement_id='.$id);
     }
 
     public function addCharge(Request $request): Response

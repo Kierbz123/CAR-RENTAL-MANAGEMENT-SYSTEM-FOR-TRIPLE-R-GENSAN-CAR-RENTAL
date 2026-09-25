@@ -54,7 +54,7 @@ Run `php bin/migrate.php` to apply migration 007 after 001–006. Add the three 
 
 - Same-day agreement has one generated rental day; backward dates are rejected; a cross-day range uses Manila dates without `CONVERT_TZ`.
 - Two overlapping creates for one vehicle yield at most one success; adjacent half-open ranges work; same-day ranges overlap correctly.
-- Confirmed vehicle status and agreement log are atomic; pickup and return update actual timestamps and M2 vehicle history; future confirmed booking keeps vehicle reserved.
+- Confirmed vehicle status and agreement log are atomic; pickup and return require a whole-kilometer odometer reading and append through M2 `VehicleService::recordMileageInTransaction()` in the same rental transaction. A decreasing reading rejects and rolls back the lifecycle transition; future confirmed booking keeps vehicle reserved.
 - Chauffeur input is rejected by API and unavailable in the staff form.
 - Cancel/no-show without reason fails; early no-show fails; post-grace no-show records reason and releases the reservation.
 - Charge UPDATE/DELETE triggers reject writes; reversal plus replacement is reflected correctly in the computed total; discount cannot make total negative.

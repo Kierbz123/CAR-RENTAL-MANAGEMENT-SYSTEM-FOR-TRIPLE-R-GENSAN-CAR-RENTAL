@@ -76,13 +76,26 @@ final class VehicleService
 
     public function recordMileage(int $id, int $mileage, ?int $locationId, int $actor, ?int $corrects = null, ?string $reason = null): void
     {
+        $ownsTransaction = !$this->db->inTransaction();
+        if ($ownsTransaction) $this->db->beginTransaction();
+        try {
+            $this->recordMileageInTransaction($id, $mileage, $locationId, $actor, $corrects, $reason);
+            if ($ownsTransaction) $this->db->commit();
+        } catch (\Throwable $e) {
+            if ($ownsTransaction && $this->db->inTransaction()) $this->db->rollBack();
+            throw $e;
+        }
+    }
+
+    /** Append an odometer reading atomically within the caller's rental transaction. */
+    public function recordMileageInTransaction(int $id, int $mileage, ?int $locationId, int $actor, ?int $corrects = null, ?string $reason = null): void
+    {
+        if (!$this->db->inTransaction()) throw new RuntimeException('A surrounding transaction is required to record rental mileage.');
         if ($mileage < 0) throw new RuntimeException('Mileage cannot be negative.');
         $reason = $reason === null ? null : trim($reason);
         if ($corrects !== null && ($reason === null || $reason === '')) throw new RuntimeException('A correction reason is required.');
         if ($reason !== null && mb_strlen($reason)>500) throw new RuntimeException('Correction reasons are limited to 500 characters.');
         if ($mileage>4294967295) throw new RuntimeException('Mileage exceeds the supported whole-kilometer range.');
-        $this->db->beginTransaction();
-        try {
             $vehicle = $this->vehicles->find($id,true);
             if (!$vehicle) throw new RuntimeException('Vehicle not found.');
             if ($locationId !== null) {
@@ -103,8 +116,6 @@ final class VehicleService
             } else {
                 $this->db->prepare('UPDATE vehicles SET current_mileage=:mileage WHERE vehicle_id=:id')->execute(['mileage'=>$current,'id'=>$id]);
             }
-            $this->db->commit();
-        } catch (\Throwable $e) { if ($this->db->inTransaction()) $this->db->rollBack(); throw $e; }
     }
 
     public function retireLocation(int $id): void

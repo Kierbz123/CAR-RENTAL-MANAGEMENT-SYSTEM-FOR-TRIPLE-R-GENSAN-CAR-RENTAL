@@ -1,4 +1,23 @@
 (() => {
+    document.querySelectorAll('form[action="/rentals/action"]').forEach(form => {
+        const action = form.querySelector('[name="action"]')?.value;
+        if (!['pickup', 'return'].includes(action)) return;
+        form.addEventListener('submit', event => {
+            if (form.querySelector('[name="mileage"]')) return;
+            const raw = window.prompt(`Enter the ${action} odometer reading in whole kilometers`);
+            if (raw === null || !/^\d{1,10}$/.test(raw) || Number(raw) > 4294967295) {
+                event.preventDefault();
+                if (raw !== null) window.alert('Enter a valid whole-kilometer reading.');
+                return;
+            }
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'mileage';
+            input.value = raw;
+            form.append(input);
+        });
+    });
+
     const form=document.querySelector('form[action="/rentals/reserve"]');
     if(!form)return;
     form.addEventListener('submit',async event=>{

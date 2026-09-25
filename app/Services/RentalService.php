@@ -43,10 +43,12 @@ final class RentalService
         return $id;
     }
 
-    public function transition(int $id,string $action,int $actor,?string $reason=null): void
+    public function transition(int $id,string $action,int $actor,?string $reason=null,?int $mileage=null,?int $locationId=null): void
     {
         $reason=trim((string)$reason);
         if(in_array($action,['cancel','no_show'],true)&&($reason===''||mb_strlen($reason)>500))throw new RuntimeException('A reason up to 500 characters is required.');
+        if(in_array($action,['pickup','return'],true)&&($mileage===null||$mileage<0||$mileage>4294967295))throw new RuntimeException('Enter a valid whole-kilometer odometer reading for pickup and return.');
+        if(!in_array($action,['pickup','return'],true)&&$locationId!==null)throw new RuntimeException('A location can only be recorded with pickup or return mileage.');
         $this->db->beginTransaction();
         try{
             $snapshot=$this->rentals->find($id);if(!$snapshot)throw new RuntimeException('Rental agreement not found.');
@@ -76,6 +78,7 @@ final class RentalService
             if($to==='confirmed'&&!in_array($vehicle['current_status'],['available','reserved'],true))throw new RuntimeException('The vehicle is no longer available for confirmation.');
             if($to==='active'&&$vehicle['current_status']!=='reserved')throw new RuntimeException('The vehicle is not in the reserved status required for pickup.');
             if($to==='returned'&&$vehicle['current_status']!=='rented')throw new RuntimeException('The vehicle is not marked rented.');
+            if(in_array($action,['pickup','return'],true))$this->vehicleService->recordMileageInTransaction((int)$r['vehicle_id'],(int)$mileage,$locationId,$actor);
             if(!$this->rentals->setStatus($id,$from,$to,in_array($to,['cancelled','no_show'],true)?$reason:null,$actor,$timeColumn))throw new RuntimeException('The agreement changed in another request. Reload and try again.');
             if($to==='confirmed'&&$vehicle['current_status']==='available')$this->vehicleService->transitionStatusInTransaction((int)$r['vehicle_id'],'reserved',$actor);
             if($to==='active')$this->vehicleService->transitionStatusInTransaction((int)$r['vehicle_id'],'rented',$actor);
