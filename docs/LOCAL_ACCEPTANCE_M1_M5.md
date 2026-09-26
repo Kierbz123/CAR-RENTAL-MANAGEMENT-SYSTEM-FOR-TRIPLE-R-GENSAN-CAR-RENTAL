@@ -109,6 +109,7 @@ Run this checklist in order before starting M6. It combines each module's accept
 - [ ] Scenario A: start an earlier active rental, confirm a later non-overlapping booking on the same vehicle, then cancel the later booking. Fleet status must remain `rented`.
 - [ ] Scenario B: return the active rental while another future confirmed agreement remains. Fleet status becomes `reserved`. With no active or current/future confirmed agreements, it becomes `available`.
 - [ ] `reconcileVehicleStatus()` is the shared implementation used on return and confirmed cancel/no-show. Expiry is verified separately below and does not call it; review the transition call sites in code.
+- [ ] Expiry safety scenario: keep an active rental on a vehicle (`current_status='rented'`) and create a separate unconfirmed `reserved` hold for a non-overlapping period. Expire the hold; verify only that agreement becomes cancelled and fleet status remains `rented`.
 - [ ] Near UTC/Manila midnight, confirm reconciliation's `end_date >= today` comparison uses Manila's calendar date, not the server's UTC date.
 - [ ] Create a scheduled pickup just after Manila midnight while UTC is still the prior date; local input date/time must be accepted, stored in UTC, and displayed correctly. This tests local-time parsing separately from status reconciliation.
 
