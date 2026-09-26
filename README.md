@@ -174,6 +174,7 @@ schtasks.exe /Create /F /SC MINUTE /MO 1 /TN "TripleR-Consume-STOP" /TR '"C:\php
 ```
 
 See [docs/FEATURE_M5.md](docs/FEATURE_M5.md) for the exact state graph, lock order, SMS policy, and local acceptance checklist.
+Before beginning M6, run the consolidated [M1–M5 local runtime acceptance checklist](docs/LOCAL_ACCEPTANCE_M1_M5.md) and record pass/fail evidence for every section.
 
 ## Vehicle fleet (M2)
 
