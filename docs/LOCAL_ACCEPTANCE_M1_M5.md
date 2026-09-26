@@ -16,6 +16,7 @@ Run this checklist in order before starting M6. It combines each module's accept
 - [ ] Follow README database-account and `.env` setup. Keep migration credentials separate from runtime credentials.
 - [ ] Set distinct secrets for `APP_KEY`, `SMS_CIPHER_KEY`, `CUSTOMER_PII_KEY`, and `DRIVER_PII_KEY`; preserve the PII keys securely. Do not configure live SMS credentials until ready to send real messages.
 - [ ] Run `php bin/migrate.php`; confirm migrations 001–008 apply in order without warnings or errors. Migration 008 is the rental identity guard; new future migrations must use the next unused number.
+- [ ] Separately verify migration 003 against a populated Feature E `users` table in a disposable schema: apply 001, seed existing `system_admin`/`fleet_manager` rows, then apply 002–003. Confirm existing rows survive and the final role ENUM has exactly eight canonical values.
 - [ ] Run `php bin/seed.php`; sign in with configured seed credentials and change the first-login password.
 - [ ] Start `php -S 127.0.0.1:8000 -t public public/router.php`; confirm login and staff home load over localhost.
 - [ ] Configure the README schedules: notification worker and rental expiry/reminder/STOP jobs every minute; session sweep every five minutes. Keep test SMS provider settings inert or pointed at a safe test account.
@@ -66,6 +67,7 @@ Run this checklist in order before starting M6. It combines each module's accept
 - [ ] Change status and confirm old/new status, actor, mileage/location snapshot and oldest-first history. Retire and confirm status, status-log row, and `deleted_at` commit together.
 - [ ] Record mileage without a status change; decreasing reading is rejected. Correct latest and non-latest roots as `system_admin`; invalid sequence correction is rejected; valid correction appends without rewriting history and `current_mileage` resolves to the effective latest reading.
 - [ ] Retire a location: it disappears from new selectors but remains valid in historical records. Removing a referenced location is rejected.
+- [ ] Retiring a referenced location is allowed and preserves historical references; physically removing a referenced location is rejected.
 - [ ] Confirm non-fleet roles and unauthenticated users cannot access fleet management or photo streaming.
 
 **Result / defect notes:**
@@ -77,6 +79,7 @@ Run this checklist in order before starting M6. It combines each module's accept
 - [ ] Submit the same Philippine driver's-license number under a license field and a government-ID alias. Canonical type must be `ph_driver_license`; the shared fingerprint uniqueness rejects the second registration, including when the original customer is blacklisted or soft-deleted.
 - [ ] Correct an identity document. Confirm in-place correction appends to `customer_identity_document_audit_logs`; no application delete path exists. Database UPDATE/DELETE against `customer_notes` and `customer_identity_document_audit_logs` must be rejected.
 - [ ] Blacklist a customer with an active agreement; blacklist is allowed and the customer becomes ineligible for future booking. Confirm the customer is absent from every new-booking selector.
+- [ ] Confirm blacklisting locks the customer row, requires a reason, and appends that reason as an immutable customer note.
 - [ ] Try soft-delete for each open agreement status (`reserved`, `confirmed`, `active`, `returned`); it must be blocked. Terminal agreements do not block deletion.
 - [ ] With M5 schema applied, race customer blacklist/delete against rental creation. Confirm both paths lock the customer row and no agreement is created against a customer who became ineligible first.
 
@@ -90,6 +93,7 @@ Run this checklist in order before starting M6. It combines each module's accept
 - [ ] Change driver status. Initial and subsequent entries render oldest-first; UPDATE/DELETE on `driver_status_logs` is rejected.
 - [ ] Update primary contacts concurrently; at most one primary per driver/contact type remains.
 - [ ] Run `php bin/driver-conflict-check.php <driver_id> <start> <end> [exclude_agreement_id]`. With M5 applied, verify shared half-open overlap semantics: intersection conflicts, adjacent periods do not, same-day uses one day, and excluded agreement is ignored.
+- [ ] Confirm `DriverRepository::conflictsWith()` delegates to the shared `BookingOverlapService`; there is only one overlap implementation.
 
 **Result / defect notes:**
 
@@ -104,14 +108,16 @@ Run this checklist in order before starting M6. It combines each module's accept
 - [ ] Confirm a far-future confirmed booking immediately sets fleet status `reserved`, while a non-overlapping date range remains bookable. M10 period availability must use agreement date ranges and/or `vehicle_status_logs`, never just current status.
 - [ ] Scenario A: start an earlier active rental, confirm a later non-overlapping booking on the same vehicle, then cancel the later booking. Fleet status must remain `rented`.
 - [ ] Scenario B: return the active rental while another future confirmed agreement remains. Fleet status becomes `reserved`. With no active or current/future confirmed agreements, it becomes `available`.
-- [ ] Near UTC/Manila midnight, confirm `end_date` “today” is evaluated using Manila’s calendar date. Create scheduled pickup just after Manila midnight while UTC is still the prior date; local input date/time must be accepted and stored/displayed correctly.
+- [ ] `reconcileVehicleStatus()` is the shared implementation used on return and confirmed cancel/no-show. Expiry is verified separately below and does not call it; review the transition call sites in code.
+- [ ] Near UTC/Manila midnight, confirm reconciliation's `end_date >= today` comparison uses Manila's calendar date, not the server's UTC date.
+- [ ] Create a scheduled pickup just after Manila midnight while UTC is still the prior date; local input date/time must be accepted, stored in UTC, and displayed correctly. This tests local-time parsing separately from status reconciliation.
 
 ### Agreement lifecycle and vehicle mileage
 
 - [ ] Create a reserved hold; confirm it does not change fleet status. Confirm the agreement; vehicle transitions to `reserved`. Pick up; vehicle transitions to `rented`. Return; agreement becomes `returned` and shared status reconciliation chooses the correct vehicle status.
 - [ ] Pickup and return require whole-kilometer readings. Each appends `vehicle_mileage_logs` and updates vehicle mileage in the same transaction as agreement/status logs. Try a decreasing reading; the entire lifecycle action must roll back.
 - [ ] Cancel/no-show without reason fails. No-show before the configured grace period fails; after the default/configured 60-minute grace, it records a reason and releases a confirmed reservation.
-- [ ] Expire an unconfirmed hold with `php bin/rentals-expire.php`; it transitions once to cancelled with system reason and invalidates booking tokens. Run the script again; no duplicate transition/log/SMS occurs.
+- [ ] Expire an unconfirmed hold with `php bin/rentals-expire.php`; it transitions once to cancelled with system reason and invalidates booking tokens. It intentionally does not call vehicle-status reconciliation because an unconfirmed hold never changed fleet status. Run the script again; no duplicate transition/log/SMS occurs.
 - [ ] Run `php bin/rentals-reminders.php` twice while a pickup/return is within 24 hours. One idempotency key per agreement/reminder kind means no duplicate queued notification.
 - [ ] Confirm chauffeur rental type is unavailable in the UI and rejected by API until M6.
 - [ ] Return condition/damage capture is not part of M5; verify M7 scope has not been implemented as a competing workflow.
