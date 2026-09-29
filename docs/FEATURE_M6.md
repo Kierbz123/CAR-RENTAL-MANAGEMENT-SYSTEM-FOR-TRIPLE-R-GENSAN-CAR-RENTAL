@@ -28,3 +28,24 @@ This order is maintained even for driver removal, avoiding any potential deadloc
 - `driver_id` is protected by `rental_agreements_driver_immutable` which prevents reassignments after the rental is active.
 - `chauffeur_fee` reversals follow the append-only ledger pattern.
 - Two-phase booking failures cleanly notify the user without losing the created reservation.
+
+## Acceptance Checklist
+
+All items verified by `bin/test-m6.php` against a fresh acceptance database (`009_chauffeur_guards.sql` applied).
+
+| # | Scenario | Result |
+|---|---|---|
+| 1 | Chauffeur creation with driver assigns `driver_id` and appends `chauffeur_fee` charge | PASS |
+| 2 | Self-drive creation works unchanged (no driver, no fee) | PASS |
+| 3 | FR-05 Confirmation Guard: rejects confirming a driverless chauffeur agreement | PASS |
+| 4 | FR-05 Confirmation Guard: allows confirming once a driver is assigned | PASS |
+| 5 | BR-4 Overlap: assigning a driver who has an overlapping rental is rejected | PASS |
+| 6 | BR-4 Adjacent: assigning a driver to a date-adjacent (non-overlapping) rental succeeds | PASS |
+| 7 | Driver reassignment on `reserved`: reverses old fee and appends new fee (3 charge rows) | PASS |
+| 8 | Driver removal blocked on `confirmed` agreement (restricted to `reserved` only) | PASS |
+| 9 | Driver removal on `reserved`: sets `driver_id=NULL` and reverses the fee | PASS |
+| 10 | Vehicle status unaffected by driver assignment/removal operations | PASS |
+| 11 | Charge immutability trigger: direct `UPDATE` on `rental_charges` rejected with `append-only` | PASS |
+| 12 | Chauffeur lifecycle: pickup transitions vehicle to `rented` | PASS |
+| 13 | Chauffeur lifecycle: return transitions vehicle to `available` | PASS |
+
