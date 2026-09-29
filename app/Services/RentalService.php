@@ -20,7 +20,7 @@ final class RentalService
     /** The sole charge-sign mapping used by every total calculation. */
     private const CHARGE_SIGN=['fee'=>1,'discount'=>-1,'tax'=>1,'damage'=>1,'chauffeur_fee'=>1,'other'=>1];
 
-    public function __construct(private readonly PDO $db,private readonly RentalRepository $rentals,private readonly ChargeRepository $charges,private readonly VehicleRepository $vehicles,private readonly CustomerRepository $customers,private readonly CustomerPiiCipher $customerCipher,private readonly VehicleService $vehicleService,private readonly NotificationService $notifications,private readonly MagicLinkService $magicLinks) {}
+    public function __construct(private readonly PDO $db,private readonly RentalRepository $rentals,private readonly ChargeRepository $charges,private readonly VehicleRepository $vehicles,private readonly CustomerRepository $customers,private readonly CustomerPiiCipher $customerCipher,private readonly VehicleService $vehicleService,private readonly NotificationService $notifications,private readonly MagicLinkService $magicLinks,private readonly ChauffeurService $chauffeurs) {}
 
     public function eligibleCustomers(): array { return $this->customers->eligibleForBooking(); }
     public function availableVehicles(): array { return $this->vehicles->availableForBooking(); }
@@ -28,8 +28,10 @@ final class RentalService
     public function create(array $input,int $actor): int
     {
         $rentalType=(string)($input['rental_type']??'self_drive');
-        if($rentalType!=='self_drive')throw new RuntimeException('Chauffeur rentals are unavailable until M6 adds driver assignment and conflict protection.');
+        if(!in_array($rentalType, ['self_drive', 'chauffeur'], true))throw new RuntimeException('Invalid rental type.');
         $customer=$this->positiveId($input['customer_id']??null,'customer');$vehicle=$this->positiveId($input['vehicle_id']??null,'vehicle');
+        $vehicleRow = $this->vehicles->find($vehicle);
+        if ($rentalType === 'chauffeur' && (!$vehicleRow || $vehicleRow['chauffeur_daily_rate'] === null)) throw new RuntimeException('This vehicle is not available for chauffeur rentals.');
         $start=$this->date((string)($input['start_date']??''),'start date');$end=$this->date((string)($input['end_date']??''),'end date');
         if($end<$start)throw new RuntimeException('Return date must be the same day or after pickup date.');
         $pickup=$this->localDateTime((string)($input['scheduled_pickup_at']??''));$return=$this->localDateTime((string)($input['scheduled_return_at']??''));
@@ -37,7 +39,7 @@ final class RentalService
         if((new DateTimeImmutable($pickup,new DateTimeZone('UTC')))->setTimezone(new DateTimeZone('Asia/Manila'))->format('Y-m-d')!==$start||(new DateTimeImmutable($return,new DateTimeZone('UTC')))->setTimezone(new DateTimeZone('Asia/Manila'))->format('Y-m-d')!==$end)throw new RuntimeException('Scheduled pickup and return times must fall on their selected Manila rental dates.');
         $deposit=$this->money((string)($input['deposit_amount']??'0'),'security deposit');
         if($pickup!==null&&$return!==null&&$return<$pickup)throw new RuntimeException('Scheduled return must not be before scheduled pickup.');
-        $id=$this->rentals->createInTransaction(['customer_id'=>$customer,'vehicle_id'=>$vehicle,'rental_type'=>'self_drive','start_date'=>$start,'end_date'=>$end,'scheduled_pickup_at'=>$pickup,'scheduled_return_at'=>$return,'deposit_amount'=>$deposit,'hold_minutes'=>Config::int('RESERVATION_HOLD_MINUTES',60)],$actor);
+        $id=$this->rentals->createInTransaction(['customer_id'=>$customer,'vehicle_id'=>$vehicle,'rental_type'=>$rentalType,'start_date'=>$start,'end_date'=>$end,'scheduled_pickup_at'=>$pickup,'scheduled_return_at'=>$return,'deposit_amount'=>$deposit,'hold_minutes'=>Config::int('RESERVATION_HOLD_MINUTES',60)],$actor);
         // The reservation is durable even if provider queuing fails; staff can reissue from the detail view.
         try{$phone=$this->primaryCustomerPhone($customer);if($phone!==null){$r=$this->rentals->find($id);$this->magicLinks->issue($phone,null,'booking_manage',$id,new DateTimeImmutable((string)$r['hold_expires_at'],new DateTimeZone('UTC')),null);}}catch(\Throwable $e){error_log('Booking management link could not be queued for agreement '.$id.': '.get_class($e));}
         return $id;
@@ -73,7 +75,7 @@ final class RentalService
                     $to='no_show';break;
                 default: throw new RuntimeException('Unknown rental action.');
             }
-            if($r['rental_type']==='chauffeur')throw new RuntimeException('Chauffeur rentals are unavailable until M6.');
+            if($action==='confirm') $this->chauffeurs->validateForConfirmation($r);
             if($action==='confirm'&&($r['hold_expires_at']===null||new DateTimeImmutable((string)$r['hold_expires_at'],new DateTimeZone('UTC'))<=new DateTimeImmutable('now',new DateTimeZone('UTC'))))throw new RuntimeException('The reservation hold has expired and cannot be confirmed.');
             if($to==='confirmed'&&!in_array($vehicle['current_status'],['available','reserved'],true))throw new RuntimeException('The vehicle is no longer available for confirmation.');
             if($to==='active'&&$vehicle['current_status']!=='reserved')throw new RuntimeException('The vehicle is not in the reserved status required for pickup.');
@@ -84,6 +86,15 @@ final class RentalService
             if($to==='active')$this->vehicleService->transitionStatusInTransaction((int)$r['vehicle_id'],'rented',$actor);
             if($to==='returned'||(in_array($to,['cancelled','no_show'],true)&&$from==='confirmed'))$this->reconcileVehicleStatus((int)$r['vehicle_id'],$id,$actor);
             if(in_array($to,['completed','cancelled','no_show'],true))$this->invalidateLinks($id);
+            if(in_array($to,['cancelled','no_show'],true)) {
+                $cList = $this->charges->forAgreement($id);
+                foreach ($cList as $cRow) {
+                    if ($cRow['charge_type'] === 'chauffeur_fee' && $cRow['entry_kind'] === 'charge' && !$cRow['is_reversed']) {
+                        $locked = $this->charges->lockOriginalForReversal($id, (int)$cRow['charge_id']);
+                        if ($locked) $this->charges->appendReversal($id, $locked, 'Reversal: Agreement ' . $to, $actor);
+                    }
+                }
+            }
             $this->db->commit();
         }catch(\Throwable $e){if($this->db->inTransaction())$this->db->rollBack();throw $e;}
         $template=['confirmed'=>'rental.confirmed','active'=>'rental.pickup','returned'=>'rental.returned'][$to]??null;

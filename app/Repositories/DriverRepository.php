@@ -31,6 +31,18 @@ final class DriverRepository
         return $stmt->fetchAll();
     }
 
+    public function availableForAssignment(string $manilaDate, string $start, string $end, ?int $excludeAgreementId = null): array
+    {
+        $requestEnd = $end === $start ? (new \DateTimeImmutable($end, new \DateTimeZone('Asia/Manila')))->modify('+1 day')->format('Y-m-d') : $end;
+        $sql = "SELECT d.driver_id, d.full_name, d.license_expiry FROM drivers d WHERE d.status='active' AND d.deleted_at IS NULL AND d.license_expiry >= :today AND NOT EXISTS(SELECT 1 FROM rental_agreements r WHERE r.driver_id=d.driver_id AND r.status IN ('reserved','confirmed','active') AND r.start_date < :request_end AND DATE_ADD(r.end_date,INTERVAL IF(r.end_date=r.start_date,1,0) DAY) > :request_start";
+        $params = ['today' => $manilaDate, 'request_start' => $start, 'request_end' => $requestEnd];
+        if ($excludeAgreementId !== null) { $sql .= " AND r.agreement_id<>:exclude"; $params['exclude'] = $excludeAgreementId; }
+        $sql .= ") ORDER BY d.full_name, d.driver_id";
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll();
+    }
+
     public function find(int $id, bool $lock = false, bool $includeDeleted = false): ?array
     {
         $sql = 'SELECT * FROM drivers WHERE driver_id=:id';

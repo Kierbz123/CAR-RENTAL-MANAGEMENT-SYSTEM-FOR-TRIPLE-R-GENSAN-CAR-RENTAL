@@ -22,6 +22,10 @@ final class RentalRuntimeFactory
         $notifications=new NotificationService(new NotificationRepository($db),new InboundSmsEventRepository($db),new SmsMessageCipher(),new RulesAcceptanceRepository($db));
         $magicLinks=new MagicLinkService(new MagicLinkRepository($db),new RateLimiter($db),$notifications);
         $vehicles=new VehicleRepository($db);$vehicleService=new VehicleService($db,$vehicles,new VehicleStatusLogRepository($db));$customers=new CustomerRepository($db);
-        return new RentalService($db,new RentalRepository($db,new BookingOverlapService($db)),new ChargeRepository($db),$vehicles,$customers,new CustomerPiiCipher(),$vehicleService,$notifications,$magicLinks);
+        $overlaps = new BookingOverlapService($db);
+        $rentals = new RentalRepository($db, $overlaps);
+        $charges = new ChargeRepository($db);
+        $chauffeurs = new ChauffeurService($db, $rentals, $charges, $vehicles, $overlaps);
+        return new RentalService($db,$rentals,$charges,$vehicles,$customers,new CustomerPiiCipher(),$vehicleService,$notifications,$magicLinks,$chauffeurs);
     }
 }

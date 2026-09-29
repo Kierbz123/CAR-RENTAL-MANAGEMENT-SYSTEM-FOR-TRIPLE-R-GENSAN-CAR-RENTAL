@@ -108,11 +108,10 @@ try {
     $customerRepository = new CustomerRepository($db);
     $customerPiiCipher = new CustomerPiiCipher();
     $customerService = new CustomerService($db, $customerRepository, $customerPiiCipher);
-    $customerController = new CustomerController($authMiddleware, $customerRepository, $customerService, $customerPiiCipher);
-    $rentalRepository = new RentalRepository($db, new BookingOverlapService($db));
-    $chargeRepository = new ChargeRepository($db);
-    $rentalService = new RentalService($db, $rentalRepository, $chargeRepository, $vehicleRepository, $customerRepository, $customerPiiCipher, $vehicleService, $notificationService, $magicLinkService);
-    $agreements = new AgreementController($authMiddleware, $rentalRepository, $chargeRepository, $rentalService);
+    $chauffeurService = new ChauffeurService($db, $rentalRepository, $chargeRepository, $vehicleRepository, new \TripleR\Services\BookingOverlapService($db));
+    $rentalService = new RentalService($db, $rentalRepository, $chargeRepository, $vehicleRepository, $customerRepository, $customerPiiCipher, $vehicleService, $notificationService, $magicLinkService, $chauffeurService);
+    $agreements = new AgreementController($authMiddleware, $rentalRepository, $chargeRepository, $rentalService, $chauffeurService, $driverService);
+    $driverAssignments = new \TripleR\Controllers\Rentals\DriverAssignmentController($authMiddleware, $chauffeurService);
     $rentalApi = new RentalApiController($authMiddleware, $rentalService, $magicLinkService);
 
     $router = new Router();
@@ -188,6 +187,8 @@ try {
     $router->get('/rentals/detail', static fn (Request $request): Response => $agreements->detail($request));
     $router->post('/rentals/reserve', static fn (Request $request): Response => $agreements->create($request));
     $router->post('/rentals/action', static fn (Request $request): Response => $agreements->action($request));
+    $router->post('/rentals/driver/assign', static fn (Request $request): Response => $driverAssignments->assign($request));
+    $router->post('/rentals/driver/remove', static fn (Request $request): Response => $driverAssignments->remove($request));
     $router->post('/rentals/charge', static fn (Request $request): Response => $agreements->addCharge($request));
     $router->post('/rentals/charge/reverse', static fn (Request $request): Response => $agreements->reverseCharge($request));
     $router->post('/rentals/deposit', static fn (Request $request): Response => $agreements->deposit($request));

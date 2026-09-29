@@ -140,6 +140,12 @@ final class DriverService
         return $this->drivers->selectableForAssignment($today);
     }
 
+    public function availableForAssignment(string $start, string $end, ?int $excludeAgreementId = null): array
+    {
+        $today = (new DateTimeImmutable('now', new DateTimeZone('Asia/Manila')))->format('Y-m-d');
+        return $this->drivers->availableForAssignment($today, $start, $end, $excludeAgreementId);
+    }
+
     public function reveal(int $driverId, string $kind, ?int $recordId = null): string
     {
         $driver = $this->drivers->find($driverId, false, true);

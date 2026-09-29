@@ -12,7 +12,7 @@ final class RentalRepository
 {
     public function __construct(private readonly PDO $db, private readonly BookingOverlapService $overlaps) {}
 
-    /** Canonical lock order: vehicle -> customer -> driver (M6). */
+    /** Canonical lock order: vehicle -> customer -> driver -> agreement. */
     public function createInTransaction(array $data, int $actor): int
     {
         $this->db->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
@@ -24,11 +24,11 @@ final class RentalRepository
             $customer = $this->db->prepare('SELECT customer_id,is_blacklisted,deleted_at FROM customers WHERE customer_id=:id FOR UPDATE');
             $customer->execute(['id'=>$data['customer_id']]); $c=$customer->fetch();
             if (!$c || (int)$c['is_blacklisted']===1 || $c['deleted_at']!==null) throw new RuntimeException('Choose an eligible customer.');
-            if ($data['rental_type'] !== 'self_drive') throw new RuntimeException('Chauffeur rentals are unavailable until M6 adds driver assignment and conflict protection.');
+            if ($data['rental_type'] !== 'self_drive' && $data['rental_type'] !== 'chauffeur') throw new RuntimeException('Invalid rental type.');
             if ($this->overlaps->vehicleConflicts((int)$v['vehicle_id'],$data['start_date'],$data['end_date'])) throw new RuntimeException('This vehicle already has an overlapping rental.');
             $holdMinutes=max(1,min(1440,(int)$data['hold_minutes']));
-            $stmt=$this->db->prepare("INSERT INTO rental_agreements (customer_id,vehicle_id,rental_type,start_date,end_date,scheduled_pickup_at,scheduled_return_at,daily_rate,security_deposit_amount,deposit_status,hold_expires_at,status,created_by_user_id) VALUES (:customer,:vehicle,'self_drive',:start_date,:end_date,:pickup,:return_at,:rate,:deposit,:deposit_status,DATE_ADD(UTC_TIMESTAMP(6), INTERVAL {$holdMinutes} MINUTE),'reserved',:actor)");
-            $stmt->execute(['customer'=>$data['customer_id'],'vehicle'=>$data['vehicle_id'],'start_date'=>$data['start_date'],'end_date'=>$data['end_date'],'pickup'=>$data['scheduled_pickup_at'],'return_at'=>$data['scheduled_return_at'],'rate'=>$v['daily_rate'],'deposit'=>$data['deposit_amount'],'deposit_status'=>$data['deposit_amount']>0?'due':'not_required','actor'=>$actor]);
+            $stmt=$this->db->prepare("INSERT INTO rental_agreements (customer_id,vehicle_id,rental_type,start_date,end_date,scheduled_pickup_at,scheduled_return_at,daily_rate,security_deposit_amount,deposit_status,hold_expires_at,status,created_by_user_id) VALUES (:customer,:vehicle,:rental_type,:start_date,:end_date,:pickup,:return_at,:rate,:deposit,:deposit_status,DATE_ADD(UTC_TIMESTAMP(6), INTERVAL {$holdMinutes} MINUTE),'reserved',:actor)");
+            $stmt->execute(['customer'=>$data['customer_id'],'vehicle'=>$data['vehicle_id'],'rental_type'=>$data['rental_type'],'start_date'=>$data['start_date'],'end_date'=>$data['end_date'],'pickup'=>$data['scheduled_pickup_at'],'return_at'=>$data['scheduled_return_at'],'rate'=>$v['daily_rate'],'deposit'=>$data['deposit_amount'],'deposit_status'=>$data['deposit_amount']>0?'due':'not_required','actor'=>$actor]);
             $id=(int)$this->db->lastInsertId();
             $this->appendStatus($id,null,'reserved',null,$actor);
             $this->appendDeposit($id,null,$data['deposit_amount']>0?'due':'not_required',null,(string)$data['deposit_amount'],'Initial deposit state',$actor);
@@ -52,6 +52,7 @@ final class RentalRepository
 
     public function lockVehicle(int $id): ?array { $q=$this->db->prepare('SELECT * FROM vehicles WHERE vehicle_id=:id FOR UPDATE');$q->execute(['id'=>$id]);$r=$q->fetch();return $r?:null; }
     public function lockCustomer(int $id): ?array { $q=$this->db->prepare('SELECT * FROM customers WHERE customer_id=:id FOR UPDATE');$q->execute(['id'=>$id]);$r=$q->fetch();return $r?:null; }
+    public function lockDriver(int $id): ?array { $q=$this->db->prepare('SELECT * FROM drivers WHERE driver_id=:id AND deleted_at IS NULL FOR UPDATE');$q->execute(['id'=>$id]);$r=$q->fetch();return $r?:null; }
     public function lockAgreement(int $id): ?array { return $this->find($id,true); }
 
     public function setStatus(int $id,string $expected,string $next,?string $reason,int $actor,?string $actualColumn=null): bool

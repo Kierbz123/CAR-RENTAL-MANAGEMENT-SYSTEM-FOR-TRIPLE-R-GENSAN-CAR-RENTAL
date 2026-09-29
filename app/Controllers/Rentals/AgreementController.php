@@ -11,11 +11,13 @@ use TripleR\Repositories\RentalRepository;
 use TripleR\Repositories\ChargeRepository;
 use TripleR\Security\Csrf;
 use TripleR\Services\RentalService;
+use TripleR\Services\ChauffeurService;
+use TripleR\Services\DriverService;
 
 final class AgreementController
 {
     private const READ=['system_admin','fleet_manager','front_desk','finance_staff','auditor'];
-    public function __construct(private readonly AuthMiddleware $guard,private readonly RentalRepository $rentals,private readonly ChargeRepository $charges,private readonly RentalService $service) {}
+    public function __construct(private readonly AuthMiddleware $guard,private readonly RentalRepository $rentals,private readonly ChargeRepository $charges,private readonly RentalService $service, private readonly ChauffeurService $chauffeurs, private readonly DriverService $driverService) {}
 
     public function index(Request $request): Response
     {
@@ -24,19 +26,47 @@ final class AgreementController
     }
 
     public function newForm(): Response
-    { $user=$this->guard->requireRoles(['system_admin','front_desk']);if($user instanceof Response)return $user;return $this->render('rentals/booking-new',['user'=>$user,'customers'=>$this->service->eligibleCustomers(),'vehicles'=>$this->service->availableVehicles(),'error'=>null,'values'=>[]]); }
+    { 
+        $user=$this->guard->requireRoles(['system_admin','front_desk']);if($user instanceof Response)return $user;
+        $drivers = $this->driverService->selectableForAssignment();
+        return $this->render('rentals/booking-new',['user'=>$user,'customers'=>$this->service->eligibleCustomers(),'vehicles'=>$this->service->availableVehicles(),'drivers'=>$drivers,'error'=>null,'values'=>[]]); 
+    }
 
     public function create(Request $request): Response
     {
         $user=$this->guard->requireRoles(['system_admin','front_desk']);if($user instanceof Response)return $user;if(!Csrf::valid($request))return Response::html('Invalid request token.',403);
-        try{$id=$this->service->create($request->form,(int)$user['id']);$agreement=$this->rentals->find($id);return $this->render('rentals/reserve',['user'=>$user,'agreement'=>$agreement]);}
-        catch(RuntimeException $e){return $this->render('rentals/booking-new',['user'=>$user,'customers'=>$this->service->eligibleCustomers(),'vehicles'=>$this->service->availableVehicles(),'error'=>$e->getMessage(),'values'=>$request->form]);}
+        try{
+            $id=$this->service->create($request->form,(int)$user['id']);
+            if (($request->form['rental_type'] ?? '') === 'chauffeur' && ($request->form['driver_id'] ?? '') !== '') {
+                try {
+                    $this->chauffeurs->assignDriver($id, (int)$request->form['driver_id'], (int)$user['id']);
+                } catch (RuntimeException $assignEx) {
+                    $_SESSION['_rental_notice'] = "Reservation created successfully, but the selected driver could not be assigned (conflict). Please assign a different driver.";
+                    return Response::redirect('/rentals/detail?agreement_id='.$id);
+                }
+            }
+            $agreement=$this->rentals->find($id);return $this->render('rentals/reserve',['user'=>$user,'agreement'=>$agreement]);
+        }
+        catch(RuntimeException $e){
+            $start = (string)($request->form['start_date'] ?? '');
+            $end = (string)($request->form['end_date'] ?? '');
+            $drivers = ($start !== '' && $end !== '') ? $this->driverService->availableForAssignment($start, $end) : $this->driverService->selectableForAssignment();
+            return $this->render('rentals/booking-new',['user'=>$user,'customers'=>$this->service->eligibleCustomers(),'vehicles'=>$this->service->availableVehicles(),'drivers'=>$drivers,'error'=>$e->getMessage(),'values'=>$request->form]);
+        }
     }
 
     public function detail(Request $request): Response
     {
         $user=$this->guard->requireRoles(self::READ);if($user instanceof Response)return $user;$id=$this->id($request->query['agreement_id']??null);$row=$id?$this->rentals->find($id):null;if(!$row)return Response::html('Rental agreement not found.',404);
-        $notice=$_SESSION['_rental_notice']??null;unset($_SESSION['_rental_notice']);return $this->render('rentals/agreement-detail',['user'=>$user,'agreement'=>$row,'charges'=>$this->charges->forAgreement($id),'total'=>$this->service->total($id),'statusHistory'=>$this->rentals->statusHistory($id),'depositHistory'=>$this->rentals->depositHistory($id),'notice'=>$notice]);
+        if ($row['rental_type'] === 'chauffeur') {
+            if ($row['driver_id'] !== null) {
+                // Fetch full name for the assigned driver
+                $d = (new \TripleR\Repositories\DriverRepository((new \TripleR\Database())->connection()))->find((int)$row['driver_id'], false, true);
+                $row['driver_name'] = $d ? $d['full_name'] : 'Unknown Driver';
+            }
+        }
+        $drivers = $this->driverService->selectableForAssignment();
+        $notice=$_SESSION['_rental_notice']??null;unset($_SESSION['_rental_notice']);return $this->render('rentals/agreement-detail',['user'=>$user,'agreement'=>$row,'charges'=>$this->charges->forAgreement($id),'total'=>$this->service->total($id),'statusHistory'=>$this->rentals->statusHistory($id),'depositHistory'=>$this->rentals->depositHistory($id),'drivers'=>$drivers,'notice'=>$notice]);
     }
 
     public function action(Request $request): Response
