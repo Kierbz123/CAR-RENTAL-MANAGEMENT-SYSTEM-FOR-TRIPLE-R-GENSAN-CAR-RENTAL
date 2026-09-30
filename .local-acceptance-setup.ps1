@@ -54,6 +54,9 @@ if ($LASTEXITCODE -ne 0) { throw "Checksum-verified migration replay failed with
 & $php 'bin\seed.php'
 if ($LASTEXITCODE -ne 0) { throw "Seed failed with exit code $LASTEXITCODE; preserve the isolated DB for diagnosis." }
 
+& $php 'bin\test-m5-reconciliation.php'
+if ($LASTEXITCODE -ne 0) { throw "M5 reconciliation preservation checks failed with exit code $LASTEXITCODE." }
+
 & $php 'bin\test-m4.php'
 if ($LASTEXITCODE -ne 0) { throw "M4 runtime checks failed with exit code $LASTEXITCODE." }
 & $php 'bin\test-m6.php'

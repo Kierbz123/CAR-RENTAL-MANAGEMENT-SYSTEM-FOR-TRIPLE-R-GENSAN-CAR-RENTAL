@@ -1,6 +1,6 @@
-# Master Feature Build Plan (v3.3)
+# Master Feature Build Plan (v3.5)
 
-> v3.3 (2026-09-30): Carries forward v3.2, records M7 implementation and MySQL 8 database/HTTP acceptance results, and preserves the original plan's unresolved M8–M10 source boundary. The original v2.0 file remains unavailable in this checkout/history; M8–M10 have not been reconstructed from source.
+> v3.5 (2026-09-30): Carries forward v3.4, records the separate M5 reconciliation state-preservation correction and its runtime regression evidence, and syncs M8's resolved schedule, cost-edit, notification-mode, and review-hold decisions. The M8 due-soon horizon remains open. M9/M10 source specifications remain absent from this checkout/history.
 
 ## Build workflow and source of truth
 
@@ -98,11 +98,21 @@ The shared lock order is vehicle → customer → driver → agreement. `RentalS
 
 **Known limitation:** repair cost is an estimate entered during damage capture and stored for finance review. No approved severity/type price formula was supplied, so the service validates and preserves that estimate rather than inventing a tariff. Pre capture is limited to confirmed agreements, during to active, and post to returned/completed. Report capture is not a prerequisite for M5 pickup/return transitions.
 
-## M8–M10 — source-plan audit status
+## M8 — Maintenance (trace gate; not implemented)
 
-The reconstructed v3 plan has no M8–M10 source sections, and their original definitions were not present in this checkout or Git history. The supplied review flags M9 polymorphic documents and M10 reporting/PII boundaries, but does not provide complete module specs or migration numbers. Do not infer those contracts from the review summary. Before each module, source its canonical requirements and verify planned migration numbers against the live migrations, then write its trace under the six-step workflow.
+**Authoritative details:** [`docs/FEATURE_M8.md`](docs/FEATURE_M8.md). Use migration `011_maintenance.sql`; M7 owns 010. Recheck migration names again before M9/M10.
+
+**Verified:** M2 status transitions and mileage recording require the shared vehicle lock/transaction and append history. M5 both lists only `available`/`reserved` vehicles and rejects a locked vehicle in any other status during booking creation, so the maintenance booking guard already exists. A pre-existing M5 defect was corrected separately: `RentalService::reconcileVehicleStatus()` now locks the vehicle and no-ops unless its current state is `available`, `reserved`, or `rented`. Thus cancellation/no-show cannot overwrite deliberate fleet states such as `out_of_service`, `cleaning`, `maintenance`, or `retired`. `bin/test-m5-reconciliation.php` passed all eight combinations of four protected states and cancel/no-show.
+
+**Decided (reasoning):** Use multiple named schedules per vehicle, either-first time/mileage due semantics, Manila business-date boundaries with inclusive due checks, M2's transaction-aware mileage writer, the shared private `VehiclePhotoService` evidence pipeline, and forward-only migration/RESTRICT history. A completed service's due threshold is based on actual completion date/mileage and remains frozen if that mileage event is corrected later. A started service needs an explicit `cancelled` status and restoration path. Fleet managers/system admins may correct completed-service costs only with a reason and immutable before/after audit. Due-soon delivery is pull-only. If prior status becomes stale during maintenance, keep the vehicle in `maintenance` until explicit fleet-manager/system-admin resolution. Exact schema, numeric precision, NULL/default rules, keys, indexes, audit records, and generated-cost NULL/overflow treatment are specified in `FEATURE_M8.md`; its due-soon numeric horizon remains open.
+
+**Open PRODUCT decision:** confirm the numeric due-soon horizon. The current recommendation is configurable 30 Manila calendar days or 500 km, whichever is reached first. Schedule cardinality, completed-cost correction policy, pull-only notification mode, and the needs-review holding status are resolved in `FEATURE_M8.md`.
+
+## M9–M10 — source-plan audit status
+
+Their original definitions were not present in this checkout or Git history. The supplied review flags M9 polymorphic documents and M10 reporting/PII boundaries, but does not provide complete module specs or migration numbers. Do not infer those contracts from the review summary. Before each module, source its canonical requirements and verify planned migration numbers against the live migrations, then write its trace under the six-step workflow.
 
 ## Acceptance state and dependencies
 
 - Full M4 runtime acceptance, all 15 M6 chauffeur checks (including license expiry at assignment and confirmation), migration 009 raw-SQL checks, and M7 database/HTTP acceptance passed against fresh MySQL 8.0.46 acceptance databases on 2026-09-30. The legacy migration checksum-baseline and subsequent replay also passed.
-- M7 implementation and acceptance are complete in this worktree on migration 010. M8–M10 remain behind their written source-trace gates.
+- M7 implementation and acceptance are complete on migration 010. M8 has a written pre-build resolution trace but awaits product answers before implementation. M9/M10 remain behind their source-trace gates.

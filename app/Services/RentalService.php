@@ -164,6 +164,12 @@ final class RentalService
     /** Shared fleet-status reconciliation after a rental releases its vehicle. */
     private function reconcileVehicleStatus(int $vehicleId,int $excludeAgreementId,int $actor): void
     {
+        $vehicleQuery=$this->db->prepare('SELECT current_status FROM vehicles WHERE vehicle_id=:id FOR UPDATE');
+        $vehicleQuery->execute(['id'=>$vehicleId]);
+        $vehicle=$vehicleQuery->fetch();
+        if(!$vehicle)throw new RuntimeException('Vehicle not found while reconciling rental status.');
+        if(!in_array($vehicle['current_status'],['available','reserved','rented'],true))return;
+
         $active=$this->db->prepare("SELECT 1 FROM rental_agreements WHERE vehicle_id=:vehicle AND agreement_id<>:id AND status='active' LIMIT 1 FOR UPDATE");
         $active->execute(['vehicle'=>$vehicleId,'id'=>$excludeAgreementId]);
         if($active->fetchColumn()!==false)$target='rented';
@@ -172,8 +178,6 @@ final class RentalService
             $confirmed->execute(['vehicle'=>$vehicleId,'id'=>$excludeAgreementId,'today'=>(new DateTimeImmutable('now',new DateTimeZone('Asia/Manila')))->format('Y-m-d')]);
             $target=$confirmed->fetchColumn()!==false?'reserved':'available';
         }
-        $vehicle=$this->vehicles->find($vehicleId,true);
-        if(!$vehicle)throw new RuntimeException('Vehicle not found while reconciling rental status.');
         if($vehicle['current_status']!==$target)$this->vehicleService->transitionStatusInTransaction($vehicleId,$target,$actor);
     }
     private function invalidateLinks(int $id): void { $q=$this->db->prepare('UPDATE booking_access_tokens SET used_at=COALESCE(used_at,UTC_TIMESTAMP(6)),expires_at=LEAST(expires_at,UTC_TIMESTAMP(6)) WHERE booking_id=:id');$q->execute(['id'=>$id]); }
