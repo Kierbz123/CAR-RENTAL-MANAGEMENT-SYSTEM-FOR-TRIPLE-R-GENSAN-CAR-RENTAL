@@ -1,6 +1,6 @@
-# Master Feature Build Plan (v3.6)
+# Master Feature Build Plan (v3.7)
 
-> v3.6 (2026-09-30): Carries forward v3.5, closes M8's due-soon decision with approved global defaults and nullable per-schedule overrides, and marks the pre-build trace ready for implementation. M9/M10 source specifications remain absent from this checkout/history.
+> v3.7 (2026-09-30): Carries forward v3.6, records M8 implementation on migration 011 and its isolated MySQL 8/HTTP acceptance results, including per-schedule due-soon override/fallback checks. M9/M10 source specifications remain absent from this checkout/history.
 
 ## Build workflow and source of truth
 
@@ -98,7 +98,7 @@ The shared lock order is vehicle → customer → driver → agreement. `RentalS
 
 **Known limitation:** repair cost is an estimate entered during damage capture and stored for finance review. No approved severity/type price formula was supplied, so the service validates and preserves that estimate rather than inventing a tariff. Pre capture is limited to confirmed agreements, during to active, and post to returned/completed. Report capture is not a prerequisite for M5 pickup/return transitions.
 
-## M8 — Maintenance (trace gate; not implemented)
+## M8 — Maintenance
 
 **Authoritative details:** [`docs/FEATURE_M8.md`](docs/FEATURE_M8.md). Use migration `011_maintenance.sql`; M7 owns 010. Recheck migration names again before M9/M10.
 
@@ -106,7 +106,7 @@ The shared lock order is vehicle → customer → driver → agreement. `RentalS
 
 **Decided (reasoning):** Use multiple named schedules per vehicle, either-first time/mileage due semantics, Manila business-date boundaries with inclusive due checks, M2's transaction-aware mileage writer, the shared private `VehiclePhotoService` evidence pipeline, and forward-only migration/RESTRICT history. A completed service's due threshold is based on actual completion date/mileage and remains frozen if that mileage event is corrected later. A started service needs an explicit `cancelled` status and restoration path. Fleet managers/system admins may correct completed-service costs only with a reason and immutable before/after audit. Due-soon delivery is pull-only, with configurable global defaults of 30 Manila calendar days or 500 km and nullable per-schedule overrides for either dimension; NULL inherits the global setting. If prior status becomes stale during maintenance, keep the vehicle in `maintenance` until explicit fleet-manager/system-admin resolution. Exact schema, numeric precision, NULL/default rules, keys, indexes, audit records, and generated-cost NULL/overflow treatment are specified in `FEATURE_M8.md`.
 
-**Open PRODUCT decisions:** none for the M8 trace. Its resolved contract is ready for implementation; implementation and runtime acceptance remain outstanding.
+**Implemented and verified:** Migration 011, repository/service/controller/routes, views, due-soon CLI, and acceptance scripts implement the contract. The acceptance run passed 25 M8 DB checks and 16 M8 HTTP checks, including explicit per-schedule day/km overrides replacing global values and `NULL` inheriting them. The full harness also passed the clean-install schema metadata/checksum check, migration checksum/legacy baseline path, M5 eight-case reconciliation regression, M4 runtime/HTTP checks, M6, M7, and migration 009 SQL guards.
 
 ## M9–M10 — source-plan audit status
 
@@ -115,4 +115,4 @@ Their original definitions were not present in this checkout or Git history. The
 ## Acceptance state and dependencies
 
 - Full M4 runtime acceptance, all 15 M6 chauffeur checks (including license expiry at assignment and confirmation), migration 009 raw-SQL checks, and M7 database/HTTP acceptance passed against fresh MySQL 8.0.46 acceptance databases on 2026-09-30. The legacy migration checksum-baseline and subsequent replay also passed.
-- M7 implementation and acceptance are complete on migration 010. M8's written pre-build resolution trace is complete and ready for implementation; no M8 implementation/runtime acceptance is claimed yet. M9/M10 remain behind their source-trace gates.
+- M7 implementation and acceptance are complete on migration 010; M8 implementation and acceptance are complete on migration 011. M9/M10 remain behind their source-trace gates.

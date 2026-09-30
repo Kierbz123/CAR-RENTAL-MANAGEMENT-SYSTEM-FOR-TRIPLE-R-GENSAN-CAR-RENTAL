@@ -4,9 +4,9 @@ Audit date: 2026-09-30. Canonical clean-install DDL: [`../database/schema.sql`](
 
 ## Scope and method
 
-Reviewed all ten SQL migrations and the current database-facing PHP across repositories, services, controllers, routes/API, auth, CLI jobs, seed and acceptance scripts, configuration, views and frontend request code. Cross-checked table and column names against migrations, SQL statements, repository calls and runtime acceptance. The consolidated schema was imported into a new isolated MySQL 8.0.46 database; the application migration runner, seed and M4/M6/M7 database checks then ran against that database.
+Reviewed all eleven SQL migrations and the current database-facing PHP across repositories, services, controllers, routes/API, auth, CLI jobs, seed and acceptance scripts, configuration, views and frontend request code. Cross-checked table and column names against migrations, SQL statements, repository calls and runtime acceptance. The M8 update adds six maintenance tables and is validated in the isolated MySQL 8 acceptance harness described below.
 
-The application contains 32 business/auth tables. The migration runner owns a 33rd table, `schema_migrations`. No table or column was dropped: the code and available acceptance paths show each table supports active behavior, audit/history, reporting, authentication or migration operation. This is a static/application audit plus isolated runtime validation; it cannot establish whether a deployed database contains valuable rows, nor infer production query frequency.
+The application contains 38 business/auth tables after M8. The migration runner owns a 39th table, `schema_migrations`. No table or column was dropped: the code and available acceptance paths show each table supports active behavior, audit/history, reporting, authentication or migration operation. This is a static/application audit plus isolated runtime validation; it cannot establish whether a deployed database contains valuable rows, nor infer production query frequency.
 
 ## Object disposition
 
@@ -82,7 +82,7 @@ No duplicate ID columns or non-unique natural key is used as a surrogate primary
 
 ## Foreign-key and relationship audit
 
-The clean schema declares 48 foreign-key constraints. Referencing and referenced IDs use compatible `BIGINT UNSIGNED` types; nullable actor/location/driver relationships stay nullable where the business allows them. Historical/business evidence uses `RESTRICT` to prevent silently cascading away agreements, customer/vehicle/driver history, ledgers, or audit records. The only deliberately absent relationship is noted above (`magic_link_booking_limits.booking_id`). No circular dependency was introduced.
+The clean schema declares 66 foreign-key constraints after M8. Referencing and referenced IDs use compatible `BIGINT UNSIGNED` types; nullable actor/location/driver relationships stay nullable where the business allows them. Historical/business evidence uses `RESTRICT` to prevent silently cascading away agreements, customer/vehicle/driver/maintenance history, ledgers, or audit records. M8 links a service to a same-vehicle schedule and mileage event through composite FKs. The only deliberately absent relationship is noted above (`magic_link_booking_limits.booking_id`). No circular dependency was introduced.
 
 ## Index audit
 
@@ -139,19 +139,34 @@ Notation lists each table's PK and outgoing FK edges. Tables without FK edges ar
 
 ## Migration and compatibility policy
 
-`database/schema.sql` is a clean-install baseline, not a replacement for migration history. The ten migration files stay unchanged because existing installations and `bin/migrate.php` depend on their names and checksums. The schema inserts the current SHA-256 checksum rows so the runner verifies and skips the already-built DDL. Import into a pre-created, empty target database; the file deliberately does not create or switch databases. Existing databases must continue through `bin/migrate.php`, not be overwritten with this clean-install file.
+`database/schema.sql` is a clean-install baseline, not a replacement for migration history. The eleven migration files stay unchanged because existing installations and `bin/migrate.php` depend on their names and checksums. The schema inserts the current SHA-256 checksum rows so the runner verifies and skips the already-built DDL. Import into a pre-created, empty target database; the file deliberately does not create or switch databases. Existing databases must continue through `bin/migrate.php`, not be overwritten with this clean-install file.
 
-No PHP, API, frontend, seed, or migration source files were changed for this consolidation. No migration was deleted or rewritten. No existing production data was inspected or removed.
+M8 added PHP service/repository/controller, routes/views, CLI reporting and acceptance scripts. No existing migration was deleted or rewritten. No existing production data was inspected or removed.
 
 ## Validation and remaining risks
 
-- MySQL 8.0.46 clean import of `database/schema.sql`: PASS in isolated database `triple_r_schema_20260930182932`.
-- `bin/migrate.php` checksum verification for 001–010 against imported schema: PASS (all ten verified and skipped).
+- MySQL 8.0.46 clean import of `database/schema.sql`: PASS in isolated database `triple_r_schema_acceptance_20260930212821` (39 tables, 39 primary keys, 66 foreign keys; migration 011 checksum matched).
+- `bin/migrate.php` fresh migration, legacy checksum-column baseline, and checksum replay for 001–011: PASS.
 - `bin/seed.php`: PASS.
-- M4 driver DB acceptance: PASS; M6 chauffeur acceptance: PASS; M7 damage acceptance: PASS (19 checks); migration 009 raw SQL guards: PASS.
-- Existing migration path in a separate empty DB: fresh application 001–010, legacy checksum-column baseline, checksum replay, seed, M4/M6/M7 DB checks, 009 raw SQL, M4/M7 HTTP role/reveal/photo checks: PASS.
-- Final reference scan parsed all 33 tables and every column from `schema.sql`, then searched 139 project source/document/migration files. Every table has references outside the consolidated schema (with `schema_migrations` correctly runner-owned), and every column name has at least one project reference. This is a lexical completeness check, paired with repository/query inspection; a token occurrence alone is not treated as proof of runtime use.
-- MySQL metadata check: 33 tables, each with a primary key, and 48 foreign keys.
+- M4 driver DB/HTTP acceptance: PASS; M6 chauffeur acceptance: PASS; M7 damage acceptance: PASS (19 checks); migration 009 raw SQL guards: PASS.
+- Separate empty migration-path DB: fresh 001–011 apply, legacy checksum-column baseline, checksum replay, seed, M4/M5/M6/M7/M8 DB checks, 009 raw SQL, and M4/M7/M8 HTTP checks: PASS. M8 passed 25 DB and 16 HTTP assertions.
+- Override/fallback checks proved a 10-day override excludes a schedule inside the global 30-day window, a 45-day override includes one outside it, and NULL inherits; mileage overrides likewise replaced and inherited the global 500 km value.
+- MySQL metadata check after M8: 39 tables, each with a primary key, and 66 foreign keys.
 - Index/FK/PK/type parity was checked against the current migration definitions. This is not a production EXPLAIN/telemetry review; there is no workload evidence here to claim query-plan optimality.
 - REVIEW REQUIRED: inspect existing deployment rows before adding FK to `magic_link_booking_limits.booking_id`; confirm whether any external notification consumer still uses `notifications.channel`.
 - Backup/restore, privilege isolation between migration and application credentials, and production data integrity remain operational checks outside this schema consolidation.
+
+## M8 object map and acceptance update
+
+Migration 011 adds six active tables. No legacy table or column was removed.
+
+| Table | PK | Important fields | Foreign keys |
+|---|---|---|---|
+| `maintenance_schedules` | `schedule_id` | vehicle, unique name per vehicle, day/km interval and next due values, nullable warning overrides, active flag | vehicle; created/updated users |
+| `maintenance_services` | `service_id` | nullable schedule for corrective work, mechanic, state, generated `active_vehicle_id`, component costs and generated total, saved prior vehicle status, M2 mileage-log reference, needs-review resolution | vehicle; same-vehicle schedule; mechanic/created/updated/reviewer users; same-vehicle mileage event |
+| `maintenance_photos` | `photo_id` | service, before/after phase, private storage metadata | service; uploader |
+| `maintenance_service_status_logs` | `status_log_id` | old/new state, cancellation reason, timestamp | service; actor |
+| `maintenance_schedule_logs` | `schedule_log_id` | reason and typed old/new schedule values including due-soon overrides | schedule; actor |
+| `maintenance_cost_audit_logs` | `cost_audit_id` | old/new costs and mandatory reason | service; actor |
+
+The runtime suite covers these tables and due-query override behavior; see `docs/FEATURE_M8.md`. Refresh the clean-schema import and metadata counts after the final acceptance run.

@@ -27,6 +27,7 @@ final class StaffHomeController
         $canReadDrivers = in_array($user['role'], ['system_admin', 'fleet_manager', 'driver_coordinator'], true);
         $canManageCustomers = in_array($user['role'], ['system_admin', 'front_desk'], true);
         $canViewRentals = in_array($user['role'], ['system_admin','fleet_manager','front_desk','finance_staff','auditor'], true);
+        $canViewMaintenance = in_array($user['role'], ['system_admin','fleet_manager','mechanic','auditor'], true);
         $csrfToken = Csrf::token();
         ob_start();
         require APP_ROOT . '/app/Views/staff/home.php';
