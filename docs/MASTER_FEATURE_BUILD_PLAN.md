@@ -1,6 +1,6 @@
-# Master Feature Build Plan (v3.5)
+# Master Feature Build Plan (v3.6)
 
-> v3.5 (2026-09-30): Carries forward v3.4, records the separate M5 reconciliation state-preservation correction and its runtime regression evidence, and syncs M8's resolved schedule, cost-edit, notification-mode, and review-hold decisions. The M8 due-soon horizon remains open. M9/M10 source specifications remain absent from this checkout/history.
+> v3.6 (2026-09-30): Carries forward v3.5, closes M8's due-soon decision with approved global defaults and nullable per-schedule overrides, and marks the pre-build trace ready for implementation. M9/M10 source specifications remain absent from this checkout/history.
 
 ## Build workflow and source of truth
 
@@ -104,9 +104,9 @@ The shared lock order is vehicle → customer → driver → agreement. `RentalS
 
 **Verified:** M2 status transitions and mileage recording require the shared vehicle lock/transaction and append history. M5 both lists only `available`/`reserved` vehicles and rejects a locked vehicle in any other status during booking creation, so the maintenance booking guard already exists. A pre-existing M5 defect was corrected separately: `RentalService::reconcileVehicleStatus()` now locks the vehicle and no-ops unless its current state is `available`, `reserved`, or `rented`. Thus cancellation/no-show cannot overwrite deliberate fleet states such as `out_of_service`, `cleaning`, `maintenance`, or `retired`. `bin/test-m5-reconciliation.php` passed all eight combinations of four protected states and cancel/no-show.
 
-**Decided (reasoning):** Use multiple named schedules per vehicle, either-first time/mileage due semantics, Manila business-date boundaries with inclusive due checks, M2's transaction-aware mileage writer, the shared private `VehiclePhotoService` evidence pipeline, and forward-only migration/RESTRICT history. A completed service's due threshold is based on actual completion date/mileage and remains frozen if that mileage event is corrected later. A started service needs an explicit `cancelled` status and restoration path. Fleet managers/system admins may correct completed-service costs only with a reason and immutable before/after audit. Due-soon delivery is pull-only. If prior status becomes stale during maintenance, keep the vehicle in `maintenance` until explicit fleet-manager/system-admin resolution. Exact schema, numeric precision, NULL/default rules, keys, indexes, audit records, and generated-cost NULL/overflow treatment are specified in `FEATURE_M8.md`; its due-soon numeric horizon remains open.
+**Decided (reasoning):** Use multiple named schedules per vehicle, either-first time/mileage due semantics, Manila business-date boundaries with inclusive due checks, M2's transaction-aware mileage writer, the shared private `VehiclePhotoService` evidence pipeline, and forward-only migration/RESTRICT history. A completed service's due threshold is based on actual completion date/mileage and remains frozen if that mileage event is corrected later. A started service needs an explicit `cancelled` status and restoration path. Fleet managers/system admins may correct completed-service costs only with a reason and immutable before/after audit. Due-soon delivery is pull-only, with configurable global defaults of 30 Manila calendar days or 500 km and nullable per-schedule overrides for either dimension; NULL inherits the global setting. If prior status becomes stale during maintenance, keep the vehicle in `maintenance` until explicit fleet-manager/system-admin resolution. Exact schema, numeric precision, NULL/default rules, keys, indexes, audit records, and generated-cost NULL/overflow treatment are specified in `FEATURE_M8.md`.
 
-**Open PRODUCT decision:** confirm the numeric due-soon horizon. The current recommendation is configurable 30 Manila calendar days or 500 km, whichever is reached first. Schedule cardinality, completed-cost correction policy, pull-only notification mode, and the needs-review holding status are resolved in `FEATURE_M8.md`.
+**Open PRODUCT decisions:** none for the M8 trace. Its resolved contract is ready for implementation; implementation and runtime acceptance remain outstanding.
 
 ## M9–M10 — source-plan audit status
 
@@ -115,4 +115,4 @@ Their original definitions were not present in this checkout or Git history. The
 ## Acceptance state and dependencies
 
 - Full M4 runtime acceptance, all 15 M6 chauffeur checks (including license expiry at assignment and confirmation), migration 009 raw-SQL checks, and M7 database/HTTP acceptance passed against fresh MySQL 8.0.46 acceptance databases on 2026-09-30. The legacy migration checksum-baseline and subsequent replay also passed.
-- M7 implementation and acceptance are complete on migration 010. M8 has a written pre-build resolution trace but awaits product answers before implementation. M9/M10 remain behind their source-trace gates.
+- M7 implementation and acceptance are complete on migration 010. M8's written pre-build resolution trace is complete and ready for implementation; no M8 implementation/runtime acceptance is claimed yet. M9/M10 remain behind their source-trace gates.

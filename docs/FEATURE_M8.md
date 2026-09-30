@@ -1,6 +1,6 @@
 # M8 — Maintenance: Requirements Resolution
 
-**Status:** Pre-build trace; schedule model, completed-cost correction policy, notification mode, and review holding state are resolved. Due-soon numeric horizon remains open before implementation.  
+**Status:** Pre-build trace complete; schedule model, completed-cost correction policy, due-soon defaults and override behavior, notification mode, and review holding state are resolved. Ready for M8 implementation.
 **Source:** supplied M8 FR-08/FR-09 spec and gap analysis, reconciled against this checkout.  
 **Migration:** `011_maintenance.sql` (010 is M7; no 011 exists yet).
 
@@ -61,11 +61,11 @@ FR-08/FR-09 require vehicle maintenance schedules with time and/or mileage inter
 
 | Table | Column contract |
 |---|---|
-| `maintenance_schedules` | `schedule_id BIGINT UNSIGNED PK AUTO_INCREMENT`; `vehicle_id BIGINT UNSIGNED NOT NULL FK`; `interval_time_days INT UNSIGNED NULL`; `interval_mileage INT UNSIGNED NULL`; `next_due_date DATE NULL`; `next_due_mileage INT UNSIGNED NULL`; `is_active TINYINT(1) NOT NULL DEFAULT 1`; `created_by`, `updated_by BIGINT UNSIGNED NOT NULL FK users`; `created_at`, `updated_at DATETIME(6) NOT NULL` with current-timestamp defaults and update behavior. Add `schedule_name VARCHAR(100) NOT NULL` and unique `(vehicle_id,schedule_name)` only if D2 selects multiple schedules; if single, use unique active schedule-per-vehicle instead. Add unique `(vehicle_id,schedule_id)` to support service-to-same-vehicle composite FK. |
+| `maintenance_schedules` | `schedule_id BIGINT UNSIGNED PK AUTO_INCREMENT`; `vehicle_id BIGINT UNSIGNED NOT NULL FK`; `schedule_name VARCHAR(100) NOT NULL`; `interval_time_days INT UNSIGNED NULL`; `interval_mileage INT UNSIGNED NULL`; `next_due_date DATE NULL`; `next_due_mileage INT UNSIGNED NULL`; nullable `due_soon_days_override SMALLINT UNSIGNED` and `due_soon_mileage_override INT UNSIGNED` (NULL inherits global defaults; a provided override must be positive); `is_active TINYINT(1) NOT NULL DEFAULT 1`; `created_by`, `updated_by BIGINT UNSIGNED NOT NULL FK users`; `created_at`, `updated_at DATETIME(6) NOT NULL` with current-timestamp defaults and update behavior. Unique `(vehicle_id,schedule_name)` and unique `(vehicle_id,schedule_id)` for the service-to-same-vehicle composite FK. |
 | `maintenance_services` | `service_id BIGINT UNSIGNED PK AUTO_INCREMENT`; `vehicle_id BIGINT UNSIGNED NOT NULL FK`; `schedule_id BIGINT UNSIGNED NULL` (NULL means unscheduled corrective service; do not advance a schedule); `mechanic_id BIGINT UNSIGNED NOT NULL FK users`; `status ENUM('in_progress','completed','cancelled') NOT NULL DEFAULT 'in_progress'`; `labor_cost`, `parts_cost`, `other_cost DECIMAL(10,2) NOT NULL DEFAULT 0.00`; `total_cost DECIMAL(11,2) GENERATED ALWAYS AS (...) STORED`; `vehicle_status_before ENUM` matching M2's existing closed status set and NOT NULL; `completion_mileage_log_id BIGINT UNSIGNED NULL UNIQUE` (reference to M2 event, not duplicated mileage); `started_at DATETIME(6) NOT NULL`; nullable `completed_at`, `cancelled_at DATETIME(6)`; nullable `cancel_reason VARCHAR(500)`; `needs_review TINYINT(1) NOT NULL DEFAULT 0`; nullable `reviewed_by BIGINT UNSIGNED FK users`, `reviewed_at DATETIME(6)`, and `review_reason VARCHAR(500)`; creation/update actor IDs and timestamps. Add composite FK `(vehicle_id,schedule_id)` → schedule `(vehicle_id,schedule_id)` and `(vehicle_id,completion_mileage_log_id)` → M2's unique vehicle/mileage-log pair so neither reference can point to another vehicle's history. |
 | `maintenance_photos` | `photo_id BIGINT UNSIGNED PK AUTO_INCREMENT`; `service_id BIGINT UNSIGNED NOT NULL FK`; `phase ENUM('before','after') NOT NULL`; `storage_path VARCHAR(512) NOT NULL`; `original_filename VARCHAR(255) NOT NULL`; `mime VARCHAR(32) NOT NULL`; `size_bytes INT UNSIGNED NOT NULL`; `uploaded_by BIGINT UNSIGNED NOT NULL FK users`; `created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)`. |
 | `maintenance_service_status_logs` | `status_log_id BIGINT UNSIGNED PK AUTO_INCREMENT`; `service_id BIGINT UNSIGNED NOT NULL FK`; nullable old status and non-null new status using service enum; `reason VARCHAR(500) NULL` (required for cancellation); `actor_user_id BIGINT UNSIGNED NOT NULL FK`; `created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)`. Append-only triggers. |
-| `maintenance_schedule_logs` | `schedule_log_id BIGINT UNSIGNED PK AUTO_INCREMENT`; `schedule_id BIGINT UNSIGNED NOT NULL FK`; `actor_user_id BIGINT UNSIGNED NOT NULL FK`; `reason VARCHAR(500) NOT NULL`; typed old/new interval and due-date fields matching schedule columns; `created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)`. Append-only trigger; only actual schedule changes create a row. |
+| `maintenance_schedule_logs` | `schedule_log_id BIGINT UNSIGNED PK AUTO_INCREMENT`; `schedule_id BIGINT UNSIGNED NOT NULL FK`; `actor_user_id BIGINT UNSIGNED NOT NULL FK`; `reason VARCHAR(500) NOT NULL`; typed old/new interval, due-date, active, and due-soon override fields matching schedule columns; `created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)`. Append-only trigger; only actual schedule changes create a row. |
 | `maintenance_cost_audit_logs` | `cost_audit_id BIGINT UNSIGNED PK AUTO_INCREMENT`; `service_id BIGINT UNSIGNED NOT NULL FK`; old/new labor, parts, and other amounts `DECIMAL(10,2) NOT NULL`; `reason VARCHAR(500) NOT NULL`; `actor_user_id BIGINT UNSIGNED NOT NULL FK`; `created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)`. Append-only triggers. |
 
 For all tables, FK delete behavior is `RESTRICT`, FKs are indexed, and every actor/user key matches `users.id` as `BIGINT UNSIGNED`. Monetary checks reject negative component cost. Empty string is not used to encode missing dates, schedule names, actors, or reasons. The service enum contains cancellation because an aborted service has a different lifecycle outcome from completion.
@@ -120,12 +120,13 @@ For all tables, FK delete behavior is `RESTRICT`, FKs are indexed, and every act
 
 ### M8-D11. Due-soon behavior and thresholds
 
-- **Class:** PRODUCT · **Priority:** Medium · **Status:** Recommended (pull mode resolved; horizon open) · **Confidence:** Medium
+- **Class:** PRODUCT · **Priority:** Medium · **Status:** Resolved · **Confidence:** High
 - **Context:** Source names a due-soon listing and CLI report, not proactive messaging or a due-soon horizon. SMS would create costs and additional consent/policy behavior.
 - **Options:** (A) pull-only report/list, with owner-configured windows in days and kilometers; (B) enqueue proactive notifications when a threshold is crossed; (C) report only already-due items.
 - **Decision:** pull-only is accepted; no proactive notification. `bin/maintenance-due.php` is a read-only report with human-readable output and CSV mode, nonzero exit on query/config failure, and safe replay. Scheduling cadence belongs in deployment documentation, not a mutating job.
-- **Threshold recommendation requiring confirmation:** due-soon means within 30 Manila calendar days OR within 500 km; both are configurable without migration. Due itself remains the inclusive interval boundary. Change these defaults before implementation if the owner wants another horizon or due-only behavior.
-- **Consequence:** push would require deduplication, delivery policy, templates, consent handling, and additional acceptance; it is outside the accepted pull-only scope.
+- **Due-soon defaults:** configurable `MAINTENANCE_DUE_SOON_DAYS=30` and `MAINTENANCE_DUE_SOON_KM=500`; evaluate configured dimensions independently and mark a schedule due soon when either applicable threshold is met. Due itself remains inclusive at the actual due boundary.
+- **Per-schedule behavior:** each named schedule may override either default independently through nullable `due_soon_days_override` and `due_soon_mileage_override`. NULL inherits the global value, so schedules behave uniformly by default while annual or otherwise unusual schedules can set a different warning lead time without a schema change. Overrides must be positive and edits are actor/reason audited as schedule changes.
+- **Consequence:** push would require deduplication, delivery policy, templates, consent handling, and additional acceptance; it is outside the accepted pull-only scope. Overrides add two nullable fields and corresponding audit/query coverage, but avoid forcing one warning horizon on schedules with materially different cadence.
 
 ### M8-D12. Roles and review ownership
 
@@ -169,6 +170,7 @@ For all tables, FK delete behavior is `RESTRICT`, FKs are indexed, and every act
 | D9 | Valid and invalid photos; service completion mileage | Valid private images round-trip authenticated; bad MIME, >8 MiB, invalid phase, wrong ownership reject; rollback removes orphan files. Completion creates exactly one M2 mileage event, no second mileage source. |
 | D10 | Completed cost correction is submitted | Fleet_manager/system_admin edits require a reason and append before/after audit; mechanic and auditor edits reject; generated total matches new components. |
 | D11 | Due report repeated and run with query failure | Pull-only output is stable across reruns; due-soon uses the selected configurable windows; failure exits nonzero; no notification rows are enqueued. |
+| D11 | One schedule leaves both overrides NULL; another sets only one override; global defaults change | NULL dimensions inherit 30 days/500 km (or configured global values); explicit override applies only to its dimension; each independent date/mileage threshold can mark due soon; actual due remains inclusive. |
 | D12 | Each role calls read/mutate/configure/review routes | Mechanic can service but not configure/resolve; fleet_manager/admin can configure and resolve; auditor read-only; other roles denied as specified. |
 | D13/D14 | Two completion requests, completion vs cancel, booking/hold vs maintenance start, unrelated agreement cancellation/no-show during maintenance | Row locks/conditional writes allow one legal result, prevent lost status/mileage, reject stranded unconfirmed holds, preserve maintenance during service, and revalidate the prior status before restore. |
 | D13 | Vehicle or schedule is deleted while history exists; DDL fails partway | RESTRICT rejects deletion; migration recovery does not drop populated maintenance history. |
@@ -178,6 +180,7 @@ For all tables, FK delete behavior is `RESTRICT`, FKs are indexed, and every act
 | Assumption | Confirmation / refutation |
 |---|---|
 | Manila calendar dates are the intended schedule-day basis. | Confirm against business operations; existing booking dates and license checks use Asia/Manila. |
+| Global 30-day/500-km due-soon defaults are useful across schedule types. | Owner approved these as defaults; per-schedule nullable overrides allow measured deviations without changing global behavior. |
 | “Whichever comes first” is the intended either-first rule. | Recommended from the supplied interval wording; test exact boundaries. |
 | Existing VehiclePhotoService can be reused for maintenance namespace. | Verified generic private storage/validation methods exist; implementation must test cleanup/read route. |
 | Existing M5 booking integrity excludes maintenance. | Verified in list and locked creation paths; preserve with runtime regression checks. |
@@ -198,6 +201,6 @@ For all tables, FK delete behavior is `RESTRICT`, FKs are indexed, and every act
 - [x] Owner chose role-gated editing with mandatory reason and immutable audit for completed-service costs (D10).
 - [x] Owner chose pull-only due-soon reporting; no proactive notifications (D11).
 - [x] Owner chose to keep actual vehicle status at `maintenance` until explicit review resolution (D15).
-- [ ] Owner confirms the due-soon horizon. Recommendation: configurable 30 Manila calendar days or 500 km, whichever is reached first.
+- [x] Owner approved configurable global defaults of 30 Manila calendar days or 500 km, whichever is reached first; each named schedule may override either independently.
 - [ ] Final field inventory, exact indexes, role gates, acceptance cases, and generated total are synchronized into the plan before implementation.
-- [ ] Implement only after open product items are resolved; then run every applicable test-matrix row against MySQL 8 and HTTP routes.
+- [x] All material product decisions are resolved; M8 is clear to implement. Run every applicable test-matrix row against MySQL 8 and HTTP routes during implementation.
