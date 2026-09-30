@@ -31,6 +31,7 @@ use TripleR\Repositories\DriverRepository;
 use TripleR\Repositories\CustomerRepository;
 use TripleR\Repositories\RentalRepository;
 use TripleR\Repositories\ChargeRepository;
+use TripleR\Repositories\DamageReportRepository;
 use TripleR\Repositories\RulesAcceptanceRepository;
 use TripleR\Security\Csrf;
 use TripleR\Security\StaffAuth;
@@ -46,7 +47,9 @@ use TripleR\Services\DriverService;
 use TripleR\Services\CustomerPiiCipher;
 use TripleR\Services\CustomerService;
 use TripleR\Services\BookingOverlapService;
+use TripleR\Services\ChauffeurService;
 use TripleR\Services\RentalService;
+use TripleR\Services\DamageService;
 
 require dirname(__DIR__) . '/app/bootstrap.php';
 
@@ -108,9 +111,14 @@ try {
     $customerRepository = new CustomerRepository($db);
     $customerPiiCipher = new CustomerPiiCipher();
     $customerService = new CustomerService($db, $customerRepository, $customerPiiCipher);
-    $chauffeurService = new ChauffeurService($db, $rentalRepository, $chargeRepository, $vehicleRepository, new \TripleR\Services\BookingOverlapService($db));
+    $bookingOverlapService = new BookingOverlapService($db);
+    $rentalRepository = new RentalRepository($db, $bookingOverlapService);
+    $chargeRepository = new ChargeRepository($db);
+    $chauffeurService = new ChauffeurService($db, $rentalRepository, $chargeRepository, $vehicleRepository, $bookingOverlapService);
     $rentalService = new RentalService($db, $rentalRepository, $chargeRepository, $vehicleRepository, $customerRepository, $customerPiiCipher, $vehicleService, $notificationService, $magicLinkService, $chauffeurService);
-    $agreements = new AgreementController($authMiddleware, $rentalRepository, $chargeRepository, $rentalService, $chauffeurService, $driverService);
+    $damageService = new DamageService($db, new DamageReportRepository($db), $rentalRepository, $vehiclePhotos, $rentalService);
+    $damageController = new \TripleR\Controllers\Rentals\DamageController($authMiddleware, $damageService);
+    $agreements = new AgreementController($authMiddleware, $rentalRepository, $chargeRepository, $rentalService, $chauffeurService, $driverService, $damageService);
     $driverAssignments = new \TripleR\Controllers\Rentals\DriverAssignmentController($authMiddleware, $chauffeurService);
     $rentalApi = new RentalApiController($authMiddleware, $rentalService, $magicLinkService);
 
@@ -192,6 +200,11 @@ try {
     $router->post('/rentals/charge', static fn (Request $request): Response => $agreements->addCharge($request));
     $router->post('/rentals/charge/reverse', static fn (Request $request): Response => $agreements->reverseCharge($request));
     $router->post('/rentals/deposit', static fn (Request $request): Response => $agreements->deposit($request));
+    $router->post('/rentals/damage/report', static fn (Request $request): Response => $damageController->record($request));
+    $router->post('/rentals/damage/liability', static fn (Request $request): Response => $damageController->decide($request));
+    $router->post('/rentals/damage/charge', static fn (Request $request): Response => $damageController->postCharge($request));
+    $router->get('/rentals/damage/photo', static fn (Request $request): Response => $damageController->photo($request));
+    $router->get('/rentals/damage/detail', static fn (Request $request): Response => $damageController->detail($request));
     $router->post('/rentals/link', static fn (Request $request): Response => $agreements->issueLink($request));
     $router->post('/api/rentals', static fn (Request $request): Response => $rentalApi->create($request));
     $router->get('/api/rentals/booking-context', static fn (Request $request): Response => $rentalApi->bookingContext($request));

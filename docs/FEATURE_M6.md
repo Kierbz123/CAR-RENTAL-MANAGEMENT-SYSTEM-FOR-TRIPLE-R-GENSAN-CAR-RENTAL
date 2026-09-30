@@ -31,7 +31,7 @@ This order is maintained even for driver removal, avoiding any potential deadloc
 
 ## Acceptance Checklist
 
-All items verified by `bin/test-m6.php` against a fresh acceptance database (`009_chauffeur_guards.sql` applied).
+All 15 items were verified by `bin/test-m6.php` against a fresh MySQL 8 acceptance database with `009_chauffeur_guards.sql` applied. The two license-expiry cases were added during the final trace-and-fix and passed on 2026-09-30.
 
 | # | Scenario | Result |
 |---|---|---|
@@ -48,4 +48,5 @@ All items verified by `bin/test-m6.php` against a fresh acceptance database (`00
 | 11 | Charge immutability trigger: direct `UPDATE` on `rental_charges` rejected with `append-only` | PASS |
 | 12 | Chauffeur lifecycle: pickup transitions vehicle to `rented` | PASS |
 | 13 | Chauffeur lifecycle: return transitions vehicle to `available` | PASS |
-
+| 14 | Assignment rejects a driver whose license is expired as of the Manila date | PASS |
+| 15 | Confirmation rejects an assigned driver whose license expired after assignment | PASS |

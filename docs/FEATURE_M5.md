@@ -69,7 +69,7 @@ Run `php bin/migrate.php` to apply migration 007 after 001–006 and migration 0
 - Reserved magic-link expiry is capped to the hold; a confirmed booking link uses normal TTL; terminal state invalidates unused booking links; booking context requires a redeemed session.
 - Verify `rental_status_logs`, `deposit_status_logs`, `rental_charges`, and `rules_acceptances` triggers reject UPDATE/DELETE.
 
-No PHP/MySQL runtime verification was available during implementation. M1–M4 local acceptance checks remain pending; run those before treating the M5 acceptance run as complete.
+M1–M4 focused runtime acceptance passed against MySQL 8.0.46 on 2026-09-30, including the full M4 HTTP role/PII checks. M6 lifecycle and migration 009 checks also passed in a fresh acceptance schema. This does not close every scenario in the M5 checklist above; remaining M5-only lifecycle, STOP/SMS, link-expiry, and reconciliation scenarios must be recorded separately before declaring M5's complete acceptance checklist closed.
 
 ## Carry-forward coverage note
 

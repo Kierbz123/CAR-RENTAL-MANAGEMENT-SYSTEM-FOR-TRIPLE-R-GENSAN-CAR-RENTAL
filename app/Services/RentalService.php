@@ -56,7 +56,11 @@ final class RentalService
             $snapshot=$this->rentals->find($id);if(!$snapshot)throw new RuntimeException('Rental agreement not found.');
             $vehicle=$this->rentals->lockVehicle((int)$snapshot['vehicle_id']);if(!$vehicle)throw new RuntimeException('Vehicle not found.');
             $customer=$this->rentals->lockCustomer((int)$snapshot['customer_id']);if(!$customer)throw new RuntimeException('Customer not found.');
+            $snapshot=$this->rentals->find($id);if(!$snapshot)throw new RuntimeException('Rental agreement not found.');
+            $driver=null;
+            if($snapshot['rental_type']==='chauffeur'&&$snapshot['driver_id']!==null)$driver=$this->rentals->lockDriver((int)$snapshot['driver_id']);
             $r=$this->rentals->lockAgreement($id);if(!$r)throw new RuntimeException('Rental agreement not found.');
+            if((string)$r['driver_id']!==(string)$snapshot['driver_id'])throw new RuntimeException('The driver assignment changed in another request. Reload and try again.');
             $from=(string)$r['status'];$to=null;$timeColumn=null;
             switch($action){
                 case 'confirm': if($from!=='reserved')throw new RuntimeException('Only a reserved agreement can be confirmed.');$to='confirmed';break;
@@ -75,7 +79,7 @@ final class RentalService
                     $to='no_show';break;
                 default: throw new RuntimeException('Unknown rental action.');
             }
-            if($action==='confirm') $this->chauffeurs->validateForConfirmation($r);
+            if($action==='confirm') $this->chauffeurs->validateForConfirmation($r,$driver);
             if($action==='confirm'&&($r['hold_expires_at']===null||new DateTimeImmutable((string)$r['hold_expires_at'],new DateTimeZone('UTC'))<=new DateTimeImmutable('now',new DateTimeZone('UTC'))))throw new RuntimeException('The reservation hold has expired and cannot be confirmed.');
             if($to==='confirmed'&&!in_array($vehicle['current_status'],['available','reserved'],true))throw new RuntimeException('The vehicle is no longer available for confirmation.');
             if($to==='active'&&$vehicle['current_status']!=='reserved')throw new RuntimeException('The vehicle is not in the reserved status required for pickup.');
@@ -101,12 +105,12 @@ final class RentalService
         if($template!==null)$this->notifyCustomer($r,$template,$to);
     }
 
-    public function addCharge(int $id,string $type,string $amount,string $description,int $actor): void
+    public function addCharge(int $id,string $type,string $amount,string $description,int $actor,?callable $afterAppend=null): int
     {
         if(!in_array($type,self::CHARGE_TYPES,true)||$type==='chauffeur_fee')throw new RuntimeException('Choose a supported charge type.');
         $amount=$this->money($amount,'charge amount');$description=trim($description);if($description===''||mb_strlen($description)>500)throw new RuntimeException('Enter a charge description up to 500 characters.');
         if($this->toCents($amount)<=0)throw new RuntimeException('Charge amount must be greater than zero.');
-        $this->db->beginTransaction();try{$r=$this->rentals->find($id,true);if(!$r)throw new RuntimeException('Rental agreement not found.');if(in_array($r['status'],['completed','cancelled','no_show'],true))throw new RuntimeException('Charges are locked for terminal agreements.');$this->charges->appendCharge($id,$type,$amount,$description,$actor);if($this->totalCents($id)<0)throw new RuntimeException('Discounts cannot make the rental total negative.');$this->db->commit();}catch(\Throwable $e){if($this->db->inTransaction())$this->db->rollBack();throw $e;}
+        $this->db->beginTransaction();try{$r=$this->rentals->find($id,true);if(!$r)throw new RuntimeException('Rental agreement not found.');if(in_array($r['status'],['completed','cancelled','no_show'],true))throw new RuntimeException('Charges are locked for terminal agreements.');$this->charges->appendCharge($id,$type,$amount,$description,$actor);$chargeId=(int)$this->db->lastInsertId();if($afterAppend!==null)$afterAppend($chargeId);if($this->totalCents($id)<0)throw new RuntimeException('Discounts cannot make the rental total negative.');$this->db->commit();return $chargeId;}catch(\Throwable $e){if($this->db->inTransaction())$this->db->rollBack();throw $e;}
     }
 
     public function reverseCharge(int $id,int $chargeId,string $reason,int $actor): void

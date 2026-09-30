@@ -13,11 +13,12 @@ use TripleR\Security\Csrf;
 use TripleR\Services\RentalService;
 use TripleR\Services\ChauffeurService;
 use TripleR\Services\DriverService;
+use TripleR\Services\DamageService;
 
 final class AgreementController
 {
     private const READ=['system_admin','fleet_manager','front_desk','finance_staff','auditor'];
-    public function __construct(private readonly AuthMiddleware $guard,private readonly RentalRepository $rentals,private readonly ChargeRepository $charges,private readonly RentalService $service, private readonly ChauffeurService $chauffeurs, private readonly DriverService $driverService) {}
+    public function __construct(private readonly AuthMiddleware $guard,private readonly RentalRepository $rentals,private readonly ChargeRepository $charges,private readonly RentalService $service, private readonly ChauffeurService $chauffeurs, private readonly DriverService $driverService, private readonly DamageService $damage) {}
 
     public function index(Request $request): Response
     {
@@ -66,7 +67,7 @@ final class AgreementController
             }
         }
         $drivers = $this->driverService->selectableForAssignment();
-        $notice=$_SESSION['_rental_notice']??null;unset($_SESSION['_rental_notice']);return $this->render('rentals/agreement-detail',['user'=>$user,'agreement'=>$row,'charges'=>$this->charges->forAgreement($id),'total'=>$this->service->total($id),'statusHistory'=>$this->rentals->statusHistory($id),'depositHistory'=>$this->rentals->depositHistory($id),'drivers'=>$drivers,'notice'=>$notice]);
+        $notice=$_SESSION['_rental_notice']??null;unset($_SESSION['_rental_notice']);return $this->render('rentals/agreement-detail',['user'=>$user,'agreement'=>$row,'charges'=>$this->charges->forAgreement($id),'total'=>$this->service->total($id),'statusHistory'=>$this->rentals->statusHistory($id),'depositHistory'=>$this->rentals->depositHistory($id),'drivers'=>$drivers,'damageReports'=>$this->damage->forAgreement($id),'notice'=>$notice]);
     }
 
     public function action(Request $request): Response

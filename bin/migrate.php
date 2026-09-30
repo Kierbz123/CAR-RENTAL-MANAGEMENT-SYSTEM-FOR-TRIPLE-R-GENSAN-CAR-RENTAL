@@ -14,14 +14,35 @@ try {
     }
 
     $db = Database::migrationConnection();
-    $db->exec('CREATE TABLE IF NOT EXISTS schema_migrations (migration VARCHAR(191) NOT NULL PRIMARY KEY, applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
-    $applied = $db->query('SELECT migration FROM schema_migrations')->fetchAll(\PDO::FETCH_COLUMN);
-    $applied = array_fill_keys($applied, true);
+    $db->exec('CREATE TABLE IF NOT EXISTS schema_migrations (migration VARCHAR(191) NOT NULL PRIMARY KEY, checksum CHAR(64) CHARACTER SET ascii NULL, applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+    $migrationColumns = $db->query('SHOW COLUMNS FROM schema_migrations')->fetchAll(\PDO::FETCH_COLUMN, 0);
+    if (!in_array('checksum', $migrationColumns, true)) {
+        // Existing installations predate checksum tracking. Their current files establish the baseline.
+        $db->exec('ALTER TABLE schema_migrations ADD COLUMN checksum CHAR(64) CHARACTER SET ascii NULL AFTER migration');
+    }
+    $appliedRows = $db->query('SELECT migration, checksum FROM schema_migrations')->fetchAll(\PDO::FETCH_ASSOC);
+    $applied = [];
+    foreach ($appliedRows as $row) {
+        $applied[$row['migration']] = $row['checksum'];
+    }
 
     foreach (glob(dirname(__DIR__) . '/database/migrations/*.sql') ?: [] as $path) {
         $name = basename($path);
-        if (isset($applied[$name])) {
-            echo "Already applied: {$name}\n";
+        $checksum = hash_file('sha256', $path);
+        if ($checksum === false) {
+            throw new RuntimeException('Unable to calculate migration checksum: ' . $name);
+        }
+        if (array_key_exists($name, $applied)) {
+            if ($applied[$name] === null) {
+                $baseline = $db->prepare('UPDATE schema_migrations SET checksum = :checksum WHERE migration = :migration AND checksum IS NULL');
+                $baseline->execute(['checksum' => $checksum, 'migration' => $name]);
+                echo "Recorded legacy checksum baseline: {$name}\n";
+                continue;
+            }
+            if (!hash_equals((string) $applied[$name], $checksum)) {
+                throw new RuntimeException('Applied migration checksum mismatch: ' . $name . '. Migrations are forward-only; repair the schema manually and add a new migration.');
+            }
+            echo "Already applied and checksum verified: {$name}\n";
             continue;
         }
         $sql = file($path, FILE_IGNORE_NEW_LINES);
@@ -48,8 +69,8 @@ try {
         if (trim($buffer) !== '') {
             $db->exec(trim($buffer));
         }
-        $record = $db->prepare('INSERT INTO schema_migrations (migration) VALUES (:migration)');
-        $record->execute(['migration' => $name]);
+        $record = $db->prepare('INSERT INTO schema_migrations (migration, checksum) VALUES (:migration, :checksum)');
+        $record->execute(['migration' => $name, 'checksum' => $checksum]);
         echo "Applied: {$name}\n";
     }
 } catch (Throwable $error) {

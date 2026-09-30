@@ -22,6 +22,12 @@ final class Response
         return new self((string) json_encode($data, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE), $status, ['Content-Type' => 'application/json; charset=utf-8', 'Cache-Control' => 'no-store']);
     }
 
+    public static function binary(string $body, string $mime): self
+    {
+        $allowed=['image/jpeg','image/png','image/webp'];if(!in_array($mime,$allowed,true))return self::html('Unsupported file type.',415);
+        return new self($body,200,['Content-Type'=>$mime,'Cache-Control'=>'private, no-store','Content-Disposition'=>'inline']);
+    }
+
     public static function redirect(string $location, int $status = 303): self
     {
         return new self('', $status, ['Location' => $location, 'Cache-Control' => 'no-store']);

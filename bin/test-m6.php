@@ -46,6 +46,16 @@ $stmt = $db->prepare("INSERT INTO drivers (full_name, license_number_ciphertext,
 $stmt->execute([$cipher2, $hash2]);
 $driverId2 = (int)$db->lastInsertId();
 
+$manila = new DateTimeZone('Asia/Manila');
+$today = new DateTimeImmutable('today', $manila);
+$expiredLicense = $today->modify('-1 day')->format('Y-m-d');
+$expiresToday = $today->format('Y-m-d');
+$stmt = $db->prepare("INSERT INTO drivers (full_name, license_number_ciphertext, license_number_fingerprint, license_expiry) VALUES (?, ?, ?, ?)");
+$stmt->execute(["Driver Expired $r", "cipher-expired-$r", "hash-expired-$r", $expiredLicense]);
+$expiredDriverId = (int)$db->lastInsertId();
+$stmt->execute(["Driver Expiring $r", "cipher-expiring-$r", "hash-expiring-$r", $expiresToday]);
+$expiringDriverId = (int)$db->lastInsertId();
+
 echo "Running M6 Acceptance Tests...\n\n";
 
 function assertException(callable $fn, string $expectedMessage, string $testName) {
@@ -116,7 +126,39 @@ $chauffeurService->assignDriver($agrm3, $driverId2, $adminActor);
 $rentalService->transition($agrm3, 'confirm', $adminActor);
 echo "PASS: FR-05 Confirmation Guard (allows with driver)\n";
 
-// 4. BR-4 Overlap Conflict
+// 4. License expiry is enforced at assignment and rechecked at confirmation.
+$licenseAssignmentStart = $today->modify('+40 days')->format('Y-m-d');
+$licenseAssignment = $rentalService->create([
+    'customer_id' => $customerId1,
+    'vehicle_id' => $vehicleId2,
+    'rental_type' => 'chauffeur',
+    'start_date' => $licenseAssignmentStart,
+    'end_date' => $licenseAssignmentStart,
+    'scheduled_pickup_at' => $licenseAssignmentStart . 'T10:00',
+    'scheduled_return_at' => $licenseAssignmentStart . 'T20:00',
+    'deposit_amount' => '0',
+    'hold_minutes' => 60
+], $adminActor);
+assertException(fn() => $chauffeurService->assignDriver($licenseAssignment, $expiredDriverId, $adminActor), 'license has expired', 'Expired license rejected at assignment');
+
+$licenseConfirmationStart = $today->modify('+42 days')->format('Y-m-d');
+$licenseConfirmation = $rentalService->create([
+    'customer_id' => $customerId1,
+    'vehicle_id' => $vehicleId2,
+    'rental_type' => 'chauffeur',
+    'start_date' => $licenseConfirmationStart,
+    'end_date' => $licenseConfirmationStart,
+    'scheduled_pickup_at' => $licenseConfirmationStart . 'T10:00',
+    'scheduled_return_at' => $licenseConfirmationStart . 'T20:00',
+    'deposit_amount' => '0',
+    'hold_minutes' => 60
+], $adminActor);
+$chauffeurService->assignDriver($licenseConfirmation, $expiringDriverId, $adminActor);
+$expireLicense = $db->prepare('UPDATE drivers SET license_expiry=:expiry WHERE driver_id=:id');
+$expireLicense->execute(['expiry' => $expiredLicense, 'id' => $expiringDriverId]);
+assertException(fn() => $rentalService->transition($licenseConfirmation, 'confirm', $adminActor), 'license has expired', 'License expiry rechecked at confirmation');
+
+// 5. BR-4 Overlap Conflict
 $agrmOverlap = $rentalService->create([
     'customer_id' => $customerId1,
     'vehicle_id' => $vehicleId2,
@@ -130,7 +172,7 @@ $agrmOverlap = $rentalService->create([
 ], $adminActor);
 assertException(fn() => $chauffeurService->assignDriver($agrmOverlap, $driverId1, $adminActor), 'overlapping', 'BR-4 Overlap (Cannot assign busy driver)');
 
-// 5. BR-4 Adjacent non-overlapping
+// 6. BR-4 Adjacent non-overlapping
 $agrm4 = $rentalService->create([
     'customer_id' => $customerId1,
     'vehicle_id' => $vehicleId2,
@@ -146,7 +188,7 @@ $agrm4 = $rentalService->create([
 $chauffeurService->assignDriver($agrm4, $driverId1, $adminActor);
 echo "PASS: BR-4 Adjacent non-overlapping allowed.\n";
 
-// 6. Driver Reassignment & Fee Reversal
+// 7. Driver Reassignment & Fee Reversal
 $agrm5 = $rentalService->create([
     'customer_id' => $customerId1,
     'vehicle_id' => $vehicleId1,
@@ -170,7 +212,7 @@ if (!$pass5) {
     echo "PASS: Driver reassignment reverses old fee and appends new fee. Charges: {$c5[0]['amount']}, {$c5[1]['amount']}, {$c5[2]['amount']}\n";
 }
 
-// 7. Driver removal (blocked on confirmed, works on reserved, fee reversed)
+// 8. Driver removal (blocked on confirmed, works on reserved, fee reversed)
 $rentalService->transition($agrm5, 'confirm', $adminActor);
 assertException(fn() => $chauffeurService->removeDriver($agrm5, $adminActor), 'reserved', 'Driver removal on confirmed agreement rejected');
 
@@ -196,7 +238,7 @@ if ($r6['driver_id'] === null && count($c6) >= 2) {
     foreach ($c6 as $i => $row) echo "  charge[$i]: type={$row['charge_type']} amount={$row['amount']} entry_kind={$row['entry_kind']}\n";
 }
 
-// 8. Vehicle status untouched
+// 9. Vehicle status untouched
 $v1 = $vehicleRepo->find($vehicleId1);
 if ($v1['current_status'] === 'reserved') { // set by confirm($agrm5)
     echo "PASS: Assigning/removing drivers leaves vehicle status unaffected.\n";
@@ -204,12 +246,12 @@ if ($v1['current_status'] === 'reserved') { // set by confirm($agrm5)
     echo "FAIL: Vehicle status was unexpectedly altered.\n";
 }
 
-// 9. Charge immutability trigger
+// 10. Charge immutability trigger
 assertException(function() use ($db, $c5) {
     $db->exec("UPDATE rental_charges SET amount = '500' WHERE charge_id = " . (int)$c5[0]['charge_id']);
 }, 'append-only', 'Charge immutability trigger');
 
-// 10. Chauffeur lifecycle (Confirm -> pickup -> return)
+// 11. Chauffeur lifecycle (Confirm -> pickup -> return)
 $rentalService->transition($agrm5, 'pickup', $adminActor, null, 10000, null);
 $v1_post = $vehicleRepo->find($vehicleId1);
 if ($v1_post['current_status'] === 'rented') echo "PASS: Lifecycle: pickup transitions vehicle to rented.\n";
