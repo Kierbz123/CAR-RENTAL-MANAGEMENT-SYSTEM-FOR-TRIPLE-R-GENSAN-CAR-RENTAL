@@ -9,3 +9,9 @@
 /.vscode/
 Thumbs.db
 .DS_Store
+/node_modules/
+/.runtime/
+/public/_preview/
+# Local files that hold sign-in details. Never commit these.
+/Triple Car Rental System Credentials.txt
+/.tmp-*.cjs

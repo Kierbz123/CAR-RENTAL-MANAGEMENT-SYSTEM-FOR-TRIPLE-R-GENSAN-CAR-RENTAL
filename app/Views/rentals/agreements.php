@@ -1,2 +1,68 @@
-<?php declare(strict_types=1);$e=static fn(mixed $v):string=>htmlspecialchars((string)$v,ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8'); ?>
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Rental agreements | Triple R Gensan</title><link rel="stylesheet" href="/assets/css/app.css"></head><body><header class="topbar"><a class="brand" href="/staff">Triple R Gensan</a><nav class="staff-actions"><a href="/rentals">Agreements</a><a href="/customers">Customers</a><a href="/fleet/vehicles">Fleet</a></nav></header><main class="page-shell"><section class="page-heading"><div><p class="eyebrow">Rental management</p><h1>Agreements</h1></div><?php if(in_array($user['role'],['system_admin','front_desk'],true)):?><a class="button-link" href="/rentals/new">New reservation</a><?php endif;?></section><form class="panel filter-form" method="get" action="/rentals"><label>Status<select name="status"><option value="">All statuses</option><?php foreach($statuses as $s):?><option value="<?= $e($s) ?>"<?= $status===$s?' selected':'' ?>><?= $e(str_replace('_',' ',$s)) ?></option><?php endforeach;?></select></label><button type="submit">Filter</button></form><section class="panel"><div class="table-wrap"><table><thead><tr><th>Agreement</th><th>Customer</th><th>Vehicle</th><th>Dates</th><th>Days</th><th>Base</th><th>Status</th></tr></thead><tbody><?php foreach($rows as $r):?><tr><td><a href="/rentals/detail?agreement_id=<?= (int)$r['agreement_id'] ?>">#<?= (int)$r['agreement_id'] ?></a></td><td><?= $e($r['customer_name']) ?></td><td><?= $e($r['plate_number'].' '.$r['make'].' '.$r['model']) ?></td><td><?= $e($r['start_date'].' – '.$r['end_date']) ?></td><td><?= (int)$r['rental_days'] ?></td><td>₱<?= $e($r['base_amount']) ?></td><td><?= $e($r['status']) ?><?php if($r['rental_type']==='chauffeur'&&$r['status']==='reserved'&&$r['driver_id']===null):?> <span class="badge" style="background:var(--error-light);color:var(--error-dark);padding:0.125rem 0.25rem;border-radius:var(--radius-sm);font-size:0.75rem;margin-left:0.5rem">Needs driver</span><?php endif;?></td></tr><?php endforeach;?><?php if(!$rows):?><tr><td colspan="7">No agreements found.</td></tr><?php endif;?></tbody></table></div></section></main></body></html>
+<?php
+declare(strict_types=1);
+
+use TripleR\Support\Format;
+use TripleR\Support\Icon;
+use TripleR\Support\Pager;
+use TripleR\Support\StatusPresenter as Status;
+use TripleR\Support\View;
+
+$e = static fn (mixed $value): string => View::e($value);
+$pager = new Pager($rows);
+
+View::begin('staff', ['title' => 'Agreements', 'crumbs' => [['Agreements', null]]]);
+?>
+<header class="page-header">
+    <div class="page-header-text">
+        <h1>Agreements</h1>
+        <p class="page-lead">Reservations, rentals on the road and closed agreements, in lifecycle order.</p>
+    </div>
+<?php if (in_array($user['role'], ['system_admin', 'front_desk'], true)): ?>
+    <div class="page-header-actions">
+        <a class="button button-primary" href="/rentals/new"><?= Icon::svg('plus') ?>New reservation</a>
+    </div>
+<?php endif; ?>
+</header>
+
+<section class="panel" aria-labelledby="agreement-records">
+    <h2 class="visually-hidden" id="agreement-records">Rental agreements</h2>
+    <form class="toolbar" method="get" action="/rentals">
+        <label class="field">
+            <span class="field-label">Status</span>
+            <select name="status" data-auto-submit>
+                <option value="">All statuses</option>
+<?php foreach ($statuses as $s): ?>
+                <option value="<?= $e($s) ?>"<?= $status === $s ? ' selected' : '' ?>><?= $e(Status::label($s)) ?></option>
+<?php endforeach; ?>
+            </select>
+        </label>
+        <button class="button button-secondary" type="submit" data-auto-apply>Apply</button>
+<?php if ($status !== ''): ?>
+        <a class="button button-ghost" href="/rentals">Clear filter</a>
+<?php endif; ?>
+        <span class="toolbar-summary"><?= $e(Format::plural(count($rows), 'agreement')) ?></span>
+    </form>
+    <div class="table-wrap">
+        <table class="data-table" data-stack>
+            <thead><tr><th scope="col">Agreement</th><th scope="col">Customer</th><th scope="col">Vehicle</th><th scope="col">Dates</th><th scope="col" class="num">Days</th><th scope="col" class="num">Base amount</th><th scope="col">Status</th></tr></thead>
+            <tbody>
+<?php foreach ($pager->rows as $r): $href = '/rentals/detail?agreement_id=' . (int) $r['agreement_id']; ?>
+                <tr data-href="<?= $e($href) ?>">
+                    <td><a class="cell-strong" href="<?= $e($href) ?>">#<?= (int) $r['agreement_id'] ?></a><span class="cell-sub"><?= $e(Status::label($r['rental_type'])) ?></span></td>
+                    <td><?= $e($r['customer_name']) ?></td>
+                    <td><span class="mono"><?= $e($r['plate_number']) ?></span><span class="cell-sub"><?= $e($r['make'] . ' ' . $r['model']) ?></span></td>
+                    <td class="nowrap"><?= $e(Format::date($r['start_date'])) ?><span class="cell-sub">to <?= $e(Format::date($r['end_date'])) ?></span></td>
+                    <td class="num"><?= (int) $r['rental_days'] ?></td>
+                    <td class="num"><?= $e(Format::money($r['base_amount'])) ?></td>
+                    <td><?= Status::badge('rental', $r['status']) ?><?php if ($r['rental_type'] === 'chauffeur' && $r['status'] === 'reserved' && $r['driver_id'] === null): ?> <span class="badge badge-danger">Needs driver</span><?php endif; ?></td>
+                </tr>
+<?php endforeach; ?>
+<?php if (!$rows): ?>
+                <tr><td class="empty-state" colspan="7"><strong>No agreements found</strong><?php if ($status !== ''): ?><a href="/rentals">Show all agreements</a><?php else: ?>New reservations appear here.<?php endif; ?></td></tr>
+<?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+    <?= $pager->render('agreement') ?>
+</section>
+<?php View::end(); ?>

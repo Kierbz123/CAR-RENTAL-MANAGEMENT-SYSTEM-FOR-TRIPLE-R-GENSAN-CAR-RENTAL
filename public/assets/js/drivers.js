@@ -1,10 +1,6 @@
 (() => {
     'use strict';
-    document.querySelectorAll('[data-confirm]').forEach((form) => {
-        form.addEventListener('submit', (event) => {
-            if (!window.confirm(form.dataset.confirm)) event.preventDefault();
-        });
-    });
+    // Confirmation prompts for [data-confirm] forms are handled once, in app-shell.js.
     document.querySelectorAll('[data-driver-form]').forEach((form) => {
         form.addEventListener('submit', () => {
             const button = form.querySelector('button[type="submit"]');

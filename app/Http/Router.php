@@ -27,7 +27,12 @@ final class Router
     {
         $handler = $this->routes[$request->method][$request->path] ?? null;
         if ($handler === null) {
-            return Response::json(['error' => 'Not found'], 404);
+            $wantsPage = $request->method === 'GET'
+                && !str_starts_with($request->path, '/api/')
+                && !str_starts_with($request->path, '/webhooks/');
+            return $wantsPage
+                ? Response::html('This page could not be found. Check the address, or go back to where you started.', 404)
+                : Response::json(['error' => 'Not found'], 404);
         }
         $response = $handler($request);
         if (!$response instanceof Response) {

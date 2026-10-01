@@ -1,0 +1,220 @@
+/*
+ * Staff workspace behaviour. The sidebar, breadcrumb and page are rendered on the
+ * server; this file only adds conveniences on top, so every page still works
+ * with scripts turned off (links, forms and plain posts).
+ */
+(() => {
+    'use strict';
+
+    const root = document.documentElement;
+    root.classList.add('js');
+    const body = document.body;
+
+    /* ---- Phone drawer -------------------------------------------------- */
+    const sidebar = document.getElementById('app-sidebar');
+    const openButton = document.querySelector('[data-drawer-open]');
+    const closeLink = document.querySelector('[data-drawer-close]');
+    const drawerQuery = window.matchMedia('(max-width: 900px)');
+    let lastFocus = null;
+
+    const focusable = (container) => [...container.querySelectorAll('a[href], button:not([disabled]), select, input:not([type="hidden"]), textarea, [tabindex]:not([tabindex="-1"])')]
+        .filter((element) => element.offsetParent !== null);
+
+    const setDrawer = (open) => {
+        if (!sidebar || !openButton) return;
+        body.classList.toggle('drawer-open', open);
+        openButton.setAttribute('aria-expanded', String(open));
+        if (open) {
+            lastFocus = document.activeElement;
+            focusable(sidebar)[0]?.focus();
+        } else if (lastFocus instanceof HTMLElement) {
+            lastFocus.focus();
+            lastFocus = null;
+        }
+    };
+
+    openButton?.addEventListener('click', (event) => {
+        event.preventDefault();
+        setDrawer(!body.classList.contains('drawer-open'));
+    });
+    closeLink?.addEventListener('click', (event) => {
+        event.preventDefault();
+        setDrawer(false);
+    });
+    drawerQuery.addEventListener('change', () => setDrawer(false));
+    sidebar?.addEventListener('keydown', (event) => {
+        if (event.key !== 'Tab' || !body.classList.contains('drawer-open')) return;
+        const items = focusable(sidebar);
+        if (!items.length) return;
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    });
+
+    /* ---- Confirmation dialog ------------------------------------------- */
+    const confirmMessage = (form) => {
+        if (form.dataset.confirm) return form.dataset.confirm;
+        const action = form.getAttribute('action') || '';
+        if (action === '/customers/blacklist') return 'Blacklist this customer? Future bookings will be blocked.';
+        if (action === '/rentals/driver/remove') return 'Remove this driver assignment? The reservation stays, and needs a new driver before it can be confirmed.';
+        if (action === '/rentals/action') {
+            const value = form.querySelector('[name="action"]')?.value;
+            if (value === 'cancel') return 'Cancel this rental agreement? This cannot be undone.';
+            if (value === 'no_show') return 'Mark this rental as a no-show? This cannot be undone.';
+        }
+        return '';
+    };
+
+    const closeDialog = (backdrop, restore) => {
+        backdrop.remove();
+        if (restore instanceof HTMLElement) restore.focus();
+    };
+
+    const openConfirm = (form, message, trigger) => {
+        const tone = form.dataset.confirmTone === 'neutral' ? 'button-primary' : 'button-danger';
+        const backdrop = document.createElement('div');
+        backdrop.className = 'app-dialog-backdrop';
+        const dialog = document.createElement('section');
+        dialog.className = 'app-dialog';
+        dialog.setAttribute('role', 'alertdialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.setAttribute('aria-labelledby', 'app-dialog-title');
+        dialog.setAttribute('aria-describedby', 'app-dialog-message');
+        const title = document.createElement('h2');
+        title.id = 'app-dialog-title';
+        title.textContent = 'Please confirm';
+        const text = document.createElement('p');
+        text.id = 'app-dialog-message';
+        text.textContent = message;
+        const actions = document.createElement('div');
+        actions.className = 'app-dialog-actions';
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'button button-secondary';
+        cancel.textContent = 'Keep as is';
+        const confirm = document.createElement('button');
+        confirm.type = 'button';
+        confirm.className = `button ${tone}`;
+        confirm.textContent = form.dataset.confirmAction || 'Yes, continue';
+        actions.append(cancel, confirm);
+        dialog.append(title, text, actions);
+        backdrop.append(dialog);
+        body.append(backdrop);
+
+        const close = () => closeDialog(backdrop, trigger);
+        cancel.addEventListener('click', close);
+        backdrop.addEventListener('click', (event) => { if (event.target === backdrop) close(); });
+        backdrop.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') { event.preventDefault(); close(); return; }
+            if (event.key !== 'Tab') return;
+            if (event.shiftKey && document.activeElement === cancel) { event.preventDefault(); confirm.focus(); }
+            else if (!event.shiftKey && document.activeElement === confirm) { event.preventDefault(); cancel.focus(); }
+        });
+        confirm.addEventListener('click', () => {
+            form.dataset.confirmed = 'true';
+            backdrop.remove();
+            form.requestSubmit(form.querySelector('[type="submit"], button:not([type])') ?? undefined);
+        });
+        cancel.focus();
+    };
+
+    document.addEventListener('submit', (event) => {
+        const form = event.target;
+        if (!(form instanceof HTMLFormElement)) return;
+        if (form.dataset.confirmed !== 'true') {
+            const message = confirmMessage(form);
+            if (message) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                openConfirm(form, message, document.activeElement instanceof HTMLElement ? document.activeElement : null);
+                return;
+            }
+        }
+        // Show that the request is on its way and prevent a double submit.
+        if (form.method.toLowerCase() === 'post' && !event.defaultPrevented) {
+            const button = event.submitter instanceof HTMLButtonElement ? event.submitter : form.querySelector('button[type="submit"], button:not([type])');
+            if (button && form.dataset.busy !== 'off') {
+                window.setTimeout(() => {
+                    if (event.defaultPrevented) return;
+                    button.disabled = true;
+                    button.setAttribute('aria-busy', 'true');
+                }, 0);
+            }
+        }
+    }, true);
+
+    /* ---- Toasts for one-off success messages --------------------------- */
+    const toastRegion = () => {
+        let region = document.querySelector('.app-toast-region');
+        if (!region) {
+            region = document.createElement('div');
+            region.className = 'app-toast-region';
+            region.setAttribute('role', 'status');
+            region.setAttribute('aria-live', 'polite');
+            body.append(region);
+        }
+        return region;
+    };
+
+    const showToast = (message) => {
+        const toast = document.createElement('div');
+        toast.className = 'app-toast';
+        toast.textContent = message;
+        toastRegion().append(toast);
+        const dismiss = () => {
+            toast.classList.add('is-exiting');
+            window.setTimeout(() => toast.remove(), 140);
+        };
+        const timer = window.setTimeout(dismiss, 6000);
+        toast.addEventListener('click', () => { window.clearTimeout(timer); dismiss(); });
+    };
+    window.appToast = showToast;
+
+    document.querySelectorAll('.notice[data-toast]').forEach((notice) => {
+        const message = notice.textContent.trim();
+        if (!message) return;
+        notice.remove();
+        showToast(message);
+    });
+
+    /* ---- Lists ----------------------------------------------------------- */
+    // Filters apply as soon as a choice is made; the Apply button remains for use without scripts.
+    document.querySelectorAll('[data-auto-submit]').forEach((control) => {
+        control.addEventListener('change', () => control.form?.requestSubmit());
+    });
+
+    // A whole row opens its record. The visible link in the row stays for keyboard users.
+    document.addEventListener('click', (event) => {
+        const row = event.target instanceof Element ? event.target.closest('tr[data-href]') : null;
+        if (!row || event.target.closest('a, button, input, select, textarea, label, summary, details')) return;
+        if (window.getSelection()?.toString()) return;
+        window.location.assign(row.dataset.href);
+    });
+
+    // Copy column names onto cells so tables can turn into stacked cards on phones.
+    const labelTable = (table) => {
+        const headers = [...table.querySelectorAll('thead th')].map((th) => th.textContent.trim());
+        table.querySelectorAll('tbody tr').forEach((row) => {
+            [...row.children].forEach((cell, index) => {
+                if (!cell.hasAttribute('data-label')) cell.setAttribute('data-label', headers[index] ?? '');
+            });
+        });
+    };
+    document.querySelectorAll('table[data-stack]').forEach((table) => {
+        labelTable(table);
+        const tbody = table.tBodies[0];
+        if (tbody) new MutationObserver(() => labelTable(table)).observe(tbody, { childList: true });
+    });
+
+    /* ---- Small touches ---------------------------------------------------- */
+    document.querySelectorAll('[data-status-changed]').forEach((badge) => {
+        badge.classList.add('badge-status-morph');
+        badge.addEventListener('animationend', () => badge.classList.remove('badge-status-morph'), { once: true });
+    });
+
+    document.querySelectorAll('[data-print]').forEach((button) => {
+        button.hidden = false;
+        button.addEventListener('click', () => window.print());
+    });
+})();

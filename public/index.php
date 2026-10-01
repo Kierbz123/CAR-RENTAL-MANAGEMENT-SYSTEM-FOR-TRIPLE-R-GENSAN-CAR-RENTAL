@@ -30,6 +30,8 @@ use TripleR\Repositories\VehicleRepository;
 use TripleR\Repositories\VehicleStatusLogRepository;
 use TripleR\Repositories\DriverRepository;
 use TripleR\Repositories\CustomerRepository;
+use TripleR\Repositories\DashboardRepository;
+use TripleR\Support\Navigation;
 use TripleR\Repositories\RentalRepository;
 use TripleR\Repositories\ChargeRepository;
 use TripleR\Repositories\DamageReportRepository;
@@ -90,7 +92,6 @@ try {
     $authController = new AuthController($authService, $auth);
     $messageCipher = new SmsMessageCipher();
     $staffNotifications = new StaffNotificationController($authMiddleware, $notificationRepository, $messageCipher);
-    $staffHome = new StaffHomeController($authMiddleware);
     $userAdmin = new UserController($db, $authMiddleware, $users, $sessions, $securityLogs);
     $sessionAdmin = new SessionController($db, $authMiddleware, $users, $sessions, $securityLogs);
     $webhooks = new SmsWebhookController($inboundRepository, $notificationRepository);
@@ -114,6 +115,7 @@ try {
     $customerRepository = new CustomerRepository($db);
     $customerPiiCipher = new CustomerPiiCipher();
     $customerService = new CustomerService($db, $customerRepository, $customerPiiCipher);
+    $customerController = new CustomerController($authMiddleware, $customerRepository, $customerService, $customerPiiCipher);
     $bookingOverlapService = new BookingOverlapService($db);
     $rentalRepository = new RentalRepository($db, $bookingOverlapService);
     $chargeRepository = new ChargeRepository($db);
@@ -123,13 +125,33 @@ try {
     $maintenanceRepository = new MaintenanceRepository($db);
     $maintenanceService = new MaintenanceService($db, $maintenanceRepository, $vehicleService, $vehiclePhotos);
     $maintenance = new MaintenanceController($authMiddleware, $maintenanceRepository, $vehicleRepository, $maintenanceService);
+    $staffHome = new StaffHomeController($authMiddleware, new DashboardRepository($db), $maintenanceRepository, $maintenanceService);
     $damageController = new \TripleR\Controllers\Rentals\DamageController($authMiddleware, $damageService);
     $agreements = new AgreementController($authMiddleware, $rentalRepository, $chargeRepository, $rentalService, $chauffeurService, $driverService, $damageService);
     $driverAssignments = new \TripleR\Controllers\Rentals\DriverAssignmentController($authMiddleware, $chauffeurService);
     $rentalApi = new RentalApiController($authMiddleware, $rentalService, $magicLinkService);
 
     $router = new Router();
-    $router->get('/', static fn (Request $request): Response => Response::redirect('/staff'));
+    $router->get('/', static function () use ($auth): Response {
+        if ($auth->user() !== null) {
+            return Response::redirect('/staff');
+        }
+        ob_start();
+        require APP_ROOT . '/app/Views/public/landing.php';
+        return Response::html((string) ob_get_clean());
+    });
+    $router->get('/api/staff/navigation', static function () use ($authMiddleware): Response {
+        $user = $authMiddleware->requireAuthenticated(true);
+        if ($user instanceof Response) {
+            return $user;
+        }
+        $role = (string) $user['role'];
+        return Response::json([
+            'user' => ['email' => (string) $user['email'], 'role' => $role],
+            'csrf' => Csrf::token(),
+            'items' => Navigation::flatFor($role),
+        ]);
+    });
     $router->get('/staff/login', static fn (): Response => $authController->showLogin());
     $router->post('/staff/login', static fn (Request $request): Response => $authController->login($request));
     $router->post('/staff/logout', static fn (Request $request): Response => $authController->logout($request));
@@ -233,5 +255,9 @@ try {
     $router->dispatch($request)->send();
 } catch (\Throwable $error) {
     error_log('Application request failed: ' . get_class($error));
-    Response::json(['error' => 'The request could not be completed.'], 500)->send();
+    $wantsPage = $request->method === 'GET' && !str_starts_with($request->path, '/api/');
+    ($wantsPage
+        ? Response::html('Something went wrong on our side and the page could not be loaded. Please try again in a moment.', 500)
+        : Response::json(['error' => 'The request could not be completed.'], 500)
+    )->send();
 }

@@ -1,12 +1,188 @@
 <?php
 declare(strict_types=1);
-$e=static fn(mixed $v):string=>htmlspecialchars((string)$v,ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8');
+
+use TripleR\Support\Format;
+use TripleR\Support\StatusPresenter as Status;
+use TripleR\Support\View;
+
+$e = static fn (mixed $value): string => View::e($value);
+$deleted = $driver['deleted_at'] !== null;
+$canEdit = $canManage && !$deleted;
+$expired = $driver['license_expiry'] < Format::today();
+
+View::begin('staff', ['title' => (string) $driver['full_name'], 'crumbs' => [['Fleet', null], ['Drivers', '/fleet/drivers'], [(string) $driver['full_name'], null]], 'scripts' => ['drivers.js']]);
 ?>
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title><?= $e($driver['full_name']) ?> | Triple R Gensan</title><link rel="stylesheet" href="/assets/css/app.css"><script src="/assets/js/drivers.js" defer></script></head><body>
-<header class="topbar"><a class="brand" href="/staff">Triple R Gensan</a><nav class="staff-actions"><a href="/fleet/drivers">Drivers</a><a href="/fleet/vehicles">Vehicles</a><form method="post" action="/staff/logout"><input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>"><button class="button-secondary" type="submit">Sign out</button></form></nav></header>
-<main class="page-shell" data-driver-reveal-url="/fleet/drivers/reveal" data-csrf="<?= $e($csrfToken) ?>" data-driver-id="<?= (int)$driver['driver_id'] ?>"><section class="page-heading"><div><p class="eyebrow">Driver profile</p><h1><?= $e($driver['full_name']) ?></h1><p>Status: <?= $e($driver['status']) ?> · License expiry: <?= $e($driver['license_expiry']) ?><?php if($driver['deleted_at']!==null):?> · Soft-deleted <?= $e($driver['deleted_at']) ?><?php endif;?></p></div><?php if($canManage&&$driver['deleted_at']===null):?><a class="button-link" href="/fleet/drivers/edit?driver_id=<?= (int)$driver['driver_id'] ?>">Edit record</a><?php endif;?></section><?php if($notice):?><p class="alert" role="status"><?= $e($notice) ?></p><?php endif;?>
-<section class="panel"><div class="panel-heading"><h2>Driver information</h2><p><?= $canManage?'Sensitive values are masked until you request a reveal.':'Sensitive values are restricted for driver coordinators.' ?></p></div><dl class="driver-facts"><dt>License number</dt><dd><span data-pii-value><?= $e($pii['license']) ?></span><?php if($canManage):?> <button type="button" class="button-small" data-reveal-kind="license">Reveal</button><?php endif;?></dd><dt>Address</dt><dd><span data-pii-value><?= $e($pii['address']) ?></span><?php if($canManage&&$driver['address_ciphertext']!==null):?> <button type="button" class="button-small" data-reveal-kind="address">Reveal</button><?php endif;?></dd><dt>Emergency contact</dt><dd><span data-pii-value><?= $e($pii['emergency_name']) ?></span><?php if($canManage&&$driver['emergency_contact_name_ciphertext']!==null):?> <button type="button" class="button-small" data-reveal-kind="emergency_name">Reveal name</button><?php endif;?> · <span data-pii-value><?= $e($pii['emergency_phone']) ?></span><?php if($canManage&&$driver['emergency_contact_phone_ciphertext']!==null):?> <button type="button" class="button-small" data-reveal-kind="emergency_phone">Reveal phone</button><?php endif;?></dd><dt>Notes</dt><dd><?= nl2br($e($driver['notes']??'—')) ?></dd></dl></section>
-<section class="panel"><div class="panel-heading"><h2>Contact channels</h2></div><?php if($canManage&&$driver['deleted_at']===null):?><form class="form-grid" method="post" action="/fleet/drivers/contacts/add"><input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>"><input type="hidden" name="driver_id" value="<?= (int)$driver['driver_id'] ?>"><label>Type<select name="contact_type"><option value="phone">Phone</option><option value="email">Email</option></select></label><label>Value<input name="contact_value" required maxlength="254"></label><label class="check-label"><input type="checkbox" name="is_primary" value="1"> Make primary</label><button type="submit">Add contact</button></form><?php endif;?><div class="table-wrap"><table><thead><tr><th>Type</th><th>Value</th><th>Primary</th><th></th></tr></thead><tbody><?php foreach($contacts as $contact):?><tr><td><?= $e($contact['contact_type']) ?></td><td><span data-pii-value><?= $e($contact['display']) ?></span><?php if($canManage):?> <button type="button" class="button-small" data-reveal-kind="contact" data-record-id="<?= (int)$contact['contact_id'] ?>">Reveal</button><?php endif;?></td><td><?= (int)$contact['is_primary']===1?'Yes':'No' ?></td><td><?php if($canManage&&$driver['deleted_at']===null):?><details><summary>Edit</summary><form method="post" action="/fleet/drivers/contacts/update"><input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>"><input type="hidden" name="driver_id" value="<?= (int)$driver['driver_id'] ?>"><input type="hidden" name="contact_id" value="<?= (int)$contact['contact_id'] ?>"><label>Type<select name="contact_type"><option value="phone"<?= $contact['contact_type']==='phone'?' selected':'' ?>>Phone</option><option value="email"<?= $contact['contact_type']==='email'?' selected':'' ?>>Email</option></select></label><label>New value<input name="contact_value" required maxlength="254"></label><label class="check-label"><input type="checkbox" name="is_primary" value="1"<?= $contact['is_primary']?' checked':'' ?>> Primary</label><button type="submit">Save</button></form></details><form method="post" action="/fleet/drivers/contacts/remove" data-confirm="Remove this contact channel?"><input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>"><input type="hidden" name="driver_id" value="<?= (int)$driver['driver_id'] ?>"><input type="hidden" name="contact_id" value="<?= (int)$contact['contact_id'] ?>"><button class="button-danger button-small" type="submit">Remove</button></form><?php endif;?></td></tr><?php endforeach;?><?php if(!$contacts):?><tr><td colspan="4">No contact channels recorded.</td></tr><?php endif;?></tbody></table></div></section>
-<section class="panel"><div class="panel-heading"><h2>Status history</h2></div><div class="table-wrap"><table><thead><tr><th>When (UTC)</th><th>Old status</th><th>New status</th><th>Actor</th></tr></thead><tbody><?php foreach($statusHistory as $entry):?><tr><td><?= $e($entry['created_at']) ?></td><td><?= $e($entry['old_status']??'Initial') ?></td><td><?= $e($entry['new_status']) ?></td><td><?= $e($entry['actor_email']) ?></td></tr><?php endforeach;?></tbody></table></div></section>
-<section class="panel"><div class="panel-heading"><h2>Assignment history</h2></div><div class="table-wrap"><table><thead><tr><th>Agreement</th><th>Status</th><th>Start</th><th>End</th></tr></thead><tbody><?php foreach($assignments as $assignment):?><tr><td>#<?= (int)$assignment['agreement_id'] ?></td><td><?= $e($assignment['status']) ?></td><td><?= $e($assignment['start_date']) ?></td><td><?= $e($assignment['end_date']) ?></td></tr><?php endforeach;?><?php if(!$assignments):?><tr><td colspan="4">No assignment history is available.</td></tr><?php endif;?></tbody></table></div></section>
-<?php if($canManage&&$driver['deleted_at']===null):?><section class="panel customer-actions"><div class="panel-heading"><h2>Driver status and record</h2></div><div class="panel-body"><form method="post" action="/fleet/drivers/status"><input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>"><input type="hidden" name="driver_id" value="<?= (int)$driver['driver_id'] ?>"><label>Set status<select name="status"><option value="active"<?= $driver['status']==='active'?' selected':'' ?>>Active</option><option value="inactive"<?= $driver['status']==='inactive'?' selected':'' ?>>Inactive</option></select></label><button type="submit">Save status</button></form><form method="post" action="/fleet/drivers/delete" data-confirm="Soft-delete this driver? An open rental assignment will block removal."><input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>"><input type="hidden" name="driver_id" value="<?= (int)$driver['driver_id'] ?>"><button class="button-danger" type="submit">Soft-delete driver</button></form></div></section><?php endif;?></main></body></html>
+<div data-driver-reveal-url="/fleet/drivers/reveal" data-csrf="<?= $e($csrfToken) ?>" data-driver-id="<?= (int) $driver['driver_id'] ?>">
+<header class="page-header">
+    <div class="page-header-text">
+        <p class="eyebrow">Driver</p>
+        <h1><?= $e($driver['full_name']) ?></h1>
+        <div class="page-meta">
+            <?= Status::badge('driver', $driver['status']) ?>
+<?php if ($expired): ?>
+            <span class="badge badge-danger">Licence expired</span>
+<?php endif; ?>
+            <span>Licence valid to <?= $e(Format::date($driver['license_expiry'])) ?></span>
+<?php if ($deleted): ?>
+            <span>Removed <?= $e(Format::datetime($driver['deleted_at'])) ?></span>
+<?php endif; ?>
+        </div>
+    </div>
+<?php if ($canEdit): ?>
+    <div class="page-header-actions">
+        <a class="button button-primary" href="/fleet/drivers/edit?driver_id=<?= (int) $driver['driver_id'] ?>">Edit driver</a>
+    </div>
+<?php endif; ?>
+</header>
+</div>
+<?php if ($notice): ?>
+<p class="notice" role="status"><?= $e($notice) ?></p>
+<?php endif; ?>
+
+<div class="split">
+    <div class="split-main">
+        <section class="panel" aria-labelledby="info-title">
+            <div class="panel-heading"><div><h2 id="info-title">Personal details</h2><p><?= $canManage ? 'Stored encrypted and hidden until you choose Reveal.' : 'These details are restricted for your role.' ?></p></div></div>
+            <div class="panel-body">
+                <dl class="facts">
+                    <div><dt>Licence number</dt><dd><span data-pii-value><?= $e($pii['license']) ?></span><?php if ($canManage): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="license">Reveal</button><?php endif; ?></dd></div>
+                    <div><dt>Address</dt><dd><span data-pii-value><?= $e($pii['address']) ?></span><?php if ($canManage && $driver['address_ciphertext'] !== null): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="address">Reveal</button><?php endif; ?></dd></div>
+                    <div><dt>Emergency contact name</dt><dd><span data-pii-value><?= $e($pii['emergency_name']) ?></span><?php if ($canManage && $driver['emergency_contact_name_ciphertext'] !== null): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="emergency_name">Reveal</button><?php endif; ?></dd></div>
+                    <div><dt>Emergency contact phone</dt><dd><span data-pii-value><?= $e($pii['emergency_phone']) ?></span><?php if ($canManage && $driver['emergency_contact_phone_ciphertext'] !== null): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="emergency_phone">Reveal</button><?php endif; ?></dd></div>
+                </dl>
+<?php if (!empty($driver['notes'])): ?>
+                <div><h3>Staff notes</h3><p class="timeline-note"><?= nl2br($e($driver['notes'])) ?></p></div>
+<?php endif; ?>
+            </div>
+        </section>
+
+        <section class="panel" aria-labelledby="contacts-title">
+            <div class="panel-heading"><h2 id="contacts-title">Phone and email</h2></div>
+<?php if ($canEdit): ?>
+            <form class="toolbar" method="post" action="/fleet/drivers/contacts/add">
+                <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
+                <input type="hidden" name="driver_id" value="<?= (int) $driver['driver_id'] ?>">
+                <label class="field"><span class="field-label">Type</span><select name="contact_type"><option value="phone">Phone</option><option value="email">Email</option></select></label>
+                <label class="field"><span class="field-label">Number or address</span><input name="contact_value" required maxlength="254"></label>
+                <label class="check-field"><input type="checkbox" name="is_primary" value="1"> Make primary</label>
+                <button class="button button-secondary" type="submit">Add contact</button>
+            </form>
+<?php endif; ?>
+            <div class="table-wrap">
+                <table class="data-table" data-stack>
+                    <thead><tr><th scope="col">Type</th><th scope="col">Value</th><th scope="col">Primary</th><th scope="col" class="actions">Actions</th></tr></thead>
+                    <tbody>
+<?php foreach ($contacts as $contact): ?>
+                        <tr>
+                            <td><?= $e(Status::label($contact['contact_type'])) ?></td>
+                            <td><span data-pii-value><?= $e($contact['display']) ?></span><?php if ($canManage): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="contact" data-record-id="<?= (int) $contact['contact_id'] ?>">Reveal</button><?php endif; ?></td>
+                            <td><?= (int) $contact['is_primary'] === 1 ? '<span class="badge badge-info">Primary</span>' : '—' ?></td>
+                            <td class="actions">
+<?php if ($canEdit): ?>
+                                <div class="cell-actions">
+                                    <details class="disclosure">
+                                        <summary>Edit</summary>
+                                        <form class="disclosure-body" method="post" action="/fleet/drivers/contacts/update">
+                                            <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
+                                            <input type="hidden" name="driver_id" value="<?= (int) $driver['driver_id'] ?>">
+                                            <input type="hidden" name="contact_id" value="<?= (int) $contact['contact_id'] ?>">
+                                            <label class="field"><span class="field-label">Type</span><select name="contact_type"><option value="phone"<?= $contact['contact_type'] === 'phone' ? ' selected' : '' ?>>Phone</option><option value="email"<?= $contact['contact_type'] === 'email' ? ' selected' : '' ?>>Email</option></select></label>
+                                            <label class="field"><span class="field-label">New value</span><input name="contact_value" required maxlength="254"></label>
+                                            <label class="check-field"><input type="checkbox" name="is_primary" value="1"<?= $contact['is_primary'] ? ' checked' : '' ?>> Primary</label>
+                                            <div><button class="button button-primary button-small" type="submit">Save</button></div>
+                                        </form>
+                                    </details>
+                                    <form method="post" action="/fleet/drivers/contacts/remove" data-confirm="Remove this contact from the driver’s record?" data-confirm-action="Remove contact">
+                                        <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
+                                        <input type="hidden" name="driver_id" value="<?= (int) $driver['driver_id'] ?>">
+                                        <input type="hidden" name="contact_id" value="<?= (int) $contact['contact_id'] ?>">
+                                        <button class="button button-danger button-small" type="submit">Remove</button>
+                                    </form>
+                                </div>
+<?php endif; ?>
+                            </td>
+                        </tr>
+<?php endforeach; ?>
+<?php if (!$contacts): ?>
+                        <tr><td class="empty-state" colspan="4">No phone or email recorded.</td></tr>
+<?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="panel" aria-labelledby="assignments-title">
+            <div class="panel-heading"><h2 id="assignments-title">Assignments</h2></div>
+            <div class="table-wrap">
+                <table class="data-table" data-stack>
+                    <thead><tr><th scope="col">Agreement</th><th scope="col">Status</th><th scope="col">Start</th><th scope="col">End</th></tr></thead>
+                    <tbody>
+<?php foreach ($assignments as $assignment): ?>
+                        <tr>
+                            <td class="cell-strong">#<?= (int) $assignment['agreement_id'] ?></td>
+                            <td><?= Status::badge('rental', $assignment['status']) ?></td>
+                            <td class="nowrap"><?= $e(Format::date($assignment['start_date'])) ?></td>
+                            <td class="nowrap"><?= $e(Format::date($assignment['end_date'])) ?></td>
+                        </tr>
+<?php endforeach; ?>
+<?php if (!$assignments): ?>
+                        <tr><td class="empty-state" colspan="4">No assignments yet.</td></tr>
+<?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <aside class="split-side" aria-label="Status and record">
+<?php if ($canEdit): ?>
+        <section class="panel">
+            <div class="panel-heading"><h2>Availability</h2></div>
+            <div class="panel-body">
+                <form method="post" action="/fleet/drivers/status" class="stack">
+                    <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
+                    <input type="hidden" name="driver_id" value="<?= (int) $driver['driver_id'] ?>">
+                    <label class="field"><span class="field-label">Status</span>
+                        <select name="status">
+                            <option value="active"<?= $driver['status'] === 'active' ? ' selected' : '' ?>>Active</option>
+                            <option value="inactive"<?= $driver['status'] === 'inactive' ? ' selected' : '' ?>>Inactive</option>
+                        </select>
+                        <small class="field-hint">Inactive drivers can’t be given new assignments.</small>
+                    </label>
+                    <button class="button button-secondary" type="submit">Save status</button>
+                </form>
+            </div>
+        </section>
+<?php endif; ?>
+        <section class="panel">
+            <div class="panel-heading"><h2>Status history</h2></div>
+            <div class="panel-body">
+<?php if (!$statusHistory): ?>
+                <p class="muted">No changes recorded.</p>
+<?php else: ?>
+                <ol class="timeline">
+<?php foreach ($statusHistory as $entry): ?>
+                    <li>
+                        <div class="timeline-title"><?= $e($entry['old_status'] === null ? 'Added' : Status::label($entry['old_status'])) ?> → <?= $e(Status::label($entry['new_status'])) ?></div>
+                        <div class="timeline-meta"><?= $e(Format::datetime($entry['created_at'])) ?> · <?= $e($entry['actor_email']) ?></div>
+                    </li>
+<?php endforeach; ?>
+                </ol>
+<?php endif; ?>
+            </div>
+        </section>
+<?php if ($canEdit): ?>
+        <section class="panel">
+            <div class="panel-heading"><div><h2>Remove driver</h2><p>The record is kept for history but leaves every list. A driver with an open assignment can’t be removed.</p></div></div>
+            <div class="panel-body">
+                <form method="post" action="/fleet/drivers/delete" data-confirm="Remove <?= $e($driver['full_name']) ?> from the driver list? Their past assignments stay on record." data-confirm-action="Remove driver">
+                    <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
+                    <input type="hidden" name="driver_id" value="<?= (int) $driver['driver_id'] ?>">
+                    <button class="button button-danger" type="submit">Remove driver</button>
+                </form>
+            </div>
+        </section>
+<?php endif; ?>
+    </aside>
+</div>
+<?php View::end(); ?>

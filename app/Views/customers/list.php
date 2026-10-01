@@ -1,7 +1,70 @@
 <?php
 declare(strict_types=1);
-$e=static fn(mixed $v):string=>htmlspecialchars((string)$v,ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8');
+
+use TripleR\Support\Format;
+use TripleR\Support\Icon;
+use TripleR\Support\Pager;
+use TripleR\Support\StatusPresenter as Status;
+use TripleR\Support\View;
+
+$e = static fn (mixed $value): string => View::e($value);
+$pager = new Pager($customers);
+$filtered = $search !== '' || $type !== '';
+
+View::begin('staff', ['title' => 'Customers', 'crumbs' => [['Customers', null]], 'scripts' => ['customers.js']]);
 ?>
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Customers | Triple R Gensan</title><link rel="stylesheet" href="/assets/css/app.css"><script src="/assets/js/customers.js" defer></script></head><body><header class="topbar"><a class="brand" href="/staff">Triple R Gensan</a><nav class="staff-actions"><a href="/customers">Customers</a><a href="/fleet/vehicles">Fleet</a><a href="/staff/notifications">Notifications</a></nav></header><main class="page-shell"><section class="page-heading"><div><p class="eyebrow">Customer management</p><h1>Customers</h1><p>Signed in as <?= $e($user['email']) ?> (<?= $e($user['role']) ?>)</p></div><a class="button-link" href="/customers/new">Add customer</a></section>
-<form class="panel filter-form" method="get" action="/customers"><label>Search name/company<input name="search" value="<?= $e($search) ?>" maxlength="160"></label><label>Type<select name="type"><option value="">All types</option><?php foreach($types as $t):?><option value="<?= $e($t) ?>"<?= $type===$t?' selected':'' ?>><?= $e(str_replace('_',' ',$t)) ?></option><?php endforeach;?></select></label><button type="submit">Search</button></form>
-<section class="panel"><div class="table-wrap"><table><thead><tr><th>Name</th><th>Company</th><th>Type</th><th>Status</th><th>Created</th><th></th></tr></thead><tbody><?php foreach($customers as $customer):?><tr><td><?= $e($customer['full_name']) ?></td><td><?= $e($customer['company_name']??'—') ?></td><td><?= $e(str_replace('_',' ',$customer['customer_type'])) ?></td><td><?= (int)$customer['is_blacklisted']===1?'Blacklisted':'Eligible' ?></td><td><?= $e($customer['created_at']) ?></td><td><a href="/customers/detail?customer_id=<?= (int)$customer['customer_id'] ?>">Profile</a></td></tr><?php endforeach;?><?php if(!$customers):?><tr><td colspan="6">No customers found.</td></tr><?php endif;?></tbody></table></div></section></main></body></html>
+<header class="page-header">
+    <div class="page-header-text">
+        <h1>Customers</h1>
+        <p class="page-lead">Everyone who has rented or is about to, and whether they can book.</p>
+    </div>
+    <div class="page-header-actions">
+        <a class="button button-primary" href="/customers/new"><?= Icon::svg('plus') ?>Add customer</a>
+    </div>
+</header>
+
+<section class="panel" aria-labelledby="customer-records">
+    <h2 class="visually-hidden" id="customer-records">Customer records</h2>
+    <form class="toolbar" method="get" action="/customers" role="search">
+        <label class="field">
+            <span class="field-label">Search name or company</span>
+            <input type="search" name="search" value="<?= $e($search) ?>" maxlength="160" placeholder="Name or company">
+        </label>
+        <label class="field">
+            <span class="field-label">Type</span>
+            <select name="type" data-auto-submit>
+                <option value="">All types</option>
+<?php foreach ($types as $t): ?>
+                <option value="<?= $e($t) ?>"<?= $type === $t ? ' selected' : '' ?>><?= $e(Status::label($t)) ?></option>
+<?php endforeach; ?>
+            </select>
+        </label>
+        <button class="button button-secondary" type="submit"><?= Icon::svg('search') ?>Search</button>
+<?php if ($filtered): ?>
+        <a class="button button-ghost" href="/customers">Clear</a>
+<?php endif; ?>
+        <span class="toolbar-summary"><?= $e(Format::plural(count($customers), 'customer')) ?></span>
+    </form>
+    <div class="table-wrap">
+        <table class="data-table" data-stack>
+            <thead><tr><th scope="col">Name</th><th scope="col">Company</th><th scope="col">Type</th><th scope="col">Booking status</th><th scope="col">Added</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead>
+            <tbody>
+<?php foreach ($pager->rows as $customer): $href = '/customers/detail?customer_id=' . (int) $customer['customer_id']; $blacklisted = (int) $customer['is_blacklisted'] === 1; ?>
+                <tr data-href="<?= $e($href) ?>">
+                    <td><a class="cell-strong" href="<?= $e($href) ?>"><?= $e($customer['full_name']) ?></a></td>
+                    <td><?= $e($customer['company_name'] ?? '—') ?></td>
+                    <td><?= $e(Status::label($customer['customer_type'])) ?></td>
+                    <td><span class="badge <?= $blacklisted ? 'badge-danger' : 'badge-success' ?>"><?= $blacklisted ? 'Blacklisted' : 'Can book' ?></span></td>
+                    <td class="nowrap"><?= $e(Format::utcDate($customer['created_at'])) ?></td>
+                    <td class="actions" data-label=""><a href="<?= $e($href) ?>" aria-label="Open <?= $e($customer['full_name']) ?>">Open</a></td>
+                </tr>
+<?php endforeach; ?>
+<?php if (!$customers): ?>
+                <tr><td class="empty-state" colspan="6"><strong>No customers found</strong><?php if ($filtered): ?><a href="/customers">Clear the search</a><?php else: ?>Add the first customer to get started.<?php endif; ?></td></tr>
+<?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+    <?= $pager->render('customer') ?>
+</section>
+<?php View::end(); ?>

@@ -1,4 +1,80 @@
-<?php declare(strict_types=1); ?>
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Maintenance history | Triple R Gensan</title><link rel="stylesheet" href="/assets/css/app.css"></head><body><header class="topbar"><a class="brand" href="/staff">Triple R Gensan</a><nav class="staff-actions"><a href="/maintenance">Maintenance</a><a href="/fleet/vehicles">Fleet</a></nav></header><main class="page-shell"><section class="page-heading"><div><p class="eyebrow">Maintenance history</p><h1><?= $vehicle?$e($vehicle['plate_number'].' '.$vehicle['make'].' '.$vehicle['model']):'Vehicle unavailable' ?></h1><p>Schedule thresholds are advanced from actual completed service date and mileage.</p></div><a class="button-link" href="/maintenance/service/new?vehicle_id=<?= (int)$vehicleId ?>">Start service</a></section><?php if(!empty($notice)):?><p class="notice panel"><?= $e($notice) ?></p><?php endif;?>
-<section class="panel"><h2>Named schedules</h2><div class="table-wrap"><table><thead><tr><th>Name</th><th>Interval</th><th>Next due</th><th>Warning overrides</th><th>State</th></tr></thead><tbody><?php foreach($schedules as $s):?><tr><td><?= $e($s['schedule_name']) ?></td><td><?= $s['interval_time_days']===null?'—':(int)$s['interval_time_days'].' days' ?> / <?= $s['interval_mileage']===null?'—':(int)$s['interval_mileage'].' km' ?></td><td><?= $e($s['next_due_date']??'—') ?> / <?= $e($s['next_due_mileage']??'—') ?></td><td><?= $s['due_soon_days_override']===null?'global':(int)$s['due_soon_days_override'].' days' ?> / <?= $s['due_soon_mileage_override']===null?'global':(int)$s['due_soon_mileage_override'].' km' ?></td><td><?= (int)$s['is_active']===1?'active':'retired' ?></td></tr><?php endforeach;?><?php if(!$schedules):?><tr><td colspan="5">No schedules configured.</td></tr><?php endif;?></tbody></table></div></section>
-<section class="panel"><h2>Service log</h2><div class="table-wrap"><table><thead><tr><th>Started</th><th>Schedule</th><th>Service</th><th>Mechanic</th><th>Status</th><th>Cost</th><th></th></tr></thead><tbody><?php foreach($services as $s):?><tr><td><?= $e($s['started_at']) ?></td><td><?= $e($s['schedule_name']??'Corrective work') ?></td><td><?= $e($s['title']) ?></td><td><?= $e($s['mechanic_name']) ?></td><td><?= $e($s['status']) ?><?= (int)$s['needs_review']===1?' · needs review':'' ?></td><td><?= $e($s['total_cost']) ?></td><td><a href="/maintenance/service?service_id=<?= (int)$s['service_id'] ?>">Details / photos</a></td></tr><?php endforeach;?><?php if(!$services):?><tr><td colspan="7">No services recorded.</td></tr><?php endif;?></tbody></table></div></section></main></body></html>
+<?php
+declare(strict_types=1);
+
+use TripleR\Support\Format;
+use TripleR\Support\Icon;
+use TripleR\Support\StatusPresenter as Status;
+use TripleR\Support\View;
+
+$e = static fn (mixed $value): string => View::e($value);
+$canOperate = in_array($user['role'], ['mechanic', 'fleet_manager', 'system_admin'], true);
+$heading = $vehicle ? $vehicle['plate_number'] . ' · ' . $vehicle['make'] . ' ' . $vehicle['model'] : 'Vehicle unavailable';
+
+View::begin('staff', ['title' => 'Maintenance history', 'crumbs' => [['Fleet', null], ['Maintenance', '/maintenance'], [$vehicle ? $vehicle['plate_number'] : 'History', null]]]);
+?>
+<header class="page-header">
+    <div class="page-header-text">
+        <p class="eyebrow">Maintenance history</p>
+        <h1><?= $e($heading) ?></h1>
+        <p class="page-lead">The next due date and mileage are worked out from when each service was actually completed.</p>
+    </div>
+    <div class="page-header-actions">
+<?php if ($vehicle): ?>
+        <a class="button button-secondary" href="/fleet/vehicles/detail?vehicle_id=<?= (int) $vehicleId ?>">Vehicle record</a>
+<?php endif; ?>
+<?php if ($canOperate): ?>
+        <a class="button button-primary" href="/maintenance/service/new?vehicle_id=<?= (int) $vehicleId ?>"><?= Icon::svg('plus') ?>Start a service</a>
+<?php endif; ?>
+    </div>
+</header>
+<?php if (!empty($notice)): ?>
+<p class="notice" role="status"><?= $e($notice) ?></p>
+<?php endif; ?>
+
+<section class="panel" aria-labelledby="schedules-title">
+    <div class="panel-heading"><h2 id="schedules-title">Schedules for this vehicle</h2></div>
+    <div class="table-wrap">
+        <table class="data-table" data-stack>
+            <thead><tr><th scope="col">Name</th><th scope="col">Interval</th><th scope="col">Next due</th><th scope="col">Warning window</th><th scope="col">State</th></tr></thead>
+            <tbody>
+<?php foreach ($schedules as $s): ?>
+                <tr>
+                    <td class="cell-strong"><?= $e($s['schedule_name']) ?></td>
+                    <td><?= $e(implode(' or ', array_filter([$s['interval_time_days'] === null ? null : Format::plural((int) $s['interval_time_days'], 'day'), $s['interval_mileage'] === null ? null : Format::km($s['interval_mileage'])])) ?: '—') ?></td>
+                    <td class="nowrap"><?= $e(Format::date($s['next_due_date'])) ?><span class="cell-sub"><?= $e(Format::km($s['next_due_mileage'])) ?></span></td>
+                    <td><span class="cell-sub"><?= $e(($s['due_soon_days_override'] === null ? 'default days' : Format::plural((int) $s['due_soon_days_override'], 'day')) . ' / ' . ($s['due_soon_mileage_override'] === null ? 'default km' : Format::km($s['due_soon_mileage_override']))) ?></span></td>
+                    <td><span class="badge <?= (int) $s['is_active'] === 1 ? 'badge-success' : 'badge-neutral' ?>"><?= (int) $s['is_active'] === 1 ? 'Active' : 'Retired' ?></span></td>
+                </tr>
+<?php endforeach; ?>
+<?php if (!$schedules): ?>
+                <tr><td class="empty-state" colspan="5"><strong>No schedules</strong>This vehicle has no maintenance schedule yet.</td></tr>
+<?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="panel" aria-labelledby="log-title">
+    <div class="panel-heading"><h2 id="log-title">Service log</h2></div>
+    <div class="table-wrap">
+        <table class="data-table" data-stack>
+            <thead><tr><th scope="col">Service</th><th scope="col">Schedule</th><th scope="col">Mechanic</th><th scope="col">Started</th><th scope="col">Status</th><th scope="col" class="num">Cost</th></tr></thead>
+            <tbody>
+<?php foreach ($services as $s): $href = '/maintenance/service?service_id=' . (int) $s['service_id']; ?>
+                <tr data-href="<?= $e($href) ?>">
+                    <td><a class="cell-strong" href="<?= $e($href) ?>"><?= $e($s['title']) ?></a><span class="cell-sub">#<?= (int) $s['service_id'] ?></span></td>
+                    <td><?= $e($s['schedule_name'] ?? 'Unscheduled repair') ?></td>
+                    <td><?= $e($s['mechanic_name']) ?></td>
+                    <td class="nowrap"><?= $e(Format::datetime($s['started_at'])) ?></td>
+                    <td><?= Status::badge('service', $s['status']) ?><?php if ((int) $s['needs_review'] === 1): ?> <span class="badge badge-warning">Needs review</span><?php endif; ?></td>
+                    <td class="num"><?= $e(Format::money($s['total_cost'])) ?></td>
+                </tr>
+<?php endforeach; ?>
+<?php if (!$services): ?>
+                <tr><td class="empty-state" colspan="6"><strong>No services recorded</strong>Completed and open work for this vehicle appears here.</td></tr>
+<?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+</section>
+<?php View::end(); ?>

@@ -1,11 +1,74 @@
 <?php
 declare(strict_types=1);
-$e=static fn(mixed $v):string=>htmlspecialchars((string)$v,ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8'); $editing=$driver!==null; $d=$driver??[];
+
+use TripleR\Support\View;
+
+$e = static fn (mixed $value): string => View::e($value);
+$editing = $driver !== null;
+$d = $driver ?? [];
+$backHref = $editing ? '/fleet/drivers/detail?driver_id=' . (int) $d['driver_id'] : '/fleet/drivers';
+$crumbs = [['Fleet', null], ['Drivers', '/fleet/drivers']];
+if ($editing) {
+    $crumbs[] = [(string) $d['full_name'], $backHref];
+}
+$crumbs[] = [$editing ? 'Edit' : 'Add', null];
+$hasAddress = $editing && $d['address_ciphertext'] !== null;
+$hasEmergency = $editing && $d['emergency_contact_name_ciphertext'] !== null;
+
+View::begin('staff', ['title' => $editing ? 'Edit driver' : 'Add driver', 'crumbs' => $crumbs, 'scripts' => ['drivers.js']]);
 ?>
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title><?= $editing?'Edit':'Add' ?> driver | Triple R Gensan</title><link rel="stylesheet" href="/assets/css/app.css"><script src="/assets/js/drivers.js" defer></script></head><body>
-<header class="topbar"><a class="brand" href="/staff">Triple R Gensan</a><a href="/fleet/drivers">Drivers</a></header><main class="page-shell"><section class="page-heading"><div><p class="eyebrow">Fleet management</p><h1><?= $editing?'Edit driver':'Add driver' ?></h1></div></section><?php if($error):?><p class="alert" role="alert"><?= $e($error) ?></p><?php endif;?>
-<form class="panel admin-panel form-grid" method="post" action="<?= $editing?'/fleet/drivers/update':'/fleet/drivers/create' ?>" data-driver-form><input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>"><?php if($editing):?><input type="hidden" name="driver_id" value="<?= (int)$d['driver_id'] ?>"><?php endif;?>
-<label>Full name<input name="full_name" maxlength="160" value="<?= $e($d['full_name']??'') ?>" required></label><label>License number<input name="license_number" maxlength="100" <?= $editing?'placeholder="Leave blank to keep the current encrypted value"':'required' ?> autocomplete="off"></label><label>License expiry<input type="date" name="license_expiry" value="<?= $e($d['license_expiry']??'') ?>" required></label>
-<?php if(!$editing):?><label>Phone<input type="tel" name="phone" maxlength="40" autocomplete="tel"></label><label>Email<input type="email" name="email" maxlength="254" autocomplete="email"></label><?php endif;?>
-<label>Address<textarea name="address" rows="2" maxlength="1000" placeholder="<?= $editing&&$d['address_ciphertext']!==null?'Leave blank to keep the encrypted address':'' ?>"></textarea></label><?php if($editing&&$d['address_ciphertext']!==null):?><label class="check-label"><input type="checkbox" name="clear_address" value="1"> Clear saved address</label><?php endif;?><label>Emergency contact name<input name="emergency_contact_name" maxlength="160" placeholder="<?= $editing&&$d['emergency_contact_name_ciphertext']!==null?'Leave both emergency fields blank to keep current details':'' ?>"></label><label>Emergency contact phone<input type="tel" name="emergency_contact_phone" maxlength="40"></label><?php if($editing&&$d['emergency_contact_name_ciphertext']!==null):?><label class="check-label"><input type="checkbox" name="clear_emergency_contact" value="1"> Clear emergency contact</label><?php endif;?><label>Staff notes<textarea name="notes" rows="3" maxlength="5000"><?= $e($d['notes']??'') ?></textarea></label>
-<p class="muted">License, contact, address, and emergency contact values are encrypted with DRIVER_PII_KEY. Notes are searchable staff text; do not put license or contact details there.</p><div class="form-actions"><button type="submit"><?= $editing?'Save driver':'Create driver' ?></button><a href="/fleet/drivers">Cancel</a></div></form></main></body></html>
+<header class="page-header">
+    <div class="page-header-text">
+        <h1><?= $editing ? 'Edit driver' : 'Add a driver' ?></h1>
+        <p class="page-lead">Licence, contact, address and emergency details are encrypted when saved.</p>
+    </div>
+</header>
+<?php if ($error): ?>
+<p class="alert" role="alert"><?= $e($error) ?></p>
+<?php endif; ?>
+<form class="panel" method="post" action="<?= $editing ? '/fleet/drivers/update' : '/fleet/drivers/create' ?>" data-driver-form>
+    <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
+<?php if ($editing): ?>
+    <input type="hidden" name="driver_id" value="<?= (int) $d['driver_id'] ?>">
+<?php endif; ?>
+    <div class="panel-body form-section">
+        <div class="form-section-heading"><h2>Driver and licence</h2></div>
+        <div class="form-grid">
+            <label class="field field--wide"><span class="field-label">Full name</span><input name="full_name" maxlength="160" value="<?= $e($d['full_name'] ?? '') ?>" required></label>
+            <label class="field"><span class="field-label">Licence number</span><input name="license_number" maxlength="100" <?= $editing ? '' : 'required ' ?>autocomplete="off"><?php if ($editing): ?><small class="field-hint">Leave blank to keep the number already on file.</small><?php endif; ?></label>
+            <label class="field"><span class="field-label">Licence expiry</span><input type="date" name="license_expiry" value="<?= $e($d['license_expiry'] ?? '') ?>" required></label>
+        </div>
+    </div>
+<?php if (!$editing): ?>
+    <div class="panel-body form-section">
+        <div class="form-section-heading"><h2>Contact</h2><p>Optional now. More can be added on the driver’s page.</p></div>
+        <div class="form-grid">
+            <label class="field"><span class="field-label">Phone</span><input type="tel" name="phone" maxlength="40" autocomplete="off"></label>
+            <label class="field"><span class="field-label">Email</span><input type="email" name="email" maxlength="254" autocomplete="off"></label>
+        </div>
+    </div>
+<?php endif; ?>
+    <div class="panel-body form-section">
+        <div class="form-section-heading"><h2>Address and emergency contact</h2><p>Optional.</p></div>
+        <div class="form-grid">
+            <label class="field field--wide"><span class="field-label">Address</span><textarea name="address" rows="2" maxlength="1000"></textarea><?php if ($hasAddress): ?><small class="field-hint">Leave blank to keep the address already on file.</small><?php endif; ?></label>
+<?php if ($hasAddress): ?>
+            <label class="check-field field--wide"><input type="checkbox" name="clear_address" value="1"> Remove the saved address</label>
+<?php endif; ?>
+            <label class="field"><span class="field-label">Emergency contact name</span><input name="emergency_contact_name" maxlength="160"><?php if ($hasEmergency): ?><small class="field-hint">Leave both emergency fields blank to keep the details on file.</small><?php endif; ?></label>
+            <label class="field"><span class="field-label">Emergency contact phone</span><input type="tel" name="emergency_contact_phone" maxlength="40"></label>
+<?php if ($hasEmergency): ?>
+            <label class="check-field field--wide"><input type="checkbox" name="clear_emergency_contact" value="1"> Remove the saved emergency contact</label>
+<?php endif; ?>
+        </div>
+    </div>
+    <div class="panel-body form-section">
+        <div class="form-section-heading"><h2>Staff notes</h2><p>Notes are not encrypted and can be searched. Don’t put licence or contact details here.</p></div>
+        <label class="field"><span class="field-label visually-hidden">Staff notes</span><textarea name="notes" rows="3" maxlength="5000"><?= $e($d['notes'] ?? '') ?></textarea></label>
+    </div>
+    <div class="form-actions">
+        <button class="button button-primary" type="submit"><?= $editing ? 'Save driver' : 'Create driver' ?></button>
+        <a class="button button-ghost" href="<?= $e($backHref) ?>">Cancel</a>
+    </div>
+</form>
+<?php View::end(); ?>

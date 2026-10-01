@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-labelledby="t">
+  <title id="t">Illustration of a stretch limousine</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1f3a41"/><stop offset="1" stop-color="#132528"/></linearGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#eef3f1"/><stop offset=".55" stop-color="#b9c7c6"/><stop offset="1" stop-color="#7f9291"/></linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#31515a"/><stop offset="1" stop-color="#132528"/></linearGradient>
+    <radialGradient id="glow" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#e3a45b" stop-opacity=".34"/><stop offset="1" stop-color="#e3a45b" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="640" height="360" fill="url(#bg)"/>
+  <ellipse cx="330" cy="150" rx="300" ry="170" fill="url(#glow)"/>
+  <path d="M0 284H640" stroke="#e3a45b" stroke-opacity=".55" stroke-width="2"/>
+  <path d="M40 302H250M300 302H420M470 302H600" stroke="#ecf1ee" stroke-opacity=".14" stroke-width="2" stroke-linecap="round"/>
+  <ellipse cx="320" cy="286" rx="262" ry="9" fill="#0d1b1e" fill-opacity=".55"/>
+  <path d="M40 250V224Q42 208 58 204L110 198Q150 162 200 158H420Q458 160 492 194L566 204Q598 208 600 230V250H549A44 44 0 0 0 461 250H179A44 44 0 0 0 91 250Z" fill="url(#body)"/>
+  <path d="M150 196Q176 168 204 166H416Q446 168 470 196Z" fill="url(#glass)"/>
+  <g stroke="#b9c7c6" stroke-width="5"><path d="M250 166V196"/><path d="M300 166V196"/><path d="M350 166V196"/><path d="M400 166V196"/></g>
+  <path d="M100 218H592" stroke="#20343a" stroke-opacity=".5" stroke-width="2" fill="none"/>
+  <path d="M580 208h14q6 4 6 12h-20z" fill="#f6d9a8"/>
+  <path d="M40 216h12v14H40z" fill="#c8553a"/>
+  <circle cx="135" cy="250" r="34" fill="#0d1b1e"/><circle cx="135" cy="250" r="21.1" fill="none" stroke="#c9d3d2" stroke-width="4.4"/><circle cx="135" cy="250" r="6.8" fill="#e3a45b"/><circle cx="505" cy="250" r="34" fill="#0d1b1e"/><circle cx="505" cy="250" r="21.1" fill="none" stroke="#c9d3d2" stroke-width="4.4"/><circle cx="505" cy="250" r="6.8" fill="#e3a45b"/>
+</svg>

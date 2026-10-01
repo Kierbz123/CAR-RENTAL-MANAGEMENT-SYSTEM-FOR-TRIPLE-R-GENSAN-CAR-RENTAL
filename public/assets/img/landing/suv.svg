@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-labelledby="t">
+  <title id="t">Illustration of a luxury SUV</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1f3a41"/><stop offset="1" stop-color="#132528"/></linearGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#eef3f1"/><stop offset=".55" stop-color="#b9c7c6"/><stop offset="1" stop-color="#7f9291"/></linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#31515a"/><stop offset="1" stop-color="#132528"/></linearGradient>
+    <radialGradient id="glow" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#e3a45b" stop-opacity=".34"/><stop offset="1" stop-color="#e3a45b" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="640" height="360" fill="url(#bg)"/>
+  <ellipse cx="330" cy="150" rx="300" ry="170" fill="url(#glow)"/>
+  <path d="M0 288H640" stroke="#e3a45b" stroke-opacity=".55" stroke-width="2"/>
+  <path d="M40 306H250M300 306H420M470 306H600" stroke="#ecf1ee" stroke-opacity=".14" stroke-width="2" stroke-linecap="round"/>
+  <ellipse cx="320" cy="290" rx="262" ry="9" fill="#0d1b1e" fill-opacity=".55"/>
+  <path d="M84 246V196Q86 176 104 170L118 126Q122 116 136 116H388Q410 118 428 140L462 176L536 188Q560 194 562 220V246H507A52 52 0 0 0 403 246H237A52 52 0 0 0 133 246Z" fill="url(#body)"/>
+  <path d="M132 168L142 132H384Q398 134 410 148L430 168Z" fill="url(#glass)"/>
+  <g stroke="#b9c7c6" stroke-width="5"><path d="M230 132V168"/><path d="M320 132V168"/></g>
+  <path d="M140 200H552" stroke="#20343a" stroke-opacity=".5" stroke-width="2" fill="none"/>
+  <path d="M540 194h16q6 4 6 14h-22z" fill="#f6d9a8"/>
+  <path d="M84 190h14v18H84z" fill="#c8553a"/>
+  <circle cx="185" cy="246" r="42" fill="#0d1b1e"/><circle cx="185" cy="246" r="26.0" fill="none" stroke="#c9d3d2" stroke-width="5.5"/><circle cx="185" cy="246" r="8.4" fill="#e3a45b"/><circle cx="455" cy="246" r="42" fill="#0d1b1e"/><circle cx="455" cy="246" r="26.0" fill="none" stroke="#c9d3d2" stroke-width="5.5"/><circle cx="455" cy="246" r="8.4" fill="#e3a45b"/>
+</svg>

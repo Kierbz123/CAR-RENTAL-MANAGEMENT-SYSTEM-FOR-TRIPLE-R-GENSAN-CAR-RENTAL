@@ -1,49 +1,31 @@
 <?php
 declare(strict_types=1);
 
-$escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-$csrfToken = \TripleR\Security\Csrf::token();
+use TripleR\Support\View;
+
+View::begin('staff', ['title' => 'SMS notifications', 'crumbs' => [['Administration', null], ['Notifications', null]], 'scripts' => ['notifications.js']]);
 ?>
-<!doctype html>
-<html lang="en">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>SMS delivery history | Triple R Gensan</title>
-    <link rel="stylesheet" href="/assets/css/app.css">
-    <script src="/assets/js/notifications.js" defer></script>
-</head>
-<body>
-<header class="topbar">
-    <a class="brand" href="/staff/notifications">Triple R Gensan</a>
-    <div class="staff-actions">
-        <span><?= $escape((string) $user['email']) ?></span>
-        <?php if ($user['role'] === 'system_admin'): ?><a href="/admin/users">Manage users</a><?php endif; ?>
-        <form method="post" action="/staff/logout">
-            <input type="hidden" name="_csrf" value="<?= $escape($csrfToken) ?>">
-            <button class="button-secondary" type="submit">Sign out</button>
-        </form>
+<header class="page-header">
+    <div class="page-header-text">
+        <h1>SMS notifications</h1>
+        <p class="page-lead">Messages queued to customers and what the SMS provider reported back. Refreshes every 30 seconds.</p>
     </div>
 </header>
-<main class="page-shell" data-api-url="/api/staff/notifications">
-    <section class="page-heading">
-        <div>
-            <p class="eyebrow">Staff console</p>
-            <h1>SMS delivery history</h1>
-            <p>Provider queue activity and delivery results.</p>
-        </div>
-        <div class="metric-card"><span>Provider accepted this month</span><strong id="monthly-count">—</strong></div>
-    </section>
-    <p id="load-error" class="alert" role="alert" hidden></p>
-    <section class="panel" aria-labelledby="history-title">
-        <div class="panel-heading"><h2 id="history-title">Recent notifications</h2><span id="last-updated" class="muted">Loading…</span></div>
-        <div class="table-wrap">
-            <table>
-                <thead><tr><th>Created</th><th>Recipient</th><th>Template</th><th>Message</th><th>Class</th><th>Status</th><th>Priority</th><th>Attempts</th><th>Provider</th><th>Last error</th></tr></thead>
-                <tbody id="notification-rows"><tr><td colspan="10">Loading notifications…</td></tr></tbody>
-            </table>
-        </div>
-    </section>
-</main>
-</body>
-</html>
+<div class="stat-grid" data-api-url="/api/staff/notifications">
+    <div class="stat-card">
+        <span class="stat-label">Accepted this month</span>
+        <span class="stat-value" id="monthly-count">—</span>
+        <span class="stat-hint">Messages the provider accepted</span>
+    </div>
+</div>
+<p id="load-error" class="alert" role="alert" hidden></p>
+<section class="panel" aria-labelledby="history-title">
+    <div class="panel-heading"><div><h2 id="history-title">Recent notifications</h2></div><span id="last-updated" class="muted" role="status">Loading…</span></div>
+    <div class="table-wrap">
+        <table class="data-table" data-stack>
+            <thead><tr><th scope="col">Created</th><th scope="col">Recipient</th><th scope="col">Template</th><th scope="col">Message</th><th scope="col">Class</th><th scope="col">Status</th><th scope="col">Priority</th><th scope="col">Attempts</th><th scope="col">Provider</th><th scope="col">Last error</th></tr></thead>
+            <tbody id="notification-rows"><tr><td class="empty-state" colspan="10">Loading notifications…</td></tr></tbody>
+        </table>
+    </div>
+</section>
+<?php View::end(); ?>

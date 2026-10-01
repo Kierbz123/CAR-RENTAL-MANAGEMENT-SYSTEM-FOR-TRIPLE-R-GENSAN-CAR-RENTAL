@@ -49,6 +49,35 @@ This project has no Composer dependencies. It uses PDO and PHP's built-in extens
 
 5. Sign in at `http://127.0.0.1:8000/staff/login`; `/staff` is the role-aware workspace and the live SMS history is at `/staff/notifications` for `system_admin`, `fleet_manager`, and `support_staff`.
 
+## Front end: layouts, styles and the public site
+
+The design plan and its status are in [docs/UI_DESIGN_MASTER_PLAN.md](docs/UI_DESIGN_MASTER_PLAN.md).
+
+**Layouts.** A view wraps its markup in `View::begin('<layout>', [...])` and `View::end()`; controllers require views as before. There are three layouts in `app/Views/layouts/`:
+
+| Layout | Used by | Notes |
+|---|---|---|
+| `staff` | every signed-in page | Sidebar, breadcrumb and sign-out. The menu comes from `app/Support/Navigation.php`, the single role-to-menu map (also served by `/api/staff/navigation`). |
+| `entry` | sign-in, password change, secure link, customer booking, error pages | `variant => 'split'` adds the brand panel. |
+| `public` | the landing page at `/` | Header, footer and business details. |
+
+Display helpers live in `app/Support/`: `StatusPresenter` (stored value to label and badge), `Format` (money, kilometres, dates in Manila time), `Pager`, and `Icon`.
+
+**Styles.** `public/assets/css/app.source.css` is the source for staff and entry pages; `app.css` is its built output. Rebuild after editing:
+
+```sh
+npm install        # once
+npm run build:css  # or: npm run watch:css
+```
+
+`public/assets/css/landing.css` is plain CSS for the landing page and needs no build. Both files define the same brand colours (ink, amber, rust); change them in both.
+
+**Public business details.** The phone number, address, opening hours, map link, fleet classes and starting rates on the landing page all come from `config/site.php`. The contact details are those of the Triple R Gensan Car Rental listing on Google Maps (read on 2026-10-01). The fleet classes, rates and photos are illustrative and marked `DEMO-PLACEHOLDER`; replace them with the real list, then set `'is_demo' => false` to remove the "demonstration site" notice and allow search engines to index the page. Landing images are in `public/assets/img/landing/`.
+
+**Scripts and security policy.** Pages send `Content-Security-Policy: script-src 'self'; style-src 'self'`, so views must not contain inline `<script>`, `on...=` handlers or `style=` attributes. Put behaviour in `public/assets/js/` and styles in the stylesheets. The landing page loads `vendor/three.min.js` (about 1.2 MB before compression) only after the page has loaded and only when the browser supports WebGL 2.
+
+**Error pages.** A controller that returns a short plain-text message with a 4xx or 5xx status (`Response::html('Vehicle not found.', 404)`) gets the shared error page automatically. For 5xx the message is written to the error log and a generic message is shown instead.
+
 ## Staff authentication (M1)
 
 Migration `003_auth_sessions.sql` rebuilds `users.role` so the final ENUM contains exactly `system_admin`, `fleet_manager`, `front_desk`, `driver_coordinator`, `mechanic`, `finance_staff`, `auditor`, and `support_staff`. Existing `system_admin` and `fleet_manager` rows map to the same values. The migration flags all existing users for a password change. The first seeded administrator signs in with the configured seed password and must change it before opening protected pages.

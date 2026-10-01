@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace TripleR\Http;
 
+use TripleR\Support\View;
+
 final class Response
 {
     public function __construct(
@@ -14,6 +16,17 @@ final class Response
 
     public static function html(string $body, int $status = 200): self
     {
+        // Controllers return short plain-text messages for errors ("Vehicle not found.").
+        // Give those the shared error page instead of a bare line of text.
+        if ($status >= 400 && !str_contains($body, '<html')) {
+            $message = html_entity_decode($body, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            if ($status >= 500) {
+                // Server faults can carry database or file details. Keep those in the log, not on the page.
+                error_log('Request failed with status ' . $status . ': ' . $message);
+                $message = 'Something went wrong on our side and the page could not be loaded. Please try again in a moment.';
+            }
+            $body = View::errorPage($status, $message);
+        }
         return new self($body, $status, ['Content-Type' => 'text/html; charset=utf-8', 'Cache-Control' => 'no-store']);
     }
 
@@ -41,7 +54,8 @@ final class Response
         }
         header('X-Content-Type-Options: nosniff');
         header('Referrer-Policy: same-origin');
-        header("Content-Security-Policy: default-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
+        // No page uses inline scripts or inline style attributes, so neither is allowed.
+        header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
         echo $this->body;
         exit;
     }

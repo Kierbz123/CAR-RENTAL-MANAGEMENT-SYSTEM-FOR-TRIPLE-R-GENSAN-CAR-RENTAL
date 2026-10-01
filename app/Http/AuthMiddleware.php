@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace TripleR\Http;
 
 use TripleR\Security\StaffAuth;
+use TripleR\Support\View;
 
 final class AuthMiddleware
 {
@@ -20,7 +21,7 @@ final class AuthMiddleware
         if (!in_array($user['role'], $roles, true)) {
             return $api
                 ? Response::json(['error' => 'This account is not authorized for this action.'], 403)
-                : Response::html('Forbidden', 403);
+                : Response::html('Your account does not have access to this page. Ask a system administrator if you need it.', 403);
         }
         return $user;
     }
@@ -36,6 +37,7 @@ final class AuthMiddleware
                 ? Response::json(['code' => 'password_change_required', 'error' => 'A password change is required before continuing.'], 403)
                 : Response::redirect('/auth/change-password');
         }
+        View::setUser($user);
         return $user;
     }
 }

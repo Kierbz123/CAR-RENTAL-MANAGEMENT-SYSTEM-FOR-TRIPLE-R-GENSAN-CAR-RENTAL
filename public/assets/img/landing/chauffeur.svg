@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 560" role="img" aria-labelledby="t">
+  <title id="t">Illustration of a chauffeur in uniform</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1f3a41"/><stop offset="1" stop-color="#132528"/></linearGradient>
+    <radialGradient id="glow" cx=".5" cy=".42" r=".5"><stop offset="0" stop-color="#e3a45b" stop-opacity=".34"/><stop offset="1" stop-color="#e3a45b" stop-opacity="0"/></radialGradient>
+    <linearGradient id="suit" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#31515a"/><stop offset="1" stop-color="#17292d"/></linearGradient>
+  </defs>
+  <rect width="480" height="560" fill="url(#bg)"/>
+  <circle cx="240" cy="230" r="250" fill="url(#glow)"/>
+  <circle cx="240" cy="236" r="176" fill="none" stroke="#e3a45b" stroke-opacity=".5" stroke-width="2"/>
+  <!-- shoulders and jacket -->
+  <path d="M52 560C58 452 118 398 196 384L240 430L284 384C362 398 422 452 428 560Z" fill="url(#suit)"/>
+  <!-- shirt and tie -->
+  <path d="M196 384L240 452L284 384L264 368H216Z" fill="#eef3f1"/>
+  <path d="M230 392H250L258 500L240 524L222 500Z" fill="#e3a45b"/>
+  <path d="M228 392H252L246 410H234Z" fill="#d38a43"/>
+  <!-- lapels -->
+  <path d="M196 384L170 420L214 470L240 452Z" fill="#20343a"/>
+  <path d="M284 384L310 420L266 470L240 452Z" fill="#20343a"/>
+  <!-- neck and head: a plain silhouette with no facial features -->
+  <path d="M212 320H268V378L240 398L212 378Z" fill="#9fb1ae"/>
+  <path d="M170 236C170 190 200 160 240 160S310 190 310 236V258C310 306 280 338 240 338S170 306 170 258Z" fill="#b9c7c6"/>
+  <!-- peaked cap -->
+  <path d="M152 204C152 140 190 112 240 112S328 140 328 204L318 212H162Z" fill="#20343a"/>
+  <path d="M160 204H320V226H160Z" fill="#132528"/>
+  <path d="M160 214H320" stroke="#e3a45b" stroke-width="5"/>
+  <path d="M146 226H334C340 240 322 250 240 250S140 240 146 226Z" fill="#0d1b1e"/>
+  <circle cx="240" cy="168" r="13" fill="#e3a45b"/>
+</svg>
