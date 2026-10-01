@@ -20,6 +20,8 @@ $canInspect = in_array($role, ['front_desk', 'fleet_manager'], true);
 $canDecideLiability = in_array($role, ['fleet_manager', 'system_admin'], true);
 $canPostDamageCharge = $role === 'finance_staff';
 $closed = in_array($s, ['completed', 'cancelled', 'no_show'], true);
+// Driver coordinators only schedule drivers: they see the booking, its dates and the driver panel.
+$schedulingOnly = $role === 'driver_coordinator';
 
 $steps = ['reserved' => 'Reserved', 'confirmed' => 'Confirmed', 'active' => 'Active', 'returned' => 'Returned', 'completed' => 'Completed'];
 $stepKeys = array_keys($steps);
@@ -90,9 +92,11 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
 
 <nav class="section-nav" aria-label="On this page">
 <?php if ($isChauffeur): ?><a href="#driver">Driver</a><?php endif; ?>
+<?php if (!$schedulingOnly): ?>
     <a href="#charges">Charges</a>
     <a href="#deposit">Deposit</a>
     <a href="#damage">Damage inspections<?= $damageReports ? ' (' . count($damageReports) . ')' : '' ?></a>
+<?php endif; ?>
     <a href="#history">History</a>
 </nav>
 
@@ -199,6 +203,7 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
         </section>
 <?php endif; ?>
 
+<?php if (!$schedulingOnly): ?>
         <section class="panel" id="charges" aria-labelledby="charges-title">
             <div class="panel-heading"><div><h2 id="charges-title">Charges</h2><p>Fees, discounts and taxes on top of the base amount. Entries are never edited; a wrong one is reversed.</p></div></div>
             <div class="table-wrap">
@@ -392,6 +397,8 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
 <?php endforeach; ?>
         </section>
 
+<?php endif; ?>
+
         <section class="panel" id="history" aria-labelledby="history-title">
             <div class="panel-heading"><div><h2 id="history-title">History</h2><p>Times are in Manila time.</p></div></div>
             <div class="panel-body">
@@ -415,6 +422,7 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
     </div>
 
     <aside class="split-side" aria-label="Agreement summary">
+<?php if (!$schedulingOnly): ?>
         <section class="panel">
             <div class="panel-heading"><h2>Cost summary</h2></div>
             <div class="panel-body">
@@ -427,6 +435,7 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
                 </dl>
             </div>
         </section>
+<?php endif; ?>
         <section class="panel">
             <div class="panel-heading"><h2>Schedule</h2></div>
             <div class="panel-body">

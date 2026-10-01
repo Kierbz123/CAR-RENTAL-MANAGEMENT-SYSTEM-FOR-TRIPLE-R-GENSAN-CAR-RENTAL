@@ -40,7 +40,9 @@ Phases 0 to 5 are implemented, and most of Phase 6. Sections 1 to 5 below are th
 - Reference screenshots were not saved under `docs/design/`.
 - Dark mode for staff pages remains deferred.
 
-**Not verified, and why**
+**Verification (updated 2026-10-01, later the same day).** Everything listed under "Not verified" below has since been run on a clean database: all module test suites, the three page-level acceptance scripts, and a new eight-role end-to-end check. Results and the problems it found are in [FEATURE_REVIEW.md](FEATURE_REVIEW.md).
+
+**Not verified at the time of the redesign, and why**
 
 - The HTTP acceptance scripts (`bin/test-m4-http.php`, `test-m7-http.php`, `test-m8-http.php`) were not run: they need the isolated acceptance databases created by `.local-acceptance-setup.ps1`. The page text those scripts look for ("Restricted", "Damage inspections", "Liability decision history", "Complete service", "Save costs", "Maintenance") and the `name="_csrf" value="..."` pattern were checked by hand and are unchanged.
 - The agreement detail, damage report, maintenance and driver pages were checked with sample data, not live data, for the two reasons in the next list.
@@ -48,8 +50,8 @@ Phases 0 to 5 are implemented, and most of Phase 6. Sections 1 to 5 below are th
 **Problems found in the existing system during the work**
 
 1. `public/index.php` never created the customer controller, so every `/customers` page failed. Fixed (one line).
-2. The local database in `.env` has migrations 001 to 009 only. Without 010 and 011, the agreement detail page and every maintenance page fail. Run `php bin/migrate.php` with the migration credentials (see README, "First run").
-3. Driver rows in the local database are encrypted in a format the current `DriverPiiCipher` rejects, so `/fleet/drivers` fails there. Re-seed the drivers or restore the matching `DRIVER_PII_KEY`.
+2. The local database in `.env` had migrations 001 to 009 only, so the agreement detail page and every maintenance page failed. **Resolved 2026-10-01:** migrations 010 and 011 were applied to the local database after a full backup.
+3. The 16 driver rows in the local database are test records whose licence field holds placeholder text, not encrypted data, so `/fleet/drivers` failed. **Resolved 2026-10-01:** `DriverController` now shows a value it cannot decrypt as "Unreadable" instead of failing the whole page, and the views explain how to re-enter it. The test rows themselves are unchanged.
 
 **Files removed** (all recoverable from the Git ref `refs/backup/pre-ui-redesign`): `public/triple-r-landing.html`, `public/assets/css/app.legacy.css`, `public/assets/js/gsap.min.js`, `public/assets/js/vendor/ScrollTrigger.min.js`.
 

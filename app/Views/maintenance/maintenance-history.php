@@ -19,7 +19,7 @@ View::begin('staff', ['title' => 'Maintenance history', 'crumbs' => [['Fleet', n
         <p class="page-lead">The next due date and mileage are worked out from when each service was actually completed.</p>
     </div>
     <div class="page-header-actions">
-<?php if ($vehicle): ?>
+<?php if ($vehicle && in_array($user['role'], ['system_admin', 'fleet_manager'], true)): ?>
         <a class="button button-secondary" href="/fleet/vehicles/detail?vehicle_id=<?= (int) $vehicleId ?>">Vehicle record</a>
 <?php endif; ?>
 <?php if ($canOperate): ?>

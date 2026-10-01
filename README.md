@@ -76,6 +76,10 @@ npm run build:css  # or: npm run watch:css
 
 **Scripts and security policy.** Pages send `Content-Security-Policy: script-src 'self'; style-src 'self'`, so views must not contain inline `<script>`, `on...=` handlers or `style=` attributes. Put behaviour in `public/assets/js/` and styles in the stylesheets. The landing page loads `vendor/three.min.js` (about 1.2 MB before compression) only after the page has loaded and only when the browser supports WebGL 2.
 
+**Behind a tunnel or proxy.** By default the connecting address is treated as the visitor. When the app sits behind a tunnel or reverse proxy, list the proxy's address in `TRUSTED_PROXIES`; only then are `X-Forwarded-For` and `X-Forwarded-Proto` used for the visitor's address (sign-in rate limits, security log) and for marking the session cookie Secure. `bin/demo-online.ps1` puts the local copy online for a presentation through a Cloudflare quick tunnel and sets this for its own run; see [docs/DEPLOYMENT_PLAN.md](docs/DEPLOYMENT_PLAN.md).
+
+**Checking roles end to end.** `bin/test-roles-http.php` signs in as each of the eight roles on a migrated, seeded, otherwise empty database and (1) drives a full rental, damage, maintenance and secure-link flow through the real pages, checking each rendered form carries the fields the server reads; (2) checks every page and action against every role; (3) follows every link each role is shown. It needs `ROLES_HTTP_BASE_URL` and `ROLES_HTTP_TEST_PASSWORD`. Results of the last run are in [docs/FEATURE_REVIEW.md](docs/FEATURE_REVIEW.md).
+
 **Error pages.** A controller that returns a short plain-text message with a 4xx or 5xx status (`Response::html('Vehicle not found.', 404)`) gets the shared error page automatically. For 5xx the message is written to the error log and a generic message is shown instead.
 
 ## Staff authentication (M1)

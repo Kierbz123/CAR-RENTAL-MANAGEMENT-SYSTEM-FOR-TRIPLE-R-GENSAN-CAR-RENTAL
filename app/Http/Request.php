@@ -40,7 +40,7 @@ final class Request
             $_FILES,
             file_get_contents('php://input') ?: '',
             $headers,
-            substr((string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown'), 0, 64),
+            substr(TrustedProxy::clientIp($_SERVER), 0, 64),
             substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 512),
         );
     }

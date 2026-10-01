@@ -15,11 +15,11 @@ final class Navigation
     private const GROUPS = [
         'Operations' => [
             ['label' => 'Workspace', 'href' => '/staff', 'icon' => 'home', 'roles' => self::ALL],
-            ['label' => 'Agreements', 'href' => '/rentals', 'icon' => 'document', 'roles' => ['system_admin', 'fleet_manager', 'front_desk', 'finance_staff', 'auditor']],
+            ['label' => 'Agreements', 'href' => '/rentals', 'icon' => 'document', 'roles' => ['system_admin', 'fleet_manager', 'front_desk', 'finance_staff', 'auditor', 'driver_coordinator']],
             ['label' => 'Customers', 'href' => '/customers', 'icon' => 'users', 'roles' => ['system_admin', 'front_desk']],
         ],
         'Fleet' => [
-            ['label' => 'Vehicles', 'href' => '/fleet/vehicles', 'icon' => 'car', 'roles' => ['system_admin', 'fleet_manager', 'front_desk']],
+            ['label' => 'Vehicles', 'href' => '/fleet/vehicles', 'icon' => 'car', 'roles' => ['system_admin', 'fleet_manager']],
             ['label' => 'Locations', 'href' => '/fleet/locations', 'icon' => 'pin', 'roles' => ['system_admin', 'fleet_manager']],
             ['label' => 'Drivers', 'href' => '/fleet/drivers', 'icon' => 'id', 'roles' => ['system_admin', 'fleet_manager', 'driver_coordinator']],
             ['label' => 'Maintenance', 'href' => '/maintenance', 'icon' => 'wrench', 'roles' => ['system_admin', 'fleet_manager', 'mechanic', 'auditor']],

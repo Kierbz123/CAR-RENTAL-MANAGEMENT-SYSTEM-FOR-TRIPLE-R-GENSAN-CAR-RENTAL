@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace TripleR\Security;
 
 use TripleR\Http\Request;
+use TripleR\Http\TrustedProxy;
 
 final class Csrf
 {
@@ -17,7 +18,7 @@ final class Csrf
         session_name('triple_r_staff');
         session_set_cookie_params([
             'httponly' => true,
-            'secure' => (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'),
+            'secure' => TrustedProxy::isHttps($_SERVER),
             'samesite' => 'Lax',
             'path' => '/',
         ]);

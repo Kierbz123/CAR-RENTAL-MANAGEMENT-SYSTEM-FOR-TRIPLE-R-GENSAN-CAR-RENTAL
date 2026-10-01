@@ -143,7 +143,7 @@ final class VehicleController
 
     private function render(string $view,array $data): Response
     {
-        $csrfToken=Csrf::token(); $statuses=VehicleService::STATUSES; $locations=$this->locations->selectable(); $notice=$data['notice']??null; extract($data,EXTR_SKIP); ob_start(); require APP_ROOT . '/app/Views/' . $view . '.php'; return Response::html((string)ob_get_clean());
+        $csrfToken=Csrf::token(); $statuses=VehicleService::STATUSES; $locations=$data['locations']??$this->locations->selectable(); $notice=$data['notice']??null; extract($data,EXTR_SKIP); ob_start(); require APP_ROOT . '/app/Views/' . $view . '.php'; return Response::html((string)ob_get_clean());
     }
     private function id(mixed $value): ?int { $id=filter_var($value,FILTER_VALIDATE_INT); return $id!==false && $id!==null && $id>0?(int)$id:null; }
 }

@@ -9,6 +9,7 @@ $e = static fn (mixed $value): string => View::e($value);
 $deleted = $driver['deleted_at'] !== null;
 $canEdit = $canManage && !$deleted;
 $expired = $driver['license_expiry'] < Format::today();
+$licenceUnreadable = $pii['license'] === 'Unreadable';
 
 View::begin('staff', ['title' => (string) $driver['full_name'], 'crumbs' => [['Fleet', null], ['Drivers', '/fleet/drivers'], [(string) $driver['full_name'], null]], 'scripts' => ['drivers.js']]);
 ?>
@@ -38,6 +39,9 @@ View::begin('staff', ['title' => (string) $driver['full_name'], 'crumbs' => [['F
 <?php if ($notice): ?>
 <p class="notice" role="status"><?= $e($notice) ?></p>
 <?php endif; ?>
+<?php if ($licenceUnreadable): ?>
+<p class="callout" role="status">The saved licence number can’t be read with the current encryption key.<?php if ($canEdit): ?> <a href="/fleet/drivers/edit?driver_id=<?= (int) $driver['driver_id'] ?>">Edit this driver</a> and enter the licence number again.<?php endif; ?></p>
+<?php endif; ?>
 
 <div class="split">
     <div class="split-main">
@@ -45,7 +49,7 @@ View::begin('staff', ['title' => (string) $driver['full_name'], 'crumbs' => [['F
             <div class="panel-heading"><div><h2 id="info-title">Personal details</h2><p><?= $canManage ? 'Stored encrypted and hidden until you choose Reveal.' : 'These details are restricted for your role.' ?></p></div></div>
             <div class="panel-body">
                 <dl class="facts">
-                    <div><dt>Licence number</dt><dd><span data-pii-value><?= $e($pii['license']) ?></span><?php if ($canManage): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="license">Reveal</button><?php endif; ?></dd></div>
+                    <div><dt>Licence number</dt><dd><?php if ($licenceUnreadable): ?><span class="badge badge-warning">Unreadable</span><?php else: ?><span data-pii-value><?= $e($pii['license']) ?></span><?php if ($canManage): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="license">Reveal</button><?php endif; ?><?php endif; ?></dd></div>
                     <div><dt>Address</dt><dd><span data-pii-value><?= $e($pii['address']) ?></span><?php if ($canManage && $driver['address_ciphertext'] !== null): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="address">Reveal</button><?php endif; ?></dd></div>
                     <div><dt>Emergency contact name</dt><dd><span data-pii-value><?= $e($pii['emergency_name']) ?></span><?php if ($canManage && $driver['emergency_contact_name_ciphertext'] !== null): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="emergency_name">Reveal</button><?php endif; ?></dd></div>
                     <div><dt>Emergency contact phone</dt><dd><span data-pii-value><?= $e($pii['emergency_phone']) ?></span><?php if ($canManage && $driver['emergency_contact_phone_ciphertext'] !== null): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="emergency_phone">Reveal</button><?php endif; ?></dd></div>

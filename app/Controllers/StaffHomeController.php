@@ -36,7 +36,7 @@ final class StaffHomeController
         $canViewFleet = in_array($user['role'], ['system_admin', 'fleet_manager', 'front_desk'], true);
         $canReadDrivers = in_array($user['role'], ['system_admin', 'fleet_manager', 'driver_coordinator'], true);
         $canManageCustomers = in_array($user['role'], ['system_admin', 'front_desk'], true);
-        $canViewRentals = in_array($user['role'], ['system_admin','fleet_manager','front_desk','finance_staff','auditor'], true);
+        $canViewRentals = in_array($user['role'], ['system_admin','fleet_manager','front_desk','finance_staff','auditor','driver_coordinator'], true);
         $canCreateRentals = in_array($user['role'], ['system_admin', 'front_desk'], true);
         $canViewMaintenance = in_array($user['role'], ['system_admin','fleet_manager','mechanic','auditor'], true);
 

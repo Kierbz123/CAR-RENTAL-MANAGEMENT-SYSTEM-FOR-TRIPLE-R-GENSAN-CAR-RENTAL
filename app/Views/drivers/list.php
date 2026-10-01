@@ -10,6 +10,7 @@ use TripleR\Support\View;
 $e = static fn (mixed $value): string => View::e($value);
 $pager = new Pager($drivers);
 $today = Format::today();
+$unreadable = count(array_filter($drivers, static fn (array $row): bool => $row['license_display'] === 'Unreadable'));
 
 View::begin('staff', ['title' => 'Drivers', 'crumbs' => [['Fleet', null], ['Drivers', null]], 'scripts' => ['drivers.js']]);
 ?>
@@ -24,6 +25,10 @@ View::begin('staff', ['title' => 'Drivers', 'crumbs' => [['Fleet', null], ['Driv
     </div>
 <?php endif; ?>
 </header>
+
+<?php if ($unreadable > 0): ?>
+<p class="callout" role="status"><?= $e(Format::plural($unreadable, 'driver record')) ?> <?= $unreadable === 1 ? 'has' : 'have' ?> a licence number that can’t be read with the current encryption key. Open the driver, choose Edit, and enter the licence number again.</p>
+<?php endif; ?>
 
 <section class="panel" aria-labelledby="driver-records">
     <h2 class="visually-hidden" id="driver-records">Driver records</h2>
@@ -45,7 +50,7 @@ View::begin('staff', ['title' => 'Drivers', 'crumbs' => [['Fleet', null], ['Driv
 <?php foreach ($pager->rows as $driver): $href = '/fleet/drivers/detail?driver_id=' . (int) $driver['driver_id']; $expired = $driver['license_expiry'] < $today; ?>
                 <tr data-href="<?= $e($href) ?>">
                     <td><a class="cell-strong" href="<?= $e($href) ?>"><?= $e($driver['full_name']) ?></a></td>
-                    <td><span class="mono"><?= $e($driver['license_display']) ?></span></td>
+                    <td><?php if ($driver['license_display'] === 'Unreadable'): ?><span class="badge badge-warning">Unreadable</span><?php else: ?><span class="mono"><?= $e($driver['license_display']) ?></span><?php endif; ?></td>
                     <td class="nowrap"><?= $e(Format::date($driver['license_expiry'])) ?><?php if ($expired): ?> <span class="badge badge-danger">Expired</span><?php endif; ?></td>
                     <td><?= Status::badge('driver', $driver['status']) ?></td>
                     <td class="actions" data-label=""><a href="<?= $e($href) ?>" aria-label="Open <?= $e($driver['full_name']) ?>">Open</a></td>

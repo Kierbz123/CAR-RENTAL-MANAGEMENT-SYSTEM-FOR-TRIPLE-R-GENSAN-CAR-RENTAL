@@ -17,6 +17,7 @@ final class DriverController
 {
     private const MANAGERS = ['system_admin','fleet_manager'];
     private const READERS = ['system_admin','fleet_manager','driver_coordinator'];
+    public const UNREADABLE = 'Unreadable';
 
     public function __construct(private readonly AuthMiddleware $guard, private readonly DriverRepository $drivers, private readonly DriverService $service, private readonly DriverPiiCipher $cipher) {}
 
@@ -26,7 +27,7 @@ final class DriverController
         if ($user instanceof Response) return $user;
         $canManage = in_array($user['role'],self::MANAGERS,true);
         $rows = $this->drivers->list((string)($request->query['search'] ?? ''));
-        if ($canManage) foreach ($rows as &$row) $row['license_display'] = '****' . substr(DriverPiiCipher::normalizeLicense($this->cipher->decrypt($row['license_number_ciphertext'],'driver-license')),-4);
+        if ($canManage) foreach ($rows as &$row) $row['license_display'] = $this->maskedOrUnreadable(fn (): string => '****' . substr(DriverPiiCipher::normalizeLicense($this->cipher->decrypt($row['license_number_ciphertext'],'driver-license')),-4));
         else foreach ($rows as &$row) $row['license_display'] = 'Restricted';
         unset($row);
         return $this->render('drivers/list',['drivers'=>$rows,'eligibleDrivers'=>$this->service->selectableForAssignment(),'search'=>(string)($request->query['search']??''),'user'=>$user,'canManage'=>$canManage]);
@@ -73,14 +74,14 @@ final class DriverController
         if (!$driver) return Response::html('Driver not found.',404);
         $canManage=in_array($user['role'],self::MANAGERS,true);
         $contacts=$this->drivers->contacts($id);
-        foreach ($contacts as &$contact) $contact['display']=$canManage?$this->service->masked($contact['contact_ciphertext'],'contact',$contact['contact_type']):'Restricted';
+        foreach ($contacts as &$contact) $contact['display']=$canManage?$this->maskedOrUnreadable(fn (): string => $this->service->masked($contact['contact_ciphertext'],'contact',$contact['contact_type'])):'Restricted';
         unset($contact);
         $pii=[];
         if ($canManage) {
-            $pii['license']='****'.substr(DriverPiiCipher::normalizeLicense($this->cipher->decrypt($driver['license_number_ciphertext'],'driver-license')),-4);
+            $pii['license']=$this->maskedOrUnreadable(fn (): string => '****'.substr(DriverPiiCipher::normalizeLicense($this->cipher->decrypt($driver['license_number_ciphertext'],'driver-license')),-4));
             $pii['address']=$driver['address_ciphertext']===null?'Not recorded':'Address on file';
             $pii['emergency_name']=$driver['emergency_contact_name_ciphertext']===null?'Not recorded':'Name on file';
-            $pii['emergency_phone']=$driver['emergency_contact_phone_ciphertext']===null?'Not recorded':'****'.substr(preg_replace('/\W/','',$this->cipher->decrypt($driver['emergency_contact_phone_ciphertext'],'driver-emergency-phone')),-4);
+            $pii['emergency_phone']=$driver['emergency_contact_phone_ciphertext']===null?'Not recorded':$this->maskedOrUnreadable(fn (): string => '****'.substr(preg_replace('/\W/','',$this->cipher->decrypt($driver['emergency_contact_phone_ciphertext'],'driver-emergency-phone')),-4));
         } else {
             $pii=['license'=>'Restricted','address'=>'Restricted','emergency_name'=>'Restricted','emergency_phone'=>'Restricted'];
         }
@@ -150,6 +151,15 @@ final class DriverController
     private function render(string $view,array $data): Response
     {
         $csrfToken=Csrf::token(); extract($data,EXTR_SKIP); ob_start(); require APP_ROOT.'/app/Views/'.$view.'.php'; return Response::html((string)ob_get_clean());
+    }
+    /**
+     * One record that cannot be decrypted (a wrong key, or a row written outside the application)
+     * must not take the whole page down. Show it as unreadable so staff can re-enter the value.
+     */
+    private function maskedOrUnreadable(callable $masked): string
+    {
+        try { return $masked(); }
+        catch (RuntimeException) { return self::UNREADABLE; }
     }
     private function id(mixed $value): ?int { $id=filter_var($value,FILTER_VALIDATE_INT); return $id!==false&&$id!==null&&$id>0?(int)$id:null; }
     private function duplicate(PDOException $error): bool { return (int)($error->errorInfo[1]??0)===1062; }

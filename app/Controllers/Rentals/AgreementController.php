@@ -18,11 +18,14 @@ use TripleR\Services\DamageService;
 final class AgreementController
 {
     private const READ=['system_admin','fleet_manager','front_desk','finance_staff','auditor'];
+    // The list and detail pages. Driver coordinators assign drivers there (M6); the views show them
+    // the schedule and the driver panel only, never charges, deposits or damage records.
+    private const VIEW=['system_admin','fleet_manager','front_desk','finance_staff','auditor','driver_coordinator'];
     public function __construct(private readonly AuthMiddleware $guard,private readonly RentalRepository $rentals,private readonly ChargeRepository $charges,private readonly RentalService $service, private readonly ChauffeurService $chauffeurs, private readonly DriverService $driverService, private readonly DamageService $damage) {}
 
     public function index(Request $request): Response
     {
-        $user=$this->guard->requireRoles(self::READ);if($user instanceof Response)return $user;$status=(string)($request->query['status']??'');if($status!==''&&!in_array($status,RentalService::STATUSES,true))$status='';
+        $user=$this->guard->requireRoles(self::VIEW);if($user instanceof Response)return $user;$status=(string)($request->query['status']??'');if($status!==''&&!in_array($status,RentalService::STATUSES,true))$status='';
         return $this->render('rentals/agreements',['user'=>$user,'rows'=>$this->rentals->list(['status'=>$status]),'status'=>$status,'statuses'=>RentalService::STATUSES]);
     }
 
@@ -58,7 +61,7 @@ final class AgreementController
 
     public function detail(Request $request): Response
     {
-        $user=$this->guard->requireRoles(self::READ);if($user instanceof Response)return $user;$id=$this->id($request->query['agreement_id']??null);$row=$id?$this->rentals->find($id):null;if(!$row)return Response::html('Rental agreement not found.',404);
+        $user=$this->guard->requireRoles(self::VIEW);if($user instanceof Response)return $user;$id=$this->id($request->query['agreement_id']??null);$row=$id?$this->rentals->find($id):null;if(!$row)return Response::html('Rental agreement not found.',404);
         if ($row['rental_type'] === 'chauffeur') {
             if ($row['driver_id'] !== null) {
                 // Fetch full name for the assigned driver

@@ -9,6 +9,8 @@ use TripleR\Support\View;
 
 $e = static fn (mixed $value): string => View::e($value);
 $pager = new Pager($rows);
+// Driver coordinators schedule drivers; amounts are not part of their view.
+$showAmounts = $user['role'] !== 'driver_coordinator';
 
 View::begin('staff', ['title' => 'Agreements', 'crumbs' => [['Agreements', null]]]);
 ?>
@@ -44,7 +46,7 @@ View::begin('staff', ['title' => 'Agreements', 'crumbs' => [['Agreements', null]
     </form>
     <div class="table-wrap">
         <table class="data-table" data-stack>
-            <thead><tr><th scope="col">Agreement</th><th scope="col">Customer</th><th scope="col">Vehicle</th><th scope="col">Dates</th><th scope="col" class="num">Days</th><th scope="col" class="num">Base amount</th><th scope="col">Status</th></tr></thead>
+            <thead><tr><th scope="col">Agreement</th><th scope="col">Customer</th><th scope="col">Vehicle</th><th scope="col">Dates</th><th scope="col" class="num">Days</th><?php if ($showAmounts): ?><th scope="col" class="num">Base amount</th><?php endif; ?><th scope="col">Status</th></tr></thead>
             <tbody>
 <?php foreach ($pager->rows as $r): $href = '/rentals/detail?agreement_id=' . (int) $r['agreement_id']; ?>
                 <tr data-href="<?= $e($href) ?>">
@@ -53,12 +55,14 @@ View::begin('staff', ['title' => 'Agreements', 'crumbs' => [['Agreements', null]
                     <td><span class="mono"><?= $e($r['plate_number']) ?></span><span class="cell-sub"><?= $e($r['make'] . ' ' . $r['model']) ?></span></td>
                     <td class="nowrap"><?= $e(Format::date($r['start_date'])) ?><span class="cell-sub">to <?= $e(Format::date($r['end_date'])) ?></span></td>
                     <td class="num"><?= (int) $r['rental_days'] ?></td>
+<?php if ($showAmounts): ?>
                     <td class="num"><?= $e(Format::money($r['base_amount'])) ?></td>
+<?php endif; ?>
                     <td><?= Status::badge('rental', $r['status']) ?><?php if ($r['rental_type'] === 'chauffeur' && $r['status'] === 'reserved' && $r['driver_id'] === null): ?> <span class="badge badge-danger">Needs driver</span><?php endif; ?></td>
                 </tr>
 <?php endforeach; ?>
 <?php if (!$rows): ?>
-                <tr><td class="empty-state" colspan="7"><strong>No agreements found</strong><?php if ($status !== ''): ?><a href="/rentals">Show all agreements</a><?php else: ?>New reservations appear here.<?php endif; ?></td></tr>
+                <tr><td class="empty-state" colspan="<?= $showAmounts ? 7 : 6 ?>"><strong>No agreements found</strong><?php if ($status !== ''): ?><a href="/rentals">Show all agreements</a><?php else: ?>New reservations appear here.<?php endif; ?></td></tr>
 <?php endif; ?>
             </tbody>
         </table>

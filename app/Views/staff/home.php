@@ -17,23 +17,24 @@ $inFleet = $vehicleCounts !== null ? array_sum($vehicleCounts) : 0;
 $dueNow = $maintenanceDue !== null ? count(array_filter($maintenanceDue, static fn (array $row): bool => $row['due_state'] === 'due')) : 0;
 $dueSoon = $maintenanceDue !== null ? count($maintenanceDue) - $dueNow : 0;
 
-// "Needs attention" items: only those this role can act on or open.
+// "Needs attention" lists only what this role is the one to act on, matching who may perform each step.
+$mine = static fn (string ...$roles): bool => in_array($user['role'], $roles, true);
 $attention = [];
 if ($rentalCounts !== null) {
-    if ($rentalCounts['overdue'] > 0) {
+    if ($rentalCounts['overdue'] > 0 && $mine('system_admin', 'front_desk', 'fleet_manager')) {
         $attention[] = ['count' => $rentalCounts['overdue'], 'danger' => true, 'title' => 'Overdue returns', 'sub' => 'Active rentals past their return date', 'href' => '/rentals?status=active'];
     }
-    if ($rentalCounts['needs_driver'] > 0) {
+    if ($rentalCounts['needs_driver'] > 0 && $mine('system_admin', 'front_desk', 'driver_coordinator')) {
         $attention[] = ['count' => $rentalCounts['needs_driver'], 'danger' => true, 'title' => 'Chauffeur bookings without a driver', 'sub' => 'A driver is required before confirmation', 'href' => '/rentals?status=reserved'];
     }
-    if ($rentalCounts['awaiting_confirmation'] > 0) {
+    if ($rentalCounts['awaiting_confirmation'] > 0 && $mine('system_admin', 'front_desk')) {
         $attention[] = ['count' => $rentalCounts['awaiting_confirmation'], 'danger' => false, 'title' => 'Reservations to confirm', 'sub' => 'Held reservations expire if not confirmed', 'href' => '/rentals?status=reserved'];
     }
-    if ($rentalCounts['awaiting_completion'] > 0) {
+    if ($rentalCounts['awaiting_completion'] > 0 && $mine('system_admin', 'finance_staff')) {
         $attention[] = ['count' => $rentalCounts['awaiting_completion'], 'danger' => false, 'title' => 'Returned, awaiting completion', 'sub' => 'Reconcile charges and deposit to close', 'href' => '/rentals?status=returned'];
     }
 }
-if ($maintenanceDue !== null && $dueNow > 0) {
+if ($maintenanceDue !== null && $dueNow > 0 && $mine('system_admin', 'fleet_manager', 'mechanic')) {
     $attention[] = ['count' => $dueNow, 'danger' => true, 'title' => 'Maintenance due now', 'sub' => 'Schedules past their date or mileage', 'href' => '/maintenance/due'];
 }
 
@@ -82,11 +83,16 @@ View::begin('staff', ['title' => 'Workspace']);
         </a>
 <?php endif; ?>
 <?php if ($vehicleCounts !== null): ?>
+<?php if ($canManageFleet): ?>
         <a class="stat-card" href="/fleet/vehicles?status=available">
+<?php else: ?>
+        <div class="stat-card">
+<?php endif; ?>
             <span class="stat-label">Vehicles available</span>
             <span class="stat-value"><?= (int) $available ?></span>
             <span class="stat-hint">of <?= $e(Format::plural($inFleet, 'vehicle')) ?> in service</span>
-        </a>
+<?= $canManageFleet ? '        </a>' : '        </div>' ?>
+
 <?php endif; ?>
 <?php if ($maintenanceDue !== null): ?>
         <a class="stat-card<?= $dueNow > 0 ? ' stat-card--warn' : '' ?>" href="/maintenance/due">
@@ -151,14 +157,14 @@ View::begin('staff', ['title' => 'Workspace']);
         <div class="quick-actions">
 <?php if ($canViewRentals): ?><a class="button button-secondary" href="/rentals"><?= Icon::svg('document') ?>Agreements</a><?php endif; ?>
 <?php if ($canManageCustomers): ?><a class="button button-secondary" href="/customers"><?= Icon::svg('users') ?>Customers</a><?php endif; ?>
-<?php if ($canViewFleet): ?><a class="button button-secondary" href="/fleet/vehicles"><?= Icon::svg('car') ?>Vehicles</a><?php endif; ?>
+<?php if ($canManageFleet): ?><a class="button button-secondary" href="/fleet/vehicles"><?= Icon::svg('car') ?>Vehicles</a><?php endif; ?>
 <?php if ($canManageFleet): ?><a class="button button-secondary" href="/fleet/locations"><?= Icon::svg('pin') ?>Locations</a><?php endif; ?>
 <?php if ($canReadDrivers): ?><a class="button button-secondary" href="/fleet/drivers"><?= Icon::svg('id') ?>Drivers</a><?php endif; ?>
 <?php if ($canViewMaintenance): ?><a class="button button-secondary" href="/maintenance"><?= Icon::svg('wrench') ?>Maintenance</a><?php endif; ?>
 <?php if ($canViewNotifications): ?><a class="button button-secondary" href="/staff/notifications"><?= Icon::svg('bell') ?>SMS notifications</a><?php endif; ?>
 <?php if ($canManageUsers): ?><a class="button button-secondary" href="/admin/users"><?= Icon::svg('shield') ?>Staff accounts</a><?php endif; ?>
         </div>
-<?php if (!$canViewRentals && !$canViewFleet && !$canReadDrivers && !$canViewMaintenance && !$canViewNotifications && !$canManageUsers && !$canManageCustomers): ?>
+<?php if (!$canViewRentals && !$canManageFleet && !$canReadDrivers && !$canViewMaintenance && !$canViewNotifications && !$canManageUsers && !$canManageCustomers): ?>
         <p class="muted">Your account is active. Tools for your role will appear here as they are released.</p>
 <?php endif; ?>
     </div>
