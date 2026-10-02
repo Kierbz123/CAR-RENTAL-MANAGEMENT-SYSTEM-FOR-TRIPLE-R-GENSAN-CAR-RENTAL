@@ -1,0 +1,4 @@
+# Migrations are checksummed byte for byte (bin/migrate.php, database/schema.sql), so they must
+# be identical on every machine whatever Git's line-ending setting is.
+database/migrations/*.sql text eol=lf
+database/schema.sql text eol=lf

@@ -27,13 +27,47 @@ final class RentalRepository
             if ($data['rental_type'] !== 'self_drive' && $data['rental_type'] !== 'chauffeur') throw new RuntimeException('Invalid rental type.');
             if ($this->overlaps->vehicleConflicts((int)$v['vehicle_id'],$data['start_date'],$data['end_date'])) throw new RuntimeException('This vehicle already has an overlapping rental.');
             $holdMinutes=max(1,min(1440,(int)$data['hold_minutes']));
-            $stmt=$this->db->prepare("INSERT INTO rental_agreements (customer_id,vehicle_id,rental_type,start_date,end_date,scheduled_pickup_at,scheduled_return_at,daily_rate,security_deposit_amount,deposit_status,hold_expires_at,status,created_by_user_id) VALUES (:customer,:vehicle,:rental_type,:start_date,:end_date,:pickup,:return_at,:rate,:deposit,:deposit_status,DATE_ADD(UTC_TIMESTAMP(6), INTERVAL {$holdMinutes} MINUTE),'reserved',:actor)");
-            $stmt->execute(['customer'=>$data['customer_id'],'vehicle'=>$data['vehicle_id'],'rental_type'=>$data['rental_type'],'start_date'=>$data['start_date'],'end_date'=>$data['end_date'],'pickup'=>$data['scheduled_pickup_at'],'return_at'=>$data['scheduled_return_at'],'rate'=>$v['daily_rate'],'deposit'=>$data['deposit_amount'],'deposit_status'=>$data['deposit_amount']>0?'due':'not_required','actor'=>$actor]);
+            // The downpayment is a share of the rental as priced right now, and is stored so it never moves afterwards.
+            $downpaymentCents=self::downpaymentCents((string)$v['daily_rate'],$data['start_date'],$data['end_date'],(int)$data['downpayment_percent']);
+            $stmt=$this->db->prepare("INSERT INTO rental_agreements (booking_reference,booking_source,customer_id,vehicle_id,rental_type,start_date,end_date,scheduled_pickup_at,scheduled_return_at,daily_rate,security_deposit_amount,deposit_status,downpayment_amount,downpayment_status,hold_expires_at,status,created_by_user_id) VALUES (:reference,:source,:customer,:vehicle,:rental_type,:start_date,:end_date,:pickup,:return_at,:rate,:deposit,:deposit_status,:downpayment,:downpayment_status,DATE_ADD(UTC_TIMESTAMP(6), INTERVAL {$holdMinutes} MINUTE),'reserved',:actor)");
+            $stmt->execute(['reference'=>self::bookingReference(),'source'=>($data['booking_source']??'staff')==='online'?'online':'staff','customer'=>$data['customer_id'],'vehicle'=>$data['vehicle_id'],'rental_type'=>$data['rental_type'],'start_date'=>$data['start_date'],'end_date'=>$data['end_date'],'pickup'=>$data['scheduled_pickup_at'],'return_at'=>$data['scheduled_return_at'],'rate'=>$v['daily_rate'],'deposit'=>$data['deposit_amount'],'deposit_status'=>$data['deposit_amount']>0?'due':'not_required','downpayment'=>intdiv($downpaymentCents,100).'.'.str_pad((string)($downpaymentCents%100),2,'0',STR_PAD_LEFT),'downpayment_status'=>$downpaymentCents>0?'due':'not_required','actor'=>$actor]);
             $id=(int)$this->db->lastInsertId();
             $this->appendStatus($id,null,'reserved',null,$actor);
             $this->appendDeposit($id,null,$data['deposit_amount']>0?'due':'not_required',null,(string)$data['deposit_amount'],'Initial deposit state',$actor);
             $this->db->commit(); return $id;
         } catch (\Throwable $e) { if ($this->db->inTransaction()) $this->db->rollBack(); throw $e; }
+    }
+
+    /** The same sum the database uses for base_amount (days billed x daily rate), then the share, rounded to the centavo. */
+    private static function downpaymentCents(string $dailyRate,string $start,string $end,int $percent): int
+    {
+        $days=max(1,(int)(new \DateTimeImmutable($start))->diff(new \DateTimeImmutable($end))->days);
+        [$whole,$fraction]=array_pad(explode('.',$dailyRate,2),2,'0');
+        $baseCents=$days*(((int)$whole*100)+(int)str_pad(substr($fraction,0,2),2,'0'));
+        return intdiv($baseCents*max(0,min(100,$percent))+50,100);
+    }
+
+    /** The code a customer quotes to find their booking: 8 characters with no 0/O or 1/I to misread. */
+    private static function bookingReference(): string
+    {
+        $alphabet='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';$code='';
+        for($i=0;$i<8;$i++)$code.=$alphabet[random_int(0,31)];
+        return $code;
+    }
+
+    public function findIdByReference(string $reference): ?int
+    {
+        $q=$this->db->prepare('SELECT agreement_id FROM rental_agreements WHERE booking_reference=:reference');$q->execute(['reference'=>$reference]);$id=$q->fetchColumn();return $id===false?null:(int)$id;
+    }
+
+    /**
+     * Marks the downpayment received, once its payment is in the payments table (the database
+     * refuses otherwise). Returns false when it was already received in another request.
+     */
+    public function markDownpaymentReceived(int $id): bool
+    {
+        $q=$this->db->prepare("UPDATE rental_agreements SET downpayment_status='received' WHERE agreement_id=:id AND downpayment_status='due'");
+        $q->execute(['id'=>$id]);return $q->rowCount()===1;
     }
 
     public function list(array $filters=[]): array
@@ -63,10 +97,10 @@ final class RentalRepository
         if($q->rowCount()!==1)return false;$this->appendStatus($id,$expected,$next,$reason,$actor);return true;
     }
 
-    public function statusHistory(int $id): array { $q=$this->db->prepare('SELECT l.*,u.email AS actor_email FROM rental_status_logs l JOIN users u ON u.id=l.actor_user_id WHERE agreement_id=:id ORDER BY created_at,status_log_id');$q->execute(['id'=>$id]);return $q->fetchAll(); }
-    public function depositHistory(int $id): array { $q=$this->db->prepare('SELECT l.*,u.email AS actor_email FROM deposit_status_logs l JOIN users u ON u.id=l.actor_user_id WHERE agreement_id=:id ORDER BY created_at,deposit_log_id');$q->execute(['id'=>$id]);return $q->fetchAll(); }
+    public function statusHistory(int $id): array { $q=$this->db->prepare('SELECT l.*,u.email AS actor_email FROM status_logs l JOIN users u ON u.id=l.actor_user_id WHERE l.agreement_id=:id AND l.subject=\'rental\' ORDER BY l.created_at,l.status_log_id');$q->execute(['id'=>$id]);return $q->fetchAll(); }
+    public function depositHistory(int $id): array { $q=$this->db->prepare('SELECT l.*,u.email AS actor_email FROM status_logs l JOIN users u ON u.id=l.actor_user_id WHERE l.agreement_id=:id AND l.subject=\'deposit\' ORDER BY l.created_at,l.status_log_id');$q->execute(['id'=>$id]);return $q->fetchAll(); }
     public function appendStatus(int $id,?string $old,string $new,?string $reason,int $actor): void
-    { $q=$this->db->prepare('INSERT INTO rental_status_logs(agreement_id,old_status,new_status,reason,actor_user_id) VALUES(:id,:old,:new,:reason,:actor)');$q->execute(['id'=>$id,'old'=>$old,'new'=>$new,'reason'=>$reason,'actor'=>$actor]); }
+    { $q=$this->db->prepare('INSERT INTO status_logs(subject,agreement_id,old_status,new_status,reason,actor_user_id) VALUES(\'rental\',:id,:old,:new,:reason,:actor)');$q->execute(['id'=>$id,'old'=>$old,'new'=>$new,'reason'=>$reason,'actor'=>$actor]); }
     public function appendDeposit(int $id,?string $old, string $new,?string $oldAmount,string $newAmount,string $reason,int $actor): void
-    { $q=$this->db->prepare('INSERT INTO deposit_status_logs(agreement_id,old_status,new_status,old_amount,new_amount,reason,actor_user_id) VALUES(:id,:old,:new,:old_amount,:new_amount,:reason,:actor)');$q->execute(['id'=>$id,'old'=>$old,'new'=>$new,'old_amount'=>$oldAmount,'new_amount'=>$newAmount,'reason'=>$reason,'actor'=>$actor]); }
+    { $q=$this->db->prepare('INSERT INTO status_logs(subject,agreement_id,old_status,new_status,old_amount,new_amount,reason,actor_user_id) VALUES(\'deposit\',:id,:old,:new,:old_amount,:new_amount,:reason,:actor)');$q->execute(['id'=>$id,'old'=>$old,'new'=>$new,'old_amount'=>$oldAmount,'new_amount'=>$newAmount,'reason'=>$reason,'actor'=>$actor]); }
 }

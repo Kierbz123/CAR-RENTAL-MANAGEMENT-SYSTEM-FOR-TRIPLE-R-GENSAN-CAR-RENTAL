@@ -51,7 +51,7 @@ foreach($preservedStatuses as $status){
             'deposit_amount'=>'0',
             'hold_minutes'=>60,
         ],$actor);
-        $rentals->transition($agreementId,'confirm',$actor);
+        $rentals->recordDownpayment($agreementId,'T'.strtoupper(bin2hex(random_bytes(8))),$actor);$rentals->transition($agreementId,'confirm',$actor);
         $vehicleService->transitionStatus($vehicleId,$status,$actor);
         $rentals->transition($agreementId,$action,$actor,'M5 non-agreement status preservation regression.');
 

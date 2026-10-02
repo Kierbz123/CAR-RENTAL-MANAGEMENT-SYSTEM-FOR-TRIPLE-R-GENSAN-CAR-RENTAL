@@ -40,6 +40,19 @@ final class CustomerService
         },true,$actor);
     }
 
+    /** The customer already on record with this phone number, or null. */
+    public function findByPhone(string $phone): ?array
+    {
+        return $this->customers->findByContactFingerprint('phone',$this->contactMaterial('phone',$phone)['fingerprint']);
+    }
+
+    /** True when this phone number is one of the customer's own numbers. */
+    public function phoneBelongsTo(int $customerId,string $phone): bool
+    {
+        try { return $this->customers->contactExists($customerId,'phone',$this->contactMaterial('phone',$phone)['fingerprint']); }
+        catch (\Throwable) { return false; }
+    }
+
     public function update(int $id,array $input): void
     {
         $data=$this->validateCustomer($input);

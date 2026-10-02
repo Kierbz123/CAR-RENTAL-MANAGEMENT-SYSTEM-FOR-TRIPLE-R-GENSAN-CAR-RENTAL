@@ -58,7 +58,7 @@ View::begin('staff', ['title' => 'Agreements', 'crumbs' => [['Agreements', null]
 <?php if ($showAmounts): ?>
                     <td class="num"><?= $e(Format::money($r['base_amount'])) ?></td>
 <?php endif; ?>
-                    <td><?= Status::badge('rental', $r['status']) ?><?php if ($r['rental_type'] === 'chauffeur' && $r['status'] === 'reserved' && $r['driver_id'] === null): ?> <span class="badge badge-danger">Needs driver</span><?php endif; ?></td>
+                    <td><?= Status::badge('rental', $r['status']) ?><?php if ($r['rental_type'] === 'chauffeur' && $r['status'] === 'reserved' && $r['driver_id'] === null): ?> <span class="badge badge-danger">Needs driver</span><?php endif; ?><?php if ($showAmounts && $r['status'] === 'reserved' && $r['downpayment_status'] === 'due'): ?> <span class="badge badge-warning">Downpayment due</span><?php elseif ($showAmounts && $r['status'] === 'reserved' && $r['downpayment_status'] === 'received'): ?> <span class="badge badge-success">Paid, to confirm</span><?php endif; ?></td>
                 </tr>
 <?php endforeach; ?>
 <?php if (!$rows): ?>

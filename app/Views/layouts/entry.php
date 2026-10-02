@@ -10,7 +10,7 @@ use TripleR\Support\View;
  *
  * Options: title, description, scripts, variant ('split' shows the brand panel
  * beside the card; 'solo' is a single centred card), headline, blurb,
- * back ([href, label]) for the link under the card.
+ * back ([href, label]) for the link under the card, wide (true for a card with room for a list).
  */
 $e = static fn (mixed $value): string => View::e($value);
 $title = (string) ($options['title'] ?? 'Triple R Gensan');
@@ -61,7 +61,7 @@ $back = $options['back'] ?? null;
 <?php if ($variant === 'solo'): ?>
         <a class="entry-solo-logo" href="/"><?= Icon::mark() ?><span class="app-brand-name">TRIPLE R<small>GENSAN · CAR RENTAL</small></span></a>
 <?php endif; ?>
-        <div class="entry-card">
+        <div class="entry-card<?= !empty($options['wide']) ? ' entry-card--wide' : '' ?>">
 <?= $content ?>
         </div>
 <?php if (is_array($back)): ?>

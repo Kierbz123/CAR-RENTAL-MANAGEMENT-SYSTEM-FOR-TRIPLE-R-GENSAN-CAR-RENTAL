@@ -11,9 +11,9 @@ final class CustomerRepository
 
     public function list(?string $type,?string $search): array
     {
-        $sql='SELECT * FROM customers WHERE deleted_at IS NULL'; $params=[];
+        $sql='SELECT customers.*, EXISTS(SELECT 1 FROM customer_telegram_links l WHERE l.active_customer_id=customers.customer_id) AS telegram_connected FROM customers WHERE deleted_at IS NULL'; $params=[];
         if ($type!==null && $type!=='') { $sql.=' AND customer_type=:type'; $params['type']=$type; }
-        if ($search!==null && trim($search)!=='') { $sql.=' AND (full_name LIKE :search OR company_name LIKE :search)'; $params['search']='%'.trim($search).'%'; }
+        if ($search!==null && trim($search)!=='') { $sql.=' AND (full_name LIKE :name_search OR company_name LIKE :company_search)'; $params['name_search']=$params['company_search']='%'.trim($search).'%'; } // One placeholder per use: native prepared statements reject a repeated name.
         $sql.=' ORDER BY full_name,customer_id'; $stmt=$this->db->prepare($sql); $stmt->execute($params); return $stmt->fetchAll();
     }
 
@@ -48,6 +48,13 @@ final class CustomerRepository
     public function findContact(int $id,int $customerId): ?array
     {
         $stmt=$this->db->prepare('SELECT * FROM customer_contacts WHERE contact_id=:contact AND customer_id=:customer AND deleted_at IS NULL'); $stmt->execute(['contact'=>$id,'customer'=>$customerId]); $row=$stmt->fetch(); return $row?:null;
+    }
+
+    /** The customer who has this phone or email on record, newest first; removed customers are skipped. */
+    public function findByContactFingerprint(string $type,string $fingerprint): ?array
+    {
+        $stmt=$this->db->prepare('SELECT c.* FROM customer_contacts k JOIN customers c ON c.customer_id=k.customer_id WHERE k.contact_type=:type AND k.contact_fingerprint=:fingerprint AND k.deleted_at IS NULL AND c.deleted_at IS NULL ORDER BY k.is_primary DESC,c.customer_id DESC LIMIT 1');
+        $stmt->execute(['type'=>$type,'fingerprint'=>$fingerprint]); $row=$stmt->fetch(); return $row?:null;
     }
 
     public function contactExists(int $customerId,string $type,string $fingerprint,?int $exceptId=null): bool

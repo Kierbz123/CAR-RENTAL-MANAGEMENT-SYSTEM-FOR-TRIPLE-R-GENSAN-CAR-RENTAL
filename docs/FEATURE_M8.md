@@ -1,5 +1,7 @@
 # M8 — Maintenance: Requirements Resolution
 
+> **Table names changed on 2026-10-01** (migrations 013 to 017). This document uses the names from when it was written. The table "Was / Now" in the README section "Schema consolidation" says where each one lives now.
+
 **Status:** Implemented on migration 011; isolated MySQL 8 and HTTP acceptance passed on 2026-09-30. The full acceptance command also reran M4, M5 reconciliation, M6, M7, and migration 009 guards.
 **Source:** supplied M8 FR-08/FR-09 spec and gap analysis, reconciled against this checkout.  
 **Migration:** `011_maintenance.sql` (010 remains M7 damage reporting).

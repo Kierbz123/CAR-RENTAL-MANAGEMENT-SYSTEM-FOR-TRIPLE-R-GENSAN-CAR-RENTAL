@@ -50,7 +50,7 @@ final class MaintenanceRepository
 
     public function photos(int $serviceId): array
     {
-        $q=$this->db->prepare('SELECT * FROM maintenance_photos WHERE service_id=:id ORDER BY phase,photo_id');$q->execute(['id'=>$serviceId]);return $q->fetchAll();
+        $q=$this->db->prepare('SELECT photo_id,maintenance_service_id AS service_id,phase,storage_path,original_filename,mime,size_bytes,uploaded_by,created_at FROM photos WHERE maintenance_service_id=:id ORDER BY phase,photo_id');$q->execute(['id'=>$serviceId]);return $q->fetchAll();
     }
 
     public function costAudits(int $serviceId): array

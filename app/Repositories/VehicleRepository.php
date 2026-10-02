@@ -59,13 +59,13 @@ final class VehicleRepository
 
     public function photos(int $id): array
     {
-        $stmt = $this->db->prepare('SELECT photo_id, original_filename, mime, size_bytes, sort_order FROM vehicle_photos WHERE vehicle_id = :id ORDER BY sort_order, photo_id');
+        $stmt = $this->db->prepare('SELECT photo_id, original_filename, mime, size_bytes, sort_order FROM photos WHERE vehicle_id = :id ORDER BY sort_order, photo_id');
         $stmt->execute(['id' => $id]); return $stmt->fetchAll();
     }
 
     public function statusHistory(int $id): array
     {
-        $stmt = $this->db->prepare('SELECT h.*, l.name AS location_name, u.email AS actor_email FROM vehicle_status_logs h LEFT JOIN vehicle_locations l ON l.location_id = h.location_id JOIN users u ON u.id = h.actor_user_id WHERE h.vehicle_id = :id ORDER BY h.created_at, h.status_log_id');
+        $stmt = $this->db->prepare('SELECT h.*, l.name AS location_name, u.email AS actor_email FROM status_logs h LEFT JOIN vehicle_locations l ON l.location_id = h.location_id JOIN users u ON u.id = h.actor_user_id WHERE h.vehicle_id = :id AND h.subject = \'vehicle\' ORDER BY h.created_at, h.status_log_id');
         $stmt->execute(['id' => $id]); return $stmt->fetchAll();
     }
 

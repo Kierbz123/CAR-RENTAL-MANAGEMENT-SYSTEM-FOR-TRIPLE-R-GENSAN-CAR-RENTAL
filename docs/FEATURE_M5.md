@@ -1,5 +1,7 @@
 # M5 — Rental agreements and costing
 
+> **Table names changed on 2026-10-01** (migrations 013 to 017). This document uses the names from when it was written. The table "Was / Now" in the README section "Schema consolidation" says where each one lives now.
+
 ## File trace
 
 - `database/migrations/007_rentals.sql` creates `rental_agreements`, `rental_charges`, `rental_status_logs`, `deposit_status_logs`, and Feature C `rules_acceptances`; it adds the FK to the already-existing nullable `booking_access_tokens.booking_id` and adds `suppressed_by_policy` to notification status.

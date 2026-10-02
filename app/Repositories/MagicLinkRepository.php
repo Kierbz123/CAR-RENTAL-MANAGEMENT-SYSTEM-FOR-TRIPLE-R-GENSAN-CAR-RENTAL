@@ -78,7 +78,7 @@ final class MagicLinkRepository
             $valid = hash_equals((string) $token['purpose'], $expectedPurpose)
                 && $token['used_at'] === null
                 && (int) $token['is_unexpired'] === 1;
-            $action = $valid ? 'redeem' : 'redeem_rejected';
+            $action = $valid ? 'magic_link_redeem' : 'magic_link_redeem_rejected';
             $this->recordUsage((int) $token['id'], $ip, $userAgent, $action);
             if (!$valid) {
                 $this->db->commit();
@@ -115,8 +115,8 @@ final class MagicLinkRepository
             $statement = $this->db->prepare('UPDATE booking_access_tokens SET used_at = UTC_TIMESTAMP(6) WHERE id = :id AND used_at IS NULL');
             $statement->execute(['id' => $tokenId]);
             if ($statement->rowCount() === 1 && $token['booking_id'] !== null) {
-                $release = $this->db->prepare('UPDATE magic_link_booking_limits SET issue_count = GREATEST(0, issue_count - 1) WHERE booking_id = :booking_id');
-                $release->execute(['booking_id' => $token['booking_id']]);
+                $release = $this->db->prepare("UPDATE rate_counters SET hits = IF(hits > 0, hits - 1, 0) WHERE scope = 'magic_link_booking' AND counter_key = :booking_id");
+                $release->execute(['booking_id' => (string) $token['booking_id']]);
             }
             $this->db->commit();
         } catch (\Throwable $error) {
@@ -129,18 +129,20 @@ final class MagicLinkRepository
 
     private function reserveBookingIssue(int $bookingId, int $limit): void
     {
-        $insert = $this->db->prepare('INSERT IGNORE INTO magic_link_booking_limits (booking_id, issue_count) VALUES (:booking_id, 0)');
-        $insert->execute(['booking_id' => $bookingId]);
-        $update = $this->db->prepare('UPDATE magic_link_booking_limits SET issue_count = issue_count + 1 WHERE booking_id = :booking_id AND issue_count < :limit');
-        $update->execute(['booking_id' => $bookingId, 'limit' => max(1, min(255, $limit))]);
+        // The number of secure links issued for one booking is a rate_counters row keyed by the agreement id.
+        $insert = $this->db->prepare("INSERT IGNORE INTO rate_counters (scope, counter_key, window_started_at, hits) VALUES ('magic_link_booking', :booking_id, UTC_TIMESTAMP(), 0)");
+        $insert->execute(['booking_id' => (string) $bookingId]);
+        $update = $this->db->prepare("UPDATE rate_counters SET hits = hits + 1 WHERE scope = 'magic_link_booking' AND counter_key = :booking_id AND hits < :limit");
+        $update->execute(['booking_id' => (string) $bookingId, 'limit' => max(1, min(255, $limit))]);
         if ($update->rowCount() !== 1) {
             throw new \DomainException('The secure-link limit for this booking has been reached. Please contact the rental office.');
         }
     }
 
+    /** Every attempt to open a secure link, accepted or refused, is a security event tied to its token. */
     private function recordUsage(int $tokenId, string $ip, string $userAgent, string $action): void
     {
-        $statement = $this->db->prepare('INSERT INTO token_usages (token_id, used_at, ip_address, user_agent, action) VALUES (:token_id, UTC_TIMESTAMP(6), :ip, :user_agent, :action)');
+        $statement = $this->db->prepare('INSERT INTO security_logs (token_id, event_type, ip_address, user_agent, created_at) VALUES (:token_id, :action, :ip, :user_agent, UTC_TIMESTAMP(6))');
         $statement->execute([
             'token_id' => $tokenId,
             'ip' => filter_var($ip, FILTER_VALIDATE_IP) ? $ip : null,

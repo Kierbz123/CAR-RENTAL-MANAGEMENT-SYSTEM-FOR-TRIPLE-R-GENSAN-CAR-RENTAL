@@ -19,26 +19,28 @@ function fixture(string $suffix,string $date):array{global $db,$rentals,$actor;$
 
 echo "M7 damage reporting acceptance\n";
 $preDate=$today;$nextDate=(new DateTimeImmutable($today,new DateTimeZone('Asia/Manila')))->modify('+1 day')->format('Y-m-d');
-[$agreement]=fixture($suffix.'a',$preDate);$rentals->transition($agreement,'confirm',$actor);
+[$agreement]=fixture($suffix.'a',$preDate);$rentals->recordDownpayment($agreement,'T'.strtoupper(bin2hex(random_bytes(8))),$actor);$rentals->transition($agreement,'confirm',$actor);
 $clean=$damage->record($agreement,'pre',false,[],[],$actor);pass('Clean pre-inspection may have no photos or damage details');
 reject(fn()=>$damage->record($agreement,'pre',false,[],[],$actor),'uq_damage_phase_slot','Only one pre report per agreement');
-[$liabilityAgreement]=fixture($suffix.'c',$preDate);$rentals->transition($liabilityAgreement,'confirm',$actor);
+[$liabilityAgreement]=fixture($suffix.'c',$preDate);$rentals->recordDownpayment($liabilityAgreement,'T'.strtoupper(bin2hex(random_bytes(8))),$actor);$rentals->transition($liabilityAgreement,'confirm',$actor);
 $liabilityReport=$damage->record($liabilityAgreement,'pre',true,['location'=>'left rear door','damage_type'=>'dent','severity'=>'minor','repair_cost_suggestion'=>'1250.00'],[],$actor);pass('Damage facts and suggested repair cost recorded');
 $first=$damage->decide($liabilityReport,true,'1200.00','Inspection evidence supports customer liability',$actor);pass('Liability decision recorded');
 $second=$damage->decide($liabilityReport,true,'1100.00','Corrected after panel-shop estimate',$actor,$first);pass('Correction appends a superseding decision with reason');
 reject(fn()=>$damage->decide($liabilityReport,true,'1000.00','Attempt to branch',$actor,$first),'changed','Superseded decision cannot be corrected again');
 $damage->postCharge($second,'1000.00','Finance negotiated repair amount',$actor);pass('Finance adjustment uses RentalService damage charge path with audit');
 reject(fn()=>$damage->postCharge($second,'1000.00','Duplicate click',$actor),'already been posted','A liability decision cannot produce duplicate charges');
-$q=$db->prepare('SELECT COUNT(*) FROM damage_charge_postings p JOIN rental_charges c ON c.charge_id=p.charge_id WHERE p.decision_id=:decision AND c.charge_type=\'damage\' AND c.amount=1000.00');$q->execute(['decision'=>$second]);if((int)$q->fetchColumn()!==1)throw new RuntimeException('Damage charge/posting audit mismatch.');
+$q=$db->prepare('SELECT COUNT(*) FROM rental_charges c WHERE c.damage_decision_id=:decision AND c.charge_type=\'damage\' AND c.amount=1000.00 AND c.damage_adjustment_reason=\'Finance negotiated repair amount\'');$q->execute(['decision'=>$second]);if((int)$q->fetchColumn()!==1)throw new RuntimeException('Damage charge/posting audit mismatch.');
 reject(fn()=>$migrationDb->exec("UPDATE damage_liability_decisions SET liable_amount=1 WHERE decision_id=".(int)$second),'append-only','Liability decisions reject direct UPDATE');
 reject(fn()=>$migrationDb->exec("DELETE FROM damage_liability_decisions WHERE decision_id=".(int)$second),'append-only','Liability decisions reject direct DELETE');
 reject(fn()=>$migrationDb->exec("UPDATE damage_reports SET notes='changed' WHERE report_id=".(int)$liabilityReport),'append-only','Damage reports reject direct UPDATE');
 reject(fn()=>$migrationDb->exec("DELETE FROM damage_reports WHERE report_id=".(int)$liabilityReport),'append-only','Damage reports reject direct DELETE');
-reject(fn()=>$migrationDb->exec("UPDATE damage_charge_postings SET approved_amount=1 WHERE decision_id=".(int)$second),'append-only','Damage charge postings reject direct UPDATE');
-reject(fn()=>$migrationDb->exec("DELETE FROM damage_charge_postings WHERE decision_id=".(int)$second),'append-only','Damage charge postings reject direct DELETE');
+reject(fn()=>$migrationDb->exec("UPDATE rental_charges SET damage_adjustment_reason='changed' WHERE damage_decision_id=".(int)$second),'append-only','A posted damage charge rejects direct UPDATE');
+reject(fn()=>$migrationDb->exec("DELETE FROM rental_charges WHERE damage_decision_id=".(int)$second),'append-only','A posted damage charge rejects direct DELETE');
+reject(fn()=>$migrationDb->exec("INSERT INTO rental_charges(agreement_id,charge_type,entry_kind,amount,description,damage_decision_id,created_by_user_id) VALUES(".(int)$liabilityAgreement.",'fee','charge',1,'Not a damage charge',".(int)$first.",".(int)$actor.")"),'chk_rental_charge_damage_decision','Only a damage charge may carry a liability decision');
+reject(fn()=>$migrationDb->exec("INSERT INTO rental_charges(agreement_id,charge_type,entry_kind,amount,description,damage_decision_id,created_by_user_id) VALUES(".(int)$liabilityAgreement.",'damage','charge',1,'Second charge for one decision',".(int)$second.",".(int)$actor.")"),'duplicate','The database allows one charge per liability decision');
 reject(fn()=>$migrationDb->exec("DELETE FROM rental_agreements WHERE agreement_id=".(int)$liabilityAgreement),'foreign key','Damage history restricts agreement deletion');
 
-[$activeAgreement]=fixture($suffix.'b',$nextDate);$rentals->transition($activeAgreement,'confirm',$actor);$rentals->transition($activeAgreement,'pickup',$actor,null,5000);
+[$activeAgreement]=fixture($suffix.'b',$nextDate);$rentals->recordDownpayment($activeAgreement,'T'.strtoupper(bin2hex(random_bytes(8))),$actor);$rentals->transition($activeAgreement,'confirm',$actor);$rentals->transition($activeAgreement,'pickup',$actor,null,5000);
 reject(fn()=>$damage->record($activeAgreement,'during',true,['location'=>'hood','damage_type'=>'scratch','severity'=>'minor'],[],$actor),'at least one photo','During damage requires photo evidence');
 $duringClean=$damage->record($activeAgreement,'during',false,[],[],$actor);$duringClean2=$damage->record($activeAgreement,'during',false,[],[],$actor);pass('Multiple during-rental reports are allowed');
 $rentals->transition($activeAgreement,'return',$actor,null,5100);

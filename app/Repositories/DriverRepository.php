@@ -104,13 +104,13 @@ final class DriverRepository
 
     public function appendStatus(int $driverId, ?string $old, string $new, int $actor): void
     {
-        $stmt = $this->db->prepare('INSERT INTO driver_status_logs (driver_id,old_status,new_status,actor_user_id) VALUES (:driver,:old,:new,:actor)');
+        $stmt = $this->db->prepare('INSERT INTO status_logs (subject,driver_id,old_status,new_status,actor_user_id) VALUES (\'driver\',:driver,:old,:new,:actor)');
         $stmt->execute(['driver'=>$driverId,'old'=>$old,'new'=>$new,'actor'=>$actor]);
     }
 
     public function statusHistory(int $driverId): array
     {
-        $stmt = $this->db->prepare('SELECT h.*,u.email AS actor_email FROM driver_status_logs h JOIN users u ON u.id=h.actor_user_id WHERE h.driver_id=:id ORDER BY h.created_at,h.status_log_id');
+        $stmt = $this->db->prepare('SELECT h.*,u.email AS actor_email FROM status_logs h JOIN users u ON u.id=h.actor_user_id WHERE h.driver_id=:id AND h.subject=\'driver\' ORDER BY h.created_at,h.status_log_id');
         $stmt->execute(['id'=>$driverId]);
         return $stmt->fetchAll();
     }

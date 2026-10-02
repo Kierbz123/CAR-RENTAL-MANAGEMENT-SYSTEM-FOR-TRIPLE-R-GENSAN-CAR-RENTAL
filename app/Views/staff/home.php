@@ -34,6 +34,9 @@ if ($rentalCounts !== null) {
         $attention[] = ['count' => $rentalCounts['awaiting_completion'], 'danger' => false, 'title' => 'Returned, awaiting completion', 'sub' => 'Reconcile charges and deposit to close', 'href' => '/rentals?status=returned'];
     }
 }
+if ($proofsToCheck > 0) {
+    $attention[] = ['count' => $proofsToCheck, 'danger' => false, 'title' => 'Payments to check', 'sub' => 'GCash proofs of downpayment sent by customers', 'href' => '/payments'];
+}
 if ($maintenanceDue !== null && $dueNow > 0 && $mine('system_admin', 'fleet_manager', 'mechanic')) {
     $attention[] = ['count' => $dueNow, 'danger' => true, 'title' => 'Maintenance due now', 'sub' => 'Schedules past their date or mileage', 'href' => '/maintenance/due'];
 }
@@ -55,6 +58,7 @@ View::begin('staff', ['title' => 'Workspace']);
         <a class="button button-secondary" href="/fleet/vehicles/new"><?= Icon::svg('plus') ?>Register vehicle</a>
 <?php endif; ?>
 <?php if ($canCreateRentals): ?>
+        <a class="button button-secondary" href="/staff/booking-qr">Online booking QR</a>
         <a class="button button-primary" href="/rentals/new"><?= Icon::svg('plus') ?>New reservation</a>
 <?php endif; ?>
     </div>

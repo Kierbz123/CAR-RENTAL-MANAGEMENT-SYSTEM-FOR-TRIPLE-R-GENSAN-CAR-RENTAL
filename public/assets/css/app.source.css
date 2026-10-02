@@ -276,6 +276,9 @@ input[readonly] { color: var(--text-muted); background: var(--soft); }
 .alert { border-color: var(--status-danger-border); color: var(--status-danger); background: var(--status-danger-bg); }
 .notice { border-color: var(--status-success-border); color: var(--status-success); background: var(--status-success-bg); }
 .callout { padding: .8rem 1rem; border: 1px solid var(--status-warning-border); border-radius: var(--radius-control); color: var(--status-warning); background: var(--status-warning-bg); font-weight: 600; }
+/* Marks every screen of the simulated payment checkout, so nobody takes it for a real one. */
+.demo-banner { padding: .7rem 1rem; border: 2px dashed var(--status-warning-border); border-radius: var(--radius-control); color: var(--status-warning); background: var(--status-warning-bg); font-size: var(--text-sm); }
+.demo-banner strong { display: block; font-size: .76rem; letter-spacing: .06em; text-transform: uppercase; }
 .temporary-password { display: block; padding: 1rem; overflow-wrap: anywhere; border: 1px dashed var(--line-strong); border-radius: var(--radius-control); background: var(--soft); font-size: 1.1rem; user-select: all; }
 
 /* 10. Detail components -------------------------------------------------- */
@@ -297,6 +300,34 @@ input[readonly] { color: var(--text-muted); background: var(--soft); }
 .timeline-title { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; font-weight: 650; }
 .timeline-meta { margin-top: .15rem; color: var(--text-muted); font-size: var(--text-sm); }
 .timeline-note { margin-top: .3rem; font-size: var(--text-sm); overflow-wrap: anywhere; }
+/* Telegram connection code. The QR code keeps a white ground so any phone camera can read it. */
+.telegram-connect > * + * { margin-top: var(--space-4); }
+.qr-code { width: min(100%, 15rem); margin-inline: auto; padding: .5rem; border: 1px solid var(--line); border-radius: var(--radius-control); background: #fff; }
+.qr-code svg { display: block; width: 100%; height: auto; }
+.connect-code { font-size: 1.6rem; font-weight: 700; letter-spacing: .16em; text-align: center; }
+.connect-link { font-size: var(--text-sm); overflow-wrap: anywhere; }
+.telegram-connect.is-expired .qr-code, .telegram-connect.is-expired .connect-code { opacity: .25; }
+/* Public booking page: a wider card, vehicle choices as selectable rows, and the policy box. */
+.entry-card.entry-card--wide { width: min(100%, 46rem); }
+.entry-card .toolbar { padding: 0; }
+.choice-group { margin: 0; padding: 0; border: 0; }
+.choice-group > * + * { margin-top: var(--space-4); }
+.choice-group > legend { margin-bottom: .6rem; padding: 0; color: var(--text-muted); font-size: var(--text-sm); font-weight: 700; }
+.choice { display: flex; align-items: flex-start; gap: .8rem; padding: .85rem 1rem; border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--surface); cursor: pointer; }
+.choice + .choice { margin-top: .5rem; }
+.choice:has(input:checked) { border-color: var(--signal); box-shadow: 0 0 0 1px var(--signal); }
+.choice input { margin-top: .25rem; }
+.choice-body { flex: 1 1 auto; min-width: 0; }
+.choice-title { display: block; font-weight: 700; }
+.choice-sub { display: block; color: var(--text-muted); font-size: var(--text-sm); }
+.choice-price { flex: 0 0 auto; text-align: right; }
+.choice-price strong { display: block; font-size: var(--text-md); }
+.policy { padding: 1rem 1.1rem; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface-muted, #f6f8f5); }
+.policy > * + * { margin-top: var(--space-4); }
+.policy h2 { font-size: var(--text-md); }
+.policy .steps { margin: 0; padding-left: 1.2rem; list-style: decimal; }
+.policy .steps li + li { margin-top: .4rem; }
+.button-block { width: 100%; }
 .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: .9rem; }
 .photo-grid figure { margin: 0; }
 .photo-grid a { display: block; }

@@ -42,7 +42,7 @@ $driverA = (int)$db->lastInsertId();
 $driverInsert->execute(["Guard B $tag", "cipher-b-$tag", hash('sha256', "fingerprint-b-$tag")]);
 $driverB = (int)$db->lastInsertId();
 
-$agreementInsert = $db->prepare("INSERT INTO rental_agreements (customer_id, vehicle_id, rental_type, start_date, end_date, daily_rate, status, driver_id, created_by_user_id) VALUES (:customer, :vehicle, :type, :start, :end, '2000.00', :status, :driver, 1)");
+$agreementInsert = $db->prepare("INSERT INTO rental_agreements (booking_reference, customer_id, vehicle_id, rental_type, start_date, end_date, daily_rate, status, driver_id, created_by_user_id) VALUES (UPPER(SUBSTRING(MD5(RAND()), 1, 8)), :customer, :vehicle, :type, :start, :end, '2000.00', :status, :driver, 1)");
 $createAgreement = static function (string $date, string $type, string $status, ?int $driverId) use ($db, $agreementInsert, $customerId, $vehicleId): int {
     $agreementInsert->execute(['customer' => $customerId, 'vehicle' => $vehicleId, 'type' => $type, 'start' => $date, 'end' => $date, 'status' => $status, 'driver' => $driverId]);
     return (int)$db->lastInsertId();
@@ -64,7 +64,7 @@ expectSqlRejection($db, "UPDATE rental_agreements SET driver_id=$driverB WHERE a
 
 expectSqlRejection(
     $db,
-    "INSERT INTO rental_agreements (customer_id, vehicle_id, rental_type, start_date, end_date, daily_rate, status, driver_id, created_by_user_id) VALUES ($customerId, $vehicleId, 'chauffeur', '2026-11-03', '2026-11-03', '2000.00', 'active', NULL, 1)",
+    "INSERT INTO rental_agreements (booking_reference, customer_id, vehicle_id, rental_type, start_date, end_date, daily_rate, status, driver_id, created_by_user_id) VALUES (UPPER(SUBSTRING(MD5(RAND()), 1, 8)), $customerId, $vehicleId, 'chauffeur', '2026-11-03', '2026-11-03', '2000.00', 'active', NULL, 1)",
     'chk_rentals_chauffeur_driver',
     'CHECK rejects chauffeur insert with active status and NULL driver'
 );

@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 use TripleR\Support\Format;
+use TripleR\Support\PaymentMethods;
 use TripleR\Support\StatusPresenter as Status;
 use TripleR\Support\View;
 
@@ -34,8 +35,47 @@ $defaultPhase = match ($s) { 'active' => 'during', 'returned', 'completed' => 'p
 
 $csrf = '<input type="hidden" name="_csrf" value="' . $e($csrfToken) . '"><input type="hidden" name="agreement_id" value="' . $id . '">';
 
+// The 30% downpayment: it is paid online, by a proof finance verifies, or at the counter, and a
+// reservation cannot be confirmed before that.
+$downpayment = $agreement['downpayment_status'];
+$downpaymentRequired = $downpayment !== 'not_required';
+$downpaymentDue = $downpayment === 'due';
+// Every payment and online attempt for this agreement. $outstanding is the total less all money received.
+$paidDownpayment = null;
+$paymentInProgress = null;
+$paidTotal = 0.0;
+$paidBalance = 0.0;
+foreach ($payments as $payment) {
+    if ($payment['payment_status'] === 'pending') {
+        $paymentInProgress = $payment;
+    }
+    if ($payment['payment_status'] !== 'paid') {
+        continue;
+    }
+    $paidTotal += (float) $payment['amount'];
+    if ($payment['purpose'] === 'downpayment') {
+        $paidDownpayment = $payment;
+    } else {
+        $paidBalance += (float) $payment['amount'];
+    }
+}
+$balanceAtPickup = max(0, (float) $total - (float) $agreement['downpayment_amount'] - $paidBalance);
+$owesBalance = $downpayment === 'received' && $outstanding > 0;
+$canRecordDownpayment = $canFinance && $downpaymentDue && $s === 'reserved' && $paymentInProgress === null;
+$canRecordBalance = $canFinance && !$downpaymentDue && in_array($s, ['confirmed', 'active', 'returned'], true) && $outstanding > 0;
+$staffMethods = PaymentMethods::staff();
+// Proofs the customer sent from their booking page. Finance decides; finance, administrators and auditors may open the screenshot.
+$pendingProof = null;
+foreach ($proofs as $proof) {
+    if ($proof['proof_status'] === 'submitted') {
+        $pendingProof = $proof;
+    }
+}
+$canSeeScreenshots = in_array($role, ['system_admin', 'finance_staff', 'auditor'], true);
+$bookedOnline = $agreement['booking_source'] === 'online';
+
 // Lifecycle actions available to this role at this stage.
-$canConfirm = $canOps && $s === 'reserved';
+$canConfirm = $canOps && $s === 'reserved' && !$downpaymentDue;
 $canPickup = $canTrip && $s === 'confirmed';
 $canReturn = $canTrip && $s === 'active';
 $canComplete = $canFinance && $s === 'returned';
@@ -43,10 +83,12 @@ $canCancel = $canOps && in_array($s, ['reserved', 'confirmed'], true);
 $canNoShow = $canCancel && $agreement['scheduled_pickup_at'] !== null;
 $hasAction = $canConfirm || $canPickup || $canReturn || $canComplete || $canCancel;
 $nextStepHelp = match ($s) {
-    'reserved' => $isChauffeur && $agreement['driver_id'] === null ? 'Assign a driver, then confirm the reservation before its hold expires.' : 'Confirm the reservation before its hold expires.',
+    'reserved' => $downpaymentDue
+        ? ($isChauffeur && $agreement['driver_id'] === null ? 'Assign a driver and record the customer’s downpayment before the hold expires. Then the reservation can be confirmed.' : 'Record the customer’s downpayment before the hold expires. Then the reservation can be confirmed.')
+        : ($isChauffeur && $agreement['driver_id'] === null ? 'Assign a driver, then confirm the reservation.' : ($downpayment === 'received' ? 'The downpayment is in. Confirm the reservation.' : 'Confirm the reservation before its hold expires.')),
     'confirmed' => 'Record the pickup when the customer collects the vehicle.',
     'active' => 'Record the return when the vehicle comes back.',
-    'returned' => 'Settle charges and the deposit, then complete the agreement.',
+    'returned' => $owesBalance ? 'Record the balance, settle charges and the deposit, then complete the agreement.' : 'Settle charges and the deposit, then complete the agreement.',
     'completed' => 'This agreement is closed.',
     'cancelled' => 'This agreement was cancelled.',
     'no_show' => 'The customer did not collect the vehicle.',
@@ -57,12 +99,15 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
 ?>
 <header class="page-header">
     <div class="page-header-text">
-        <p class="eyebrow">Agreement #<?= $id ?> · <?= $e(Status::label($agreement['rental_type'])) ?></p>
+        <p class="eyebrow">Agreement #<?= $id ?> · <?= $e(Status::label($agreement['rental_type'])) ?> · Reference <span class="mono"><?= $e($agreement['booking_reference']) ?></span></p>
         <h1><?= $e($agreement['customer_name']) ?></h1>
         <div class="page-meta">
             <?= Status::badge('rental', $s) ?>
 <?php if ($isChauffeur && $s === 'reserved' && $agreement['driver_id'] === null): ?>
             <span class="badge badge-danger">Needs driver</span>
+<?php endif; ?>
+<?php if ($bookedOnline): ?>
+            <span class="badge badge-info">Booked online</span>
 <?php endif; ?>
             <span><span class="mono"><?= $e($agreement['plate_number']) ?></span><?= $vehicleName !== '' ? ' ' . $e($vehicleName) : '' ?></span>
             <span><?= $e(Format::date($agreement['start_date'])) ?> to <?= $e(Format::date($agreement['end_date'])) ?></span>
@@ -94,6 +139,10 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
 <?php if ($isChauffeur): ?><a href="#driver">Driver</a><?php endif; ?>
 <?php if (!$schedulingOnly): ?>
     <a href="#charges">Charges</a>
+<?php if ($downpaymentRequired): ?>
+    <a href="#downpayment">Downpayment</a>
+<?php endif; ?>
+    <a href="#payments">Payments<?= $payments ? ' (' . count($payments) . ')' : '' ?></a>
     <a href="#deposit">Deposit</a>
     <a href="#damage">Damage inspections<?= $damageReports ? ' (' . count($damageReports) . ')' : '' ?></a>
 <?php endif; ?>
@@ -106,9 +155,18 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
         <section class="panel" aria-labelledby="next-title">
             <div class="panel-heading"><div><h2 id="next-title">Next step</h2><p><?= $e($nextStepHelp) ?></p></div></div>
             <div class="panel-body">
-<?php if (!$hasAction): ?>
-                <p class="muted">Nothing for your role to do at this stage.</p>
+<?php if ($s === 'reserved' && $downpaymentDue && !$schedulingOnly): ?>
+<?php if ($pendingProof !== null): ?>
+                <p class="callout" role="status"><strong>The customer sent proof of the downpayment of <?= $e(Format::money($agreement['downpayment_amount'])) ?>.</strong> <?= $canFinance ? 'Check it under' : 'Finance checks it under' ?> <a href="#downpayment">Downpayment</a>. The reservation is not cancelled while the proof is waiting.</p>
+<?php elseif ($paymentInProgress !== null): ?>
+                <p class="callout" role="status"><strong>The customer is paying the downpayment of <?= $e(Format::money($agreement['downpayment_amount'])) ?> online right now.</strong> Their checkout is open until <?= $e(Format::time($paymentInProgress['expires_at'])) ?>. The reservation is not cancelled while it is open; reload to see the result.</p>
 <?php else: ?>
+                <p class="callout" role="status"><strong>Waiting for the downpayment of <?= $e(Format::money($agreement['downpayment_amount'])) ?>.</strong> The customer can pay it online or send a proof from their booking page. For a payment at the counter, <?= $canRecordDownpayment ? 'record it under' : 'finance records it under' ?> <a href="#downpayment">Downpayment</a>. The hold ends <?= $e(Format::datetime($agreement['hold_expires_at'])) ?>.</p>
+<?php endif; ?>
+<?php endif; ?>
+<?php if (!$hasAction && !$canRecordDownpayment): ?>
+                <p class="muted">Nothing for your role to do at this stage.</p>
+<?php elseif ($hasAction): ?>
                 <div class="button-row">
 <?php if ($canConfirm): ?>
                     <form method="post" action="/rentals/action">
@@ -143,6 +201,9 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
                 </div>
 <?php if ($canComplete && in_array($agreement['deposit_status'], ['due', 'held'], true)): ?>
                 <p class="callout">The deposit is still <?= $e(strtolower(Status::label($agreement['deposit_status']))) ?>. Record what happened to it under <a href="#deposit">Deposit</a> before completing.</p>
+<?php endif; ?>
+<?php if ($canComplete && $owesBalance): ?>
+                <p class="callout"><?= $e(Format::money($outstanding)) ?> is still owed. Record it under <a href="#payments">Payments</a> before completing.</p>
 <?php endif; ?>
 <?php if ($canCancel): ?>
                 <div class="button-row">
@@ -251,6 +312,139 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
                 <label class="field"><span class="field-label">Description</span><input name="description" maxlength="500" required></label>
                 <button class="button button-secondary" type="submit">Add charge</button>
             </form>
+<?php endif; ?>
+        </section>
+
+<?php if ($downpaymentRequired): ?>
+        <section class="panel" id="downpayment" aria-labelledby="downpayment-title">
+            <div class="panel-heading"><div><h2 id="downpayment-title">Downpayment</h2><p>30% of the rental as booked, paid before the reservation is confirmed: online, by a GCash proof that finance verifies, or at the counter. It is non-refundable. The balance is paid in person at pickup.</p></div><?= Status::badge('downpayment', $downpayment) ?></div>
+            <div class="panel-body">
+                <dl class="facts">
+                    <div><dt>Downpayment</dt><dd><?= $e(Format::money($agreement['downpayment_amount'])) ?></dd></div>
+                    <div><dt>Balance due at pickup</dt><dd><?= $e(Format::money($balanceAtPickup)) ?></dd></div>
+<?php if ($paidDownpayment !== null): ?>
+                    <div><dt>Paid by</dt><dd><?= $e(PaymentMethods::describe($paidDownpayment)) ?><span class="cell-sub"><?= $e(PaymentMethods::channelLabel($paidDownpayment)) ?></span></dd></div>
+                    <div><dt><?= $paidDownpayment['external_reference'] !== null ? 'Reference' : 'Receipt' ?></dt><dd class="mono"><?= $e($paidDownpayment['external_reference'] ?? $paidDownpayment['receipt_number']) ?></dd></div>
+                    <div><dt>Received</dt><dd><?= $e(Format::datetime($paidDownpayment['settled_at'])) ?><span class="cell-sub"><?= $e($paidDownpayment['recorded_by_email'] ?? 'By the customer, online') ?></span></dd></div>
+<?php endif; ?>
+                </dl>
+<?php if ($policyAcceptance !== null): ?>
+                <p class="muted">The customer accepted the <?= $e($policyAcceptance['title']) ?> (version <?= (int) $policyAcceptance['version_number'] ?>) online on <?= $e(Format::datetime($policyAcceptance['recorded_at'])) ?>.</p>
+<?php elseif ($downpaymentRequired): ?>
+                <p class="muted">No online acceptance of the downpayment policy is recorded: this booking was made at the counter.</p>
+<?php endif; ?>
+<?php if ($proofs): ?>
+                <div class="table-wrap">
+                    <table class="data-table" data-stack>
+                        <thead><tr><th scope="col">Proof sent</th><th scope="col">GCash reference</th><th scope="col">Screenshot</th><th scope="col">Decision</th></tr></thead>
+                        <tbody>
+<?php foreach ($proofs as $proof): ?>
+                            <tr>
+                                <td class="nowrap"><?= $e(Format::datetime($proof['submitted_at'])) ?></td>
+                                <td class="mono"><?= $e($proof['reference_number']) ?></td>
+                                <td><?php if ($canSeeScreenshots): ?><a href="/payments/proof?proof_id=<?= (int) $proof['proof_id'] ?>" target="_blank" rel="noopener">Open screenshot</a><?php else: ?><span class="muted">Finance only</span><?php endif; ?></td>
+                                <td>
+<?php if ($proof['proof_status'] === 'submitted' && $canFinance): ?>
+                                    <div class="cell-actions">
+                                        <form method="post" action="/payments/verify" data-confirm="Verify this payment of <?= $e(Format::money($agreement['downpayment_amount'])) ?>? The downpayment is recorded and cannot be changed afterwards." data-confirm-action="Verify payment">
+                                            <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
+                                            <input type="hidden" name="proof_id" value="<?= (int) $proof['proof_id'] ?>">
+                                            <input type="hidden" name="return" value="agreement">
+                                            <button class="button button-primary button-small" type="submit">Verify</button>
+                                        </form>
+                                        <details class="disclosure disclosure--danger">
+                                            <summary>Reject…</summary>
+                                            <form class="disclosure-body" method="post" action="/payments/reject">
+                                                <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
+                                                <input type="hidden" name="proof_id" value="<?= (int) $proof['proof_id'] ?>">
+                                                <input type="hidden" name="return" value="agreement">
+                                                <label class="field"><span class="field-label">Reason (sent to the customer)</span><input name="reason" maxlength="500" required></label>
+                                                <div><button class="button button-danger button-small" type="submit">Reject proof</button></div>
+                                            </form>
+                                        </details>
+                                    </div>
+<?php elseif ($proof['proof_status'] === 'submitted'): ?>
+                                    <span class="badge badge-warning">Waiting for finance</span>
+<?php else: ?>
+                                    <span class="badge <?= $proof['proof_status'] === 'verified' ? 'badge-success' : 'badge-danger' ?>"><?= $proof['proof_status'] === 'verified' ? 'Verified' : 'Rejected' ?></span>
+                                    <span class="cell-sub"><?= $e(Format::datetime($proof['reviewed_at'])) ?> · <?= $e($proof['reviewed_by_email'] ?? '') ?><?= $proof['review_note'] ? ' · ' . $e($proof['review_note']) : '' ?></span>
+<?php endif; ?>
+                                </td>
+                            </tr>
+<?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+<?php endif; ?>
+<?php if ($canRecordDownpayment && $pendingProof === null): ?>
+                <form class="toolbar" method="post" action="/rentals/downpayment" data-confirm="Record that the downpayment of <?= $e(Format::money($agreement['downpayment_amount'])) ?> was received? This cannot be changed afterwards." data-confirm-action="Record downpayment">
+                    <?= $csrf ?>
+                    <label class="field"><span class="field-label">Paid by</span>
+                        <select name="method">
+<?php foreach ($staffMethods as $methodKey => $method): ?>
+                            <option value="<?= $e($methodKey) ?>"><?= $e($method['label']) ?></option>
+<?php endforeach; ?>
+                        </select>
+                    </label>
+                    <label class="field"><span class="field-label">Reference number</span><input name="reference" maxlength="40" autocomplete="off" pattern="[A-Za-z0-9 \-]{6,40}"><small class="field-hint">For a payment made at the counter. Leave it blank for cash. For anything else, check the account first; each reference can be used once.</small></label>
+                    <button class="button button-primary" type="submit">Record downpayment</button>
+                </form>
+<?php elseif ($downpaymentDue && $paymentInProgress !== null && $s === 'reserved'): ?>
+                <p class="muted">The customer has a checkout open. A payment at the counter can be recorded once it closes.</p>
+<?php elseif ($downpaymentDue && $s === 'reserved'): ?>
+                <p class="muted">Finance or an administrator records a payment made at the counter here.</p>
+<?php elseif ($downpaymentDue): ?>
+                <p class="muted">No downpayment was received before this agreement ended.</p>
+<?php endif; ?>
+            </div>
+        </section>
+<?php endif; ?>
+
+        <section class="panel" id="payments" aria-labelledby="payments-title">
+            <div class="panel-heading"><div><h2 id="payments-title">Payments</h2><p>Money received for this agreement and every attempt on the online checkout. A payment is never edited or removed.</p></div><?php if ($owesBalance): ?><span class="badge badge-warning"><?= $e(Format::money($outstanding)) ?> owed</span><?php elseif ($paidTotal > 0): ?><span class="badge badge-success">Paid in full</span><?php endif; ?></div>
+            <div class="panel-body">
+                <dl class="facts">
+                    <div><dt>Total to bill</dt><dd><?= $e(Format::money($total)) ?></dd></div>
+                    <div><dt>Received so far</dt><dd><?= $e(Format::money($paidTotal)) ?></dd></div>
+                    <div><dt>Still owed</dt><dd><?= $e(Format::money($outstanding)) ?></dd></div>
+                </dl>
+            </div>
+            <div class="table-wrap">
+                <table class="data-table" data-stack>
+                    <thead><tr><th scope="col">When</th><th scope="col">For</th><th scope="col">Method</th><th scope="col" class="num">Amount</th><th scope="col">Result</th><th scope="col">Receipt</th></tr></thead>
+                    <tbody>
+<?php foreach ($payments as $payment): ?>
+                        <tr>
+                            <td class="nowrap"><?= $e(Format::datetime($payment['settled_at'] ?? $payment['created_at'])) ?></td>
+                            <td><?= $e($payment['purpose'] === 'downpayment' ? 'Downpayment' : 'Balance') ?></td>
+                            <td><?= $e(PaymentMethods::describe($payment)) ?><span class="cell-sub"><?= $e(PaymentMethods::channelLabel($payment)) ?><?= $payment['recorded_by_email'] ? ' · ' . $e($payment['recorded_by_email']) : '' ?></span></td>
+                            <td class="num"><?= $e(Format::money($payment['amount'])) ?></td>
+                            <td><?= Status::badge('payment', $payment['payment_status']) ?><?php if ($payment['failure_reason']): ?><span class="cell-sub"><?= $e($payment['failure_reason']) ?></span><?php endif; ?></td>
+                            <td><?php if ($canSeeScreenshots): ?><a class="mono" href="/payments/receipt?receipt=<?= $e($payment['receipt_number']) ?>"><?= $e($payment['receipt_number']) ?></a><?php else: ?><span class="mono"><?= $e($payment['receipt_number']) ?></span><?php endif; ?><?php if ($payment['external_reference'] !== null): ?><span class="cell-sub mono"><?= $e($payment['external_reference']) ?></span><?php endif; ?></td>
+                        </tr>
+<?php endforeach; ?>
+<?php if (!$payments): ?>
+                        <tr><td class="empty-state" colspan="6">No payments yet.</td></tr>
+<?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+<?php if ($canRecordBalance): ?>
+            <form class="toolbar" method="post" action="/rentals/payment" data-confirm="Record this payment toward the balance? It cannot be changed afterwards." data-confirm-action="Record payment">
+                <?= $csrf ?>
+                <label class="field"><span class="field-label">Paid by</span>
+                    <select name="method">
+<?php foreach ($staffMethods as $methodKey => $method): ?>
+                        <option value="<?= $e($methodKey) ?>"<?= $methodKey === 'cash' ? ' selected' : '' ?>><?= $e($method['label']) ?></option>
+<?php endforeach; ?>
+                    </select>
+                </label>
+                <label class="field"><span class="field-label">Amount (₱)</span><input name="amount" type="number" min="0.01" max="<?= $e(number_format($outstanding, 2, '.', '')) ?>" step="0.01" value="<?= $e(number_format($outstanding, 2, '.', '')) ?>" required></label>
+                <label class="field"><span class="field-label">Reference number</span><input name="reference" maxlength="40" autocomplete="off" pattern="[A-Za-z0-9 \-]{6,40}"><small class="field-hint">Leave it blank for cash.</small></label>
+                <button class="button button-primary" type="submit">Record balance payment</button>
+            </form>
+<?php elseif ($owesBalance && !$closed): ?>
+            <p class="panel-note muted"><?= $s === 'reserved' ? 'The balance is recorded here once the reservation is confirmed.' : 'Finance or an administrator records the balance here when the customer pays it.' ?></p>
 <?php endif; ?>
         </section>
 
@@ -430,6 +624,11 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
                     <div><dt><?= $e(Format::plural((int) $agreement['rental_days'], 'day')) ?> × <?= $e(Format::money($agreement['daily_rate'] ?? null)) ?></dt><dd><?= $e(Format::money($agreement['base_amount'])) ?></dd></div>
                     <div><dt>Charges and discounts</dt><dd><?= $e(Format::money($extras)) ?></dd></div>
                     <div class="facts-total"><dt>Total to bill</dt><dd><?= $e(Format::money($total)) ?></dd></div>
+<?php if ($downpaymentRequired): ?>
+                    <div><dt>Downpayment (<?= $e(strtolower(Status::label($downpayment))) ?>)</dt><dd><?= $e(Format::money($agreement['downpayment_amount'])) ?></dd></div>
+                    <div><dt>Balance due at pickup</dt><dd><?= $e(Format::money($balanceAtPickup)) ?></dd></div>
+<?php endif; ?>
+                    <div><dt>Received so far</dt><dd><?= $e(Format::money($paidTotal)) ?></dd></div>
                     <div><dt>Security deposit</dt><dd><?= $e(Format::money($agreement['security_deposit_amount'])) ?></dd></div>
                     <div><dt>Deposit status</dt><dd><?= $e(Status::label($agreement['deposit_status'])) ?></dd></div>
                 </dl>
@@ -454,7 +653,7 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
         </section>
 <?php if ($canOps): ?>
         <section class="panel">
-            <div class="panel-heading"><div><h2>Customer’s booking link</h2><p>Sends an SMS with a secure link to view this booking. The customer needs a primary phone number.</p></div></div>
+            <div class="panel-heading"><div><h2>Customer’s booking link</h2><p>Sends a secure link to the customer’s booking page, where they see what to pay and send their proof. The customer needs a primary phone number. They can also open it with reference <span class="mono"><?= $e($agreement['booking_reference']) ?></span> and their mobile number.</p></div></div>
             <div class="panel-body">
                 <form method="post" action="/rentals/link">
                     <?= $csrf ?>

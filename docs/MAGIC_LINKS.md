@@ -1,5 +1,7 @@
 # Shared Magic-Link Infrastructure
 
+> **Table names changed on 2026-10-01** (migrations 013 to 017). This document uses the names from when it was written. The table "Was / Now" in the README section "Schema consolidation" says where each one lives now.
+
 This feature builds the no-customer-account access layer in the approved plan order. Booking and hold rows do not exist yet. Tokens therefore use the configured TTL until a future caller associates them with a booking; `booking_id` is present now and reserved for that integration.
 
 ## File trace
@@ -33,7 +35,7 @@ This feature builds the no-customer-account access layer in the approved plan or
 |---|---|---|
 | `id` | `BIGINT UNSIGNED AUTO_INCREMENT` | Internal primary key |
 | `token_hash` | `CHAR(64) CHARACTER SET ascii COLLATE ascii_bin` | Unique SHA-256 hex digest; raw token is never stored in this table |
-| `purpose` | `VARCHAR(64)` | One of `booking_manage`, `accept_rules`, `submit_payment`; checked against the expected purpose during redemption |
+| `purpose` | `VARCHAR(64)` | `booking_manage`, the only purpose with a page behind it; checked against the expected purpose during redemption. (`accept_rules` and `submit_payment` were reserved for an online-payment feature that was never built, and were removed on 2026-10-02.) |
 | `booking_id` | `BIGINT UNSIGNED NULL` | Reserved for Feature C; no FK before the bookings table exists |
 | `expires_at` | `DATETIME(6)` | UTC TTL expiry; when linked to a booking it is reduced to the hold expiry if earlier |
 | `used_at` | `DATETIME(6) NULL` | Set once by the conditional single-use redemption write |

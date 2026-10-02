@@ -10,6 +10,7 @@ use TripleR\Repositories\NotificationRepository;
 use TripleR\Repositories\RulesAcceptanceRepository;
 use TripleR\Services\Sms\SmsProviderException;
 use TripleR\Services\Sms\SmsProviderFactory;
+use TripleR\Services\Telegram\TelegramChatUnavailableException;
 use TripleR\Support\PhoneNumber;
 
 final class NotificationService
@@ -19,8 +20,16 @@ final class NotificationService
         private readonly InboundSmsEventRepository $inboundEvents,
         private readonly SmsMessageCipher $messageCipher,
         private readonly ?RulesAcceptanceRepository $rulesAcceptances = null,
+        private readonly ?TelegramLinkService $telegram = null,
     ) {
     }
+
+    /**
+     * Queues one message for a customer. When $customerId is given and that customer has an
+     * active Telegram connection, the message is addressed to Telegram; otherwise it takes the
+     * SMS route. Either way the phone number stays on the row, so the daily limit, the
+     * idempotency key and the staff history work the same for both channels.
+     */
 
     public function enqueue(
         string $recipient,
@@ -30,6 +39,7 @@ final class NotificationService
         string $priority = 'normal',
         ?string $idempotencyKey = null,
         bool $encryptAtRest = false,
+        ?int $customerId = null,
     ): int {
         $phone = PhoneNumber::normalize($recipient);
         if (!in_array($messageClass, ['transactional', 'non_transactional'], true)) {
@@ -47,8 +57,14 @@ final class NotificationService
         if ($idempotencyKey !== null && (trim($idempotencyKey) === '' || mb_strlen($idempotencyKey) > 191)) {
             throw new \InvalidArgumentException('The SMS idempotency key must contain 1 to 191 characters.');
         }
+        $link = $customerId !== null && $this->telegram !== null && $this->telegram->isConfigured()
+            ? $this->telegram->activeLink($customerId)
+            : null;
         $entry = [
             'recipient_phone' => $phone,
+            'customer_id' => $customerId,
+            'channel' => $link === null ? 'sms' : 'telegram',
+            'telegram_link_id' => $link === null ? null : (int) $link['link_id'],
             'idempotency_key' => $idempotencyKey,
             'template_key' => $templateKey,
             'message' => $message,
@@ -56,9 +72,9 @@ final class NotificationService
             'encrypt_at_rest' => true,
             'message_class' => $messageClass,
             'priority' => $priority,
-            'provider' => strtolower(Config::get('SMS_PROVIDER', 'semaphore') ?? 'semaphore'),
+            'provider' => $link === null ? strtolower(Config::get('SMS_PROVIDER', 'semaphore') ?? 'semaphore') : 'telegram',
         ];
-        if (!in_array($entry['provider'], ['semaphore', 'philsms'], true)) {
+        if (!in_array($entry['provider'], ['semaphore', 'philsms', 'telegram'], true)) {
             throw new \InvalidArgumentException('SMS_PROVIDER must be semaphore or philsms.');
         }
 
@@ -104,14 +120,15 @@ final class NotificationService
     public function processBatch(int $batchSize = 25): array
     {
         $configuredProvider = strtolower(Config::get('SMS_PROVIDER', 'semaphore') ?? 'semaphore');
-        if (!in_array($configuredProvider, ['semaphore', 'philsms'], true)) {
+        // A wrong SMS setting must not hold back messages that are going to Telegram.
+        if (!in_array($configuredProvider, ['semaphore', 'philsms'], true) && $this->notifications->hasDueQueuedOnChannel('sms')) {
             throw new \RuntimeException('SMS_PROVIDER must be semaphore or philsms.');
         }
         if ($this->notifications->hasDueEncryptedQueued() && !$this->messageCipher->canDecryptConfiguredKey()) {
             throw new \RuntimeException('A valid SMS_CIPHER_KEY is required before encrypted SMS can be sent.');
         }
         $claimed = $this->notifications->claimBatch($batchSize);
-        $result = ['claimed' => count($claimed), 'sent' => 0, 'suppressed' => 0, 'failed' => 0, 'retrying' => 0];
+        $result = ['claimed' => count($claimed), 'sent' => 0, 'suppressed' => 0, 'failed' => 0, 'retrying' => 0, 'rerouted' => 0];
         if ($claimed === []) {
             return $result;
         }
@@ -119,6 +136,8 @@ final class NotificationService
         foreach ($claimed as $item) {
             $id = (int) $item['id'];
             $token = (string) $item['claim_token'];
+            $viaTelegram = ($item['channel'] ?? 'sms') === 'telegram';
+            $linkId = (int) ($item['telegram_link_id'] ?? 0);
             try {
                 $provider = SmsProviderFactory::create((string) $item['provider']);
                 if ($item['message_class'] === 'non_transactional') {
@@ -148,10 +167,24 @@ final class NotificationService
                     }
                     continue;
                 }
-                $sent = $provider->send((string) $item['recipient_phone'], $message, (string) $item['priority']);
-                if ($this->notifications->markSent($id, $token, $sent['message_id'], $sent['status'])) {
+                $recipient = (string) $item['recipient_phone'];
+                if ($viaTelegram) {
+                    $chatId = $this->telegram?->chatIdForLink($linkId);
+                    if ($chatId === null) {
+                        $this->fallBackFromTelegram($item, $result); // Disconnected after this was queued.
+                        continue;
+                    }
+                    $recipient = $chatId;
+                }
+                $sent = $provider->send($recipient, $message, (string) $item['priority']);
+                // Telegram numbers messages per chat, so its ids are made unique with the connection id.
+                $messageId = $viaTelegram ? 'tg:' . $linkId . ':' . $sent['message_id'] : $sent['message_id'];
+                if ($this->notifications->markSent($id, $token, $messageId, $sent['status'])) {
                     $result['sent']++;
                 }
+            } catch (TelegramChatUnavailableException) {
+                $this->telegram?->disconnectBlocked($linkId);
+                $this->fallBackFromTelegram($item, $result);
             } catch (SmsProviderException $error) {
                 $this->recordFailure($item, $error->getMessage(), $error->retryable, $result);
             } catch (\Throwable $error) {
@@ -166,6 +199,23 @@ final class NotificationService
             }
         }
         return $result;
+    }
+
+    /** The customer's Telegram connection is gone: use SMS when a provider is set up, else fail plainly. */
+    private function fallBackFromTelegram(array $item, array &$result): void
+    {
+        $id = (int) $item['id'];
+        $token = (string) $item['claim_token'];
+        if (SmsProviderFactory::smsConfigured()) {
+            $provider = strtolower(Config::get('SMS_PROVIDER', 'semaphore') ?? 'semaphore');
+            if ($this->notifications->rerouteToSms($id, $token, $provider, 'The customer\'s Telegram connection has ended; sending by SMS instead.')) {
+                $result['rerouted']++;
+            }
+            return;
+        }
+        if ($this->notifications->markFailure($id, $token, 'Not delivered: the customer\'s Telegram connection has ended and no SMS provider is set up.', false, 1)) {
+            $result['failed']++;
+        }
     }
 
     private function recordFailure(array $item, string $message, bool $retryable, array &$result, bool $preserveEncrypted = false): void

@@ -27,11 +27,17 @@ CREATE TABLE users (
     KEY idx_users_active_role (is_active,role,deleted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE rate_limits (
-    limiter_key CHAR(64) NOT NULL,
+-- Every counter that limits how often something may happen, told apart by scope:
+--   throttle            counter_key = the limiter's hashed key; the window restarts in place
+--   message_daily       counter_key = "<phone>|<date>"; one row per phone per day
+--   magic_link_booking  counter_key = the agreement id; counts secure links for the booking's life
+CREATE TABLE rate_counters (
+    scope VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    counter_key VARCHAR(80) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     window_started_at DATETIME NOT NULL,
-    attempts INT UNSIGNED NOT NULL DEFAULT 0,
-    PRIMARY KEY (limiter_key)
+    hits INT UNSIGNED NOT NULL DEFAULT 0,
+    PRIMARY KEY (scope, counter_key),
+    CONSTRAINT chk_rate_counters_scope CHECK (scope IN ('throttle','message_daily','magic_link_booking'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE sessions (
@@ -54,6 +60,7 @@ CREATE TABLE security_logs (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     actor_user_id BIGINT UNSIGNED NULL,
     subject_user_id BIGINT UNSIGNED NULL,
+    token_id BIGINT UNSIGNED NULL,
     email_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
     event_type VARCHAR(64) NOT NULL,
     ip_address VARCHAR(45) NULL,
@@ -63,6 +70,7 @@ CREATE TABLE security_logs (
     KEY idx_security_logs_actor_time (actor_user_id,created_at),
     KEY idx_security_logs_subject_time (subject_user_id,created_at),
     KEY idx_security_logs_event_time (event_type,created_at),
+    KEY idx_security_logs_token_time (token_id,created_at),
     CONSTRAINT fk_security_logs_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE RESTRICT,
     CONSTRAINT fk_security_logs_subject FOREIGN KEY (subject_user_id) REFERENCES users(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
@@ -122,22 +130,6 @@ CREATE TABLE vehicles (
     CONSTRAINT chk_vehicles_body_type CHECK (body_type IN ('sedan','SUV','van','pickup','hatchback'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE vehicle_status_logs (
-    status_log_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    vehicle_id BIGINT UNSIGNED NOT NULL,
-    old_status ENUM('available','rented','maintenance','reserved','cleaning','out_of_service','retired') NULL,
-    new_status ENUM('available','rented','maintenance','reserved','cleaning','out_of_service','retired') NOT NULL,
-    location_id BIGINT UNSIGNED NULL,
-    mileage INT UNSIGNED NULL,
-    actor_user_id BIGINT UNSIGNED NOT NULL,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    PRIMARY KEY (status_log_id),
-    KEY idx_vehicle_status_history (vehicle_id,created_at,status_log_id),
-    CONSTRAINT fk_vehicle_status_vehicle FOREIGN KEY (vehicle_id) REFERENCES vehicles(vehicle_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_vehicle_status_location FOREIGN KEY (location_id) REFERENCES vehicle_locations(location_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_vehicle_status_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
 CREATE TABLE vehicle_mileage_logs (
     mileage_log_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     vehicle_id BIGINT UNSIGNED NOT NULL,
@@ -156,24 +148,6 @@ CREATE TABLE vehicle_mileage_logs (
     CONSTRAINT fk_vehicle_mileage_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE RESTRICT,
     CONSTRAINT fk_vehicle_mileage_correction FOREIGN KEY (vehicle_id,correction_of_log_id) REFERENCES vehicle_mileage_logs(vehicle_id,mileage_log_id) ON DELETE RESTRICT,
     CONSTRAINT chk_vehicle_mileage_correction CHECK ((correction_of_log_id IS NULL AND correction_reason IS NULL) OR (correction_of_log_id IS NOT NULL AND correction_reason IS NOT NULL AND CHAR_LENGTH(TRIM(correction_reason)) > 0))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
-CREATE TABLE vehicle_photos (
-    photo_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    vehicle_id BIGINT UNSIGNED NOT NULL,
-    storage_path VARCHAR(500) NOT NULL,
-    original_filename VARCHAR(255) NOT NULL,
-    mime VARCHAR(100) NOT NULL,
-    size_bytes BIGINT UNSIGNED NOT NULL,
-    sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 0,
-    uploaded_by BIGINT UNSIGNED NOT NULL,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    PRIMARY KEY (photo_id),
-    UNIQUE KEY uq_vehicle_photo_storage_path (storage_path),
-    KEY idx_vehicle_photos_order (vehicle_id,sort_order,photo_id),
-    CONSTRAINT fk_vehicle_photos_vehicle FOREIGN KEY (vehicle_id) REFERENCES vehicles(vehicle_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_vehicle_photos_uploader FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE RESTRICT,
-    CONSTRAINT chk_vehicle_photo_size CHECK (size_bytes > 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ==========================================
@@ -307,29 +281,18 @@ CREATE TABLE driver_contacts (
     CONSTRAINT chk_driver_contact_primary CHECK (is_primary IN (0,1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE driver_status_logs (
-    status_log_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    driver_id BIGINT UNSIGNED NOT NULL,
-    old_status ENUM('active','inactive') NULL,
-    new_status ENUM('active','inactive') NOT NULL,
-    actor_user_id BIGINT UNSIGNED NOT NULL,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    PRIMARY KEY (status_log_id),
-    KEY idx_driver_status_history (driver_id,created_at,status_log_id),
-    CONSTRAINT fk_driver_status_driver FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_driver_status_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
 -- ==========================================
 -- RENTAL AGREEMENTS, CHARGES, AND HISTORIES
 -- ==========================================
 
 CREATE TABLE rental_agreements (
     agreement_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    booking_reference CHAR(8) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
     customer_id BIGINT UNSIGNED NOT NULL,
     vehicle_id BIGINT UNSIGNED NOT NULL,
     driver_id BIGINT UNSIGNED NULL,
     rental_type ENUM('self_drive','chauffeur') NOT NULL DEFAULT 'self_drive',
+    booking_source ENUM('staff','online') NOT NULL DEFAULT 'staff',
     start_date DATE NOT NULL,
     end_date DATE NOT NULL,
     scheduled_pickup_at DATETIME(6) NULL,
@@ -341,6 +304,8 @@ CREATE TABLE rental_agreements (
     base_amount DECIMAL(18,2) GENERATED ALWAYS AS (GREATEST(DATEDIFF(end_date,start_date),1)*daily_rate) STORED,
     security_deposit_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     deposit_status ENUM('not_required','due','held','released','refunded','forfeited') NOT NULL DEFAULT 'not_required',
+    downpayment_amount DECIMAL(18,2) NOT NULL DEFAULT 0.00,
+    downpayment_status ENUM('not_required','due','received') NOT NULL DEFAULT 'not_required',
     hold_expires_at DATETIME(6) NULL,
     status ENUM('reserved','confirmed','active','returned','completed','cancelled','no_show') NOT NULL DEFAULT 'reserved',
     created_by_user_id BIGINT UNSIGNED NOT NULL,
@@ -351,6 +316,7 @@ CREATE TABLE rental_agreements (
     KEY idx_rentals_customer_status (customer_id,status),
     KEY idx_rentals_status_dates (status,start_date,end_date),
     KEY idx_rentals_driver_dates (driver_id,start_date,end_date,status),
+    UNIQUE KEY uq_rentals_booking_reference (booking_reference),
     CONSTRAINT fk_rentals_customer FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON DELETE RESTRICT,
     CONSTRAINT fk_rentals_vehicle FOREIGN KEY (vehicle_id) REFERENCES vehicles(vehicle_id) ON DELETE RESTRICT,
     CONSTRAINT fk_rentals_driver FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE RESTRICT,
@@ -361,7 +327,11 @@ CREATE TABLE rental_agreements (
     CONSTRAINT chk_rentals_scheduled_times CHECK (scheduled_pickup_at IS NULL OR scheduled_return_at IS NULL OR scheduled_return_at >= scheduled_pickup_at),
     CONSTRAINT chk_rentals_actual_times CHECK (actual_pickup_at IS NULL OR actual_return_at IS NULL OR actual_return_at >= actual_pickup_at),
     CONSTRAINT chk_rentals_driver_type CHECK (rental_type <> 'self_drive' OR driver_id IS NULL),
-    CONSTRAINT chk_rentals_chauffeur_driver CHECK (rental_type <> 'chauffeur' OR status IN ('reserved','cancelled','no_show') OR driver_id IS NOT NULL)
+    CONSTRAINT chk_rentals_chauffeur_driver CHECK (rental_type <> 'chauffeur' OR status IN ('reserved','cancelled','no_show') OR driver_id IS NOT NULL),
+    CONSTRAINT chk_rentals_downpayment CHECK (
+        (downpayment_status = 'not_required' AND downpayment_amount = 0)
+        OR (downpayment_status IN ('due','received') AND downpayment_amount > 0)
+    )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE rental_charges (
@@ -372,69 +342,92 @@ CREATE TABLE rental_charges (
     amount DECIMAL(10,2) NOT NULL,
     description VARCHAR(500) NOT NULL,
     reverses_charge_id BIGINT UNSIGNED NULL,
+    damage_decision_id BIGINT UNSIGNED NULL,
+    damage_adjustment_reason VARCHAR(500) NULL,
     created_by_user_id BIGINT UNSIGNED NOT NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     PRIMARY KEY (charge_id),
     UNIQUE KEY uq_rental_charge_reversal (reverses_charge_id),
+    UNIQUE KEY uq_rental_charge_damage_decision (damage_decision_id),
     KEY idx_rental_charges_agreement (agreement_id,created_at,charge_id),
     CONSTRAINT fk_rental_charges_agreement FOREIGN KEY (agreement_id) REFERENCES rental_agreements(agreement_id) ON DELETE RESTRICT,
     CONSTRAINT fk_rental_charges_reversal FOREIGN KEY (reverses_charge_id) REFERENCES rental_charges(charge_id) ON DELETE RESTRICT,
     CONSTRAINT fk_rental_charges_actor FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT,
     CONSTRAINT chk_rental_charge_amount CHECK (amount > 0),
     CONSTRAINT chk_rental_charge_description CHECK (CHAR_LENGTH(TRIM(description)) > 0),
-    CONSTRAINT chk_rental_charge_reversal CHECK ((entry_kind='charge' AND reverses_charge_id IS NULL) OR (entry_kind='reversal' AND reverses_charge_id IS NOT NULL))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
-CREATE TABLE rental_status_logs (
-    status_log_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    agreement_id BIGINT UNSIGNED NOT NULL,
-    old_status ENUM('reserved','confirmed','active','returned','completed','cancelled','no_show') NULL,
-    new_status ENUM('reserved','confirmed','active','returned','completed','cancelled','no_show') NOT NULL,
-    reason VARCHAR(500) NULL,
-    actor_user_id BIGINT UNSIGNED NOT NULL,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    PRIMARY KEY (status_log_id),
-    KEY idx_rental_status_history (agreement_id,created_at,status_log_id),
-    CONSTRAINT fk_rental_status_agreement FOREIGN KEY (agreement_id) REFERENCES rental_agreements(agreement_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_rental_status_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE RESTRICT,
-    CONSTRAINT chk_rental_status_reason CHECK ((new_status IN ('cancelled','no_show') AND reason IS NOT NULL AND CHAR_LENGTH(TRIM(reason))>0) OR new_status NOT IN ('cancelled','no_show'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
-CREATE TABLE deposit_status_logs (
-    deposit_log_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    agreement_id BIGINT UNSIGNED NOT NULL,
-    old_status ENUM('not_required','due','held','released','refunded','forfeited') NULL,
-    new_status ENUM('not_required','due','held','released','refunded','forfeited') NOT NULL,
-    old_amount DECIMAL(10,2) NULL,
-    new_amount DECIMAL(10,2) NOT NULL,
-    reason VARCHAR(500) NOT NULL,
-    actor_user_id BIGINT UNSIGNED NOT NULL,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    PRIMARY KEY (deposit_log_id),
-    KEY idx_deposit_history (agreement_id,created_at,deposit_log_id),
-    CONSTRAINT fk_deposit_log_agreement FOREIGN KEY (agreement_id) REFERENCES rental_agreements(agreement_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_deposit_log_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE RESTRICT,
-    CONSTRAINT chk_deposit_log_amount CHECK (new_amount >= 0),
-    CONSTRAINT chk_deposit_log_reason CHECK (CHAR_LENGTH(TRIM(reason)) > 0)
+    CONSTRAINT chk_rental_charge_reversal CHECK ((entry_kind='charge' AND reverses_charge_id IS NULL) OR (entry_kind='reversal' AND reverses_charge_id IS NOT NULL)),
+    CONSTRAINT chk_rental_charge_damage_decision CHECK (damage_decision_id IS NULL OR (charge_type = 'damage' AND entry_kind = 'charge')),
+    CONSTRAINT chk_rental_charge_damage_reason CHECK (damage_adjustment_reason IS NULL OR damage_decision_id IS NOT NULL)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ==========================================
--- SMS, NOTIFICATIONS, AND MAGIC LINKS
+-- SMS, TELEGRAM, NOTIFICATIONS, AND MAGIC LINKS
 -- ==========================================
 
-CREATE TABLE sms_daily_budgets (
-    recipient_phone VARCHAR(20) NOT NULL,
-    budget_date DATE NOT NULL,
-    message_count INT UNSIGNED NOT NULL DEFAULT 0,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (recipient_phone,budget_date)
+-- One-time Telegram connection codes. Only the SHA-256 hash of a code is stored.
+CREATE TABLE telegram_link_codes (
+    code_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    customer_id BIGINT UNSIGNED NOT NULL,
+    code_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    expires_at DATETIME(6) NOT NULL,
+    used_at DATETIME(6) NULL,
+    created_by_user_id BIGINT UNSIGNED NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (code_id),
+    UNIQUE KEY uq_telegram_link_codes_hash (code_hash),
+    KEY idx_telegram_link_codes_customer (customer_id,used_at,expires_at),
+    CONSTRAINT fk_telegram_link_codes_customer FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_telegram_link_codes_creator FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- One row per Telegram connection; ending one marks it revoked and a new connection is a new
+-- row. The generated columns make "one active connection per customer" and "one active
+-- customer per chat" database rules (NULL when revoked, so history rows never collide).
+CREATE TABLE customer_telegram_links (
+    link_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    customer_id BIGINT UNSIGNED NOT NULL,
+    chat_id_ciphertext VARBINARY(255) NOT NULL,
+    chat_fingerprint CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    link_status ENUM('active','revoked') NOT NULL DEFAULT 'active',
+    code_id BIGINT UNSIGNED NULL,
+    linked_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    revoked_at DATETIME(6) NULL,
+    revoked_reason ENUM('customer_stop','staff','bot_blocked','relinked') NULL,
+    revoked_by_user_id BIGINT UNSIGNED NULL,
+    active_customer_id BIGINT UNSIGNED GENERATED ALWAYS AS (CASE WHEN link_status = 'active' THEN customer_id END) STORED,
+    active_chat_fingerprint CHAR(64) CHARACTER SET ascii COLLATE ascii_bin GENERATED ALWAYS AS (CASE WHEN link_status = 'active' THEN chat_fingerprint END) STORED,
+    PRIMARY KEY (link_id),
+    UNIQUE KEY uq_telegram_links_active_customer (active_customer_id),
+    UNIQUE KEY uq_telegram_links_active_chat (active_chat_fingerprint),
+    KEY idx_telegram_links_customer (customer_id,link_status,linked_at),
+    KEY idx_telegram_links_chat (chat_fingerprint,link_status),
+    CONSTRAINT fk_telegram_links_customer FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_telegram_links_code FOREIGN KEY (code_id) REFERENCES telegram_link_codes(code_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_telegram_links_revoker FOREIGN KEY (revoked_by_user_id) REFERENCES users(id) ON DELETE RESTRICT,
+    CONSTRAINT chk_telegram_links_revocation CHECK (
+        (link_status = 'active' AND revoked_at IS NULL AND revoked_reason IS NULL AND revoked_by_user_id IS NULL)
+        OR (link_status = 'revoked' AND revoked_at IS NOT NULL AND revoked_reason IS NOT NULL)
+    )
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- Inbound bot updates, keyed by Telegram's own update_id. Message text is deliberately not stored.
+CREATE TABLE telegram_updates (
+    update_id BIGINT UNSIGNED NOT NULL,
+    chat_fingerprint CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
+    event_type VARCHAR(40) NOT NULL,
+    outcome VARCHAR(40) NOT NULL DEFAULT 'received',
+    received_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (update_id),
+    KEY idx_telegram_updates_chat (chat_fingerprint,received_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE notifications (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     recipient_phone VARCHAR(20) NOT NULL,
+    customer_id BIGINT UNSIGNED NULL,
+    telegram_link_id BIGINT UNSIGNED NULL,
     idempotency_key VARCHAR(191) NULL,
-    channel ENUM('sms') NOT NULL DEFAULT 'sms',
+    channel ENUM('sms','telegram') NOT NULL DEFAULT 'sms',
     template_key VARCHAR(80) NOT NULL,
     rendered_message TEXT NOT NULL,
     message_class ENUM('transactional','non_transactional') NOT NULL,
@@ -458,7 +451,11 @@ CREATE TABLE notifications (
     UNIQUE KEY uq_notifications_provider_message_id (provider_message_id),
     KEY idx_notifications_queue (status,next_attempt_at,priority,created_at),
     KEY idx_notifications_recipient_created (recipient_phone,created_at),
-    KEY idx_notifications_class_status (message_class,status)
+    KEY idx_notifications_class_status (message_class,status),
+    KEY idx_notifications_customer (customer_id,created_at),
+    CONSTRAINT fk_notifications_customer FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_notifications_telegram_link FOREIGN KEY (telegram_link_id) REFERENCES customer_telegram_links(link_id) ON DELETE RESTRICT,
+    CONSTRAINT chk_notifications_telegram_link CHECK (channel <> 'telegram' OR telegram_link_id IS NOT NULL)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE inbound_sms_events (
@@ -475,18 +472,139 @@ CREATE TABLE inbound_sms_events (
     KEY idx_inbound_sms_sender_type (sender_number,event_type,received_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+-- The text of each policy a customer can be asked to accept, one row per version, never edited.
+CREATE TABLE rules_versions (
+    rules_version_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    rules_key VARCHAR(40) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
+    version_number INT UNSIGNED NOT NULL,
+    title VARCHAR(160) NOT NULL,
+    body TEXT NOT NULL,
+    published_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (rules_version_id),
+    UNIQUE KEY uq_rules_versions_key_number (rules_key, version_number),
+    CONSTRAINT chk_rules_versions_number CHECK (version_number > 0),
+    CONSTRAINT chk_rules_versions_text CHECK (CHAR_LENGTH(TRIM(title)) > 0 AND CHAR_LENGTH(TRIM(body)) > 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+INSERT INTO rules_versions (rules_key, version_number, title, body) VALUES
+('downpayment_policy', 1, 'Downpayment policy',
+ 'To reserve a vehicle you pay a downpayment of 30% of the rental cost by GCash. The downpayment is non-refundable, including when you cancel the booking or do not pick up the vehicle. Your reservation is confirmed only after the rental office has checked your payment. A reservation that is not paid within 24 hours is released. The remaining balance is paid in person when you pick up the vehicle.');
+-- Version 2 no longer names GCash as the only way to pay. Bookings made under version 1 keep it.
+INSERT INTO rules_versions (rules_key, version_number, title, body) VALUES
+('downpayment_policy', 2, 'Downpayment policy',
+ 'To reserve a vehicle you pay a downpayment of 30% of the rental cost, by any payment method the rental office accepts. The downpayment is non-refundable, including when you cancel the booking or do not pick up the vehicle. Your reservation is confirmed only after the rental office has received your payment. A reservation that is not paid within 24 hours is released. The remaining balance is paid when you pick up the vehicle.');
+
+-- Consent evidence, append-only. 'revoked' rows are SMS STOP replies; 'accepted' rows record
+-- which policy version a customer accepted for which booking, and from where.
 CREATE TABLE rules_acceptances (
     acceptance_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     phone VARCHAR(20) NOT NULL,
-    action ENUM('revoked') NOT NULL DEFAULT 'revoked',
-    inbound_sms_event_id BIGINT UNSIGNED NOT NULL,
-    provider_message_id VARCHAR(191) NOT NULL,
+    action ENUM('revoked','accepted') NOT NULL DEFAULT 'revoked',
+    rules_version_id BIGINT UNSIGNED NULL,
+    agreement_id BIGINT UNSIGNED NULL,
+    inbound_sms_event_id BIGINT UNSIGNED NULL,
+    provider_message_id VARCHAR(191) NULL,
+    ip_address VARCHAR(45) NULL,
+    user_agent VARCHAR(512) NULL,
     recorded_at DATETIME(6) NOT NULL,
     PRIMARY KEY (acceptance_id),
     UNIQUE KEY uq_rules_provider_msg (phone,provider_message_id),
     UNIQUE KEY uq_rules_event (inbound_sms_event_id),
+    UNIQUE KEY uq_rules_acceptance_agreement_version (agreement_id,rules_version_id),
     KEY idx_rules_phone_action (phone,action,recorded_at),
-    CONSTRAINT fk_rules_inbound_event FOREIGN KEY (inbound_sms_event_id) REFERENCES inbound_sms_events(id) ON DELETE RESTRICT
+    CONSTRAINT fk_rules_inbound_event FOREIGN KEY (inbound_sms_event_id) REFERENCES inbound_sms_events(id) ON DELETE RESTRICT,
+    CONSTRAINT fk_rules_acceptance_version FOREIGN KEY (rules_version_id) REFERENCES rules_versions(rules_version_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_rules_acceptance_agreement FOREIGN KEY (agreement_id) REFERENCES rental_agreements(agreement_id) ON DELETE RESTRICT,
+    CONSTRAINT chk_rules_acceptance_kind CHECK (
+        (action = 'revoked' AND inbound_sms_event_id IS NOT NULL AND provider_message_id IS NOT NULL AND rules_version_id IS NULL AND agreement_id IS NULL)
+        OR (action = 'accepted' AND rules_version_id IS NOT NULL AND agreement_id IS NOT NULL AND inbound_sms_event_id IS NULL AND provider_message_id IS NULL)
+    )
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- One row per proof a customer submits. The generated column lets the database allow only
+-- one proof per booking to be waiting for a decision at a time.
+CREATE TABLE payment_proofs (
+    proof_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    agreement_id BIGINT UNSIGNED NOT NULL,
+    reference_number VARCHAR(40) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
+    storage_path VARCHAR(500) NOT NULL,
+    original_filename VARCHAR(255) NOT NULL,
+    mime VARCHAR(100) NOT NULL,
+    size_bytes BIGINT UNSIGNED NOT NULL,
+    proof_status ENUM('submitted','verified','rejected') NOT NULL DEFAULT 'submitted',
+    submitted_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    submitted_ip VARCHAR(45) NULL,
+    reviewed_by BIGINT UNSIGNED NULL,
+    reviewed_at DATETIME(6) NULL,
+    review_note VARCHAR(500) NULL,
+    pending_agreement_id BIGINT UNSIGNED GENERATED ALWAYS AS (CASE WHEN proof_status = 'submitted' THEN agreement_id END) STORED,
+    PRIMARY KEY (proof_id),
+    UNIQUE KEY uq_payment_proofs_storage_path (storage_path),
+    UNIQUE KEY uq_payment_proofs_one_pending (pending_agreement_id),
+    KEY idx_payment_proofs_agreement (agreement_id, submitted_at, proof_id),
+    KEY idx_payment_proofs_queue (proof_status, submitted_at),
+    CONSTRAINT fk_payment_proofs_agreement FOREIGN KEY (agreement_id) REFERENCES rental_agreements(agreement_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_payment_proofs_reviewer FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE RESTRICT,
+    CONSTRAINT chk_payment_proofs_size CHECK (size_bytes > 0),
+    CONSTRAINT chk_payment_proofs_review CHECK (
+        (proof_status = 'submitted' AND reviewed_by IS NULL AND reviewed_at IS NULL AND review_note IS NULL)
+        OR (proof_status = 'verified' AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL)
+        OR (proof_status = 'rejected' AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL AND review_note IS NOT NULL AND CHAR_LENGTH(TRIM(review_note)) > 0)
+    )
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- Every payment received and every online attempt, for any method.
+--   channel 'staff'        finance recorded it: money at the counter, or a customer's GCash proof
+--                          that finance verified (proof_id then names that proof)
+--   channel 'online_demo'  paid on the simulated checkout; no real money moves, and the channel
+--                          is stored so a simulated payment is never mistaken for a real one
+--   purpose 'downpayment'  the 30% that must be in before a reservation is confirmed
+--   purpose 'balance'      the rest, received at the counter
+-- The generated columns let the database allow one payment in progress per booking, and one
+-- paid downpayment per booking, ever.
+CREATE TABLE payments (
+    payment_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    agreement_id BIGINT UNSIGNED NOT NULL,
+    purpose ENUM('downpayment','balance') NOT NULL,
+    channel ENUM('staff','online_demo') NOT NULL,
+    method ENUM('cash','gcash','maya','grabpay','card','online_banking') NOT NULL,
+    method_detail VARCHAR(60) NULL,
+    amount DECIMAL(18,2) NOT NULL,
+    payment_status ENUM('pending','paid','failed','cancelled','expired') NOT NULL,
+    receipt_number CHAR(12) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
+    external_reference VARCHAR(40) CHARACTER SET ascii COLLATE ascii_general_ci NULL,
+    failure_reason VARCHAR(160) NULL,
+    proof_id BIGINT UNSIGNED NULL,
+    recorded_by BIGINT UNSIGNED NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    expires_at DATETIME(6) NULL,
+    settled_at DATETIME(6) NULL,
+    pending_agreement_id BIGINT UNSIGNED GENERATED ALWAYS AS (CASE WHEN payment_status = 'pending' THEN agreement_id END) STORED,
+    paid_downpayment_agreement_id BIGINT UNSIGNED GENERATED ALWAYS AS (CASE WHEN payment_status = 'paid' AND purpose = 'downpayment' THEN agreement_id END) STORED,
+    PRIMARY KEY (payment_id),
+    UNIQUE KEY uq_payments_receipt_number (receipt_number),
+    UNIQUE KEY uq_payments_external_reference (external_reference),
+    UNIQUE KEY uq_payments_proof (proof_id),
+    UNIQUE KEY uq_payments_one_pending (pending_agreement_id),
+    UNIQUE KEY uq_payments_one_paid_downpayment (paid_downpayment_agreement_id),
+    KEY idx_payments_agreement (agreement_id, created_at, payment_id),
+    KEY idx_payments_status_settled (payment_status, settled_at),
+    CONSTRAINT fk_payments_agreement FOREIGN KEY (agreement_id) REFERENCES rental_agreements(agreement_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_payments_proof FOREIGN KEY (proof_id) REFERENCES payment_proofs(proof_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_payments_recorder FOREIGN KEY (recorded_by) REFERENCES users(id) ON DELETE RESTRICT,
+    CONSTRAINT chk_payments_amount CHECK (amount > 0),
+    -- Staff record money they already hold; an online payment has no staff member and is never cash.
+    CONSTRAINT chk_payments_channel CHECK (
+        (channel = 'staff' AND payment_status = 'paid' AND recorded_by IS NOT NULL AND expires_at IS NULL)
+        OR (channel = 'online_demo' AND method <> 'cash' AND recorded_by IS NULL AND proof_id IS NULL)
+    ),
+    CONSTRAINT chk_payments_state CHECK (
+        (payment_status = 'pending' AND settled_at IS NULL AND failure_reason IS NULL AND external_reference IS NULL AND expires_at IS NOT NULL)
+        OR (payment_status = 'paid' AND settled_at IS NOT NULL AND failure_reason IS NULL AND ((method = 'cash' AND external_reference IS NULL) OR (method <> 'cash' AND external_reference IS NOT NULL AND CHAR_LENGTH(TRIM(external_reference)) > 0)))
+        OR (payment_status = 'failed' AND settled_at IS NOT NULL AND external_reference IS NULL AND failure_reason IS NOT NULL AND CHAR_LENGTH(TRIM(failure_reason)) > 0)
+        OR (payment_status IN ('cancelled','expired') AND settled_at IS NOT NULL AND external_reference IS NULL AND failure_reason IS NULL)
+    ),
+    CONSTRAINT chk_payments_proof CHECK (proof_id IS NULL OR (channel = 'staff' AND method = 'gcash' AND purpose = 'downpayment'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE booking_access_tokens (
@@ -501,27 +619,14 @@ CREATE TABLE booking_access_tokens (
     UNIQUE KEY uq_booking_access_token_hash (token_hash),
     KEY idx_booking_access_token_expiry (expires_at,used_at),
     KEY idx_booking_access_token_booking_purpose (booking_id,purpose,created_at),
+    KEY idx_booking_tokens_booking (booking_id),
     CONSTRAINT fk_booking_tokens_rental FOREIGN KEY (booking_id) REFERENCES rental_agreements(agreement_id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE magic_link_booking_limits (
-    booking_id BIGINT UNSIGNED NOT NULL,
-    issue_count TINYINT UNSIGNED NOT NULL DEFAULT 0,
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-    PRIMARY KEY (booking_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
-CREATE TABLE token_usages (
-    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    token_id BIGINT UNSIGNED NOT NULL,
-    used_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    ip_address VARCHAR(45) NULL,
-    user_agent VARCHAR(512) NULL,
-    action VARCHAR(64) NOT NULL,
-    PRIMARY KEY (id),
-    KEY idx_token_usages_token_time (token_id,used_at),
-    CONSTRAINT fk_token_usages_token FOREIGN KEY (token_id) REFERENCES booking_access_tokens(id) ON DELETE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+-- Each attempt to open a secure link is recorded in security_logs, tied to its token.
+-- (security_logs is created before booking_access_tokens, so the reference is added here.)
+ALTER TABLE security_logs
+    ADD CONSTRAINT fk_security_logs_token FOREIGN KEY (token_id) REFERENCES booking_access_tokens(id) ON DELETE RESTRICT;
 
 -- ==========================================
 -- DAMAGE REPORTING
@@ -548,21 +653,6 @@ CREATE TABLE damage_reports (
     CONSTRAINT chk_damage_fields CHECK ((has_damage=0 AND location IS NULL AND damage_type IS NULL AND severity IS NULL AND repair_cost_suggestion IS NULL) OR (has_damage=1 AND location IS NOT NULL AND CHAR_LENGTH(TRIM(location))>0 AND damage_type IS NOT NULL AND CHAR_LENGTH(TRIM(damage_type))>0 AND severity IS NOT NULL AND (repair_cost_suggestion IS NULL OR repair_cost_suggestion>=0)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE damage_photos (
-    photo_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    report_id BIGINT UNSIGNED NOT NULL,
-    storage_path VARCHAR(500) NOT NULL,
-    original_filename VARCHAR(255) NOT NULL,
-    mime VARCHAR(40) NOT NULL,
-    size_bytes INT UNSIGNED NOT NULL,
-    uploaded_by BIGINT UNSIGNED NOT NULL,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    PRIMARY KEY (photo_id),
-    KEY ix_damage_photo_report (report_id),
-    CONSTRAINT fk_damage_photo_report FOREIGN KEY (report_id) REFERENCES damage_reports(report_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_damage_photo_actor FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
 CREATE TABLE damage_liability_decisions (
     decision_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     report_id BIGINT UNSIGNED NOT NULL,
@@ -577,6 +667,7 @@ CREATE TABLE damage_liability_decisions (
     UNIQUE KEY uq_damage_liability_root (current_root_report_id),
     UNIQUE KEY uq_damage_decision_same_report (report_id,decision_id),
     UNIQUE KEY uq_damage_supersedes_once (supersedes_decision_id),
+    KEY ix_damage_decision_report (report_id,decision_id),
     CONSTRAINT fk_damage_decision_report FOREIGN KEY (report_id) REFERENCES damage_reports(report_id) ON DELETE RESTRICT,
     CONSTRAINT fk_damage_decision_parent FOREIGN KEY (report_id,supersedes_decision_id) REFERENCES damage_liability_decisions(report_id,decision_id) ON DELETE RESTRICT,
     CONSTRAINT fk_damage_decision_actor FOREIGN KEY (decided_by) REFERENCES users(id) ON DELETE RESTRICT,
@@ -584,22 +675,10 @@ CREATE TABLE damage_liability_decisions (
     CONSTRAINT chk_damage_decision_reason CHECK (CHAR_LENGTH(TRIM(reason))>0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE damage_charge_postings (
-    posting_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    decision_id BIGINT UNSIGNED NOT NULL,
-    charge_id BIGINT UNSIGNED NOT NULL,
-    approved_amount DECIMAL(10,2) NOT NULL,
-    adjustment_reason VARCHAR(500) NULL,
-    posted_by BIGINT UNSIGNED NOT NULL,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    PRIMARY KEY (posting_id),
-    UNIQUE KEY uq_damage_charge_decision (decision_id),
-    UNIQUE KEY uq_damage_charge_id (charge_id),
-    CONSTRAINT fk_damage_post_decision FOREIGN KEY (decision_id) REFERENCES damage_liability_decisions(decision_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_damage_post_charge FOREIGN KEY (charge_id) REFERENCES rental_charges(charge_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_damage_post_actor FOREIGN KEY (posted_by) REFERENCES users(id) ON DELETE RESTRICT,
-    CONSTRAINT chk_damage_post_amount CHECK (approved_amount>0)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+-- A damage charge posted from a liability decision is a rental_charges row that carries the
+-- decision. (rental_charges is created before the damage tables, so the reference is added here.)
+ALTER TABLE rental_charges
+    ADD CONSTRAINT fk_rental_charges_damage_decision FOREIGN KEY (damage_decision_id) REFERENCES damage_liability_decisions(decision_id) ON DELETE RESTRICT;
 
 -- ==========================================
 -- APPEND-ONLY AND IDENTITY GUARD TRIGGERS
@@ -608,12 +687,8 @@ CREATE TABLE damage_charge_postings (
 DELIMITER $$
 CREATE TRIGGER inbound_sms_events_no_update BEFORE UPDATE ON inbound_sms_events FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='inbound_sms_events is append-only'; END$$
 CREATE TRIGGER inbound_sms_events_no_delete BEFORE DELETE ON inbound_sms_events FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='inbound_sms_events is append-only'; END$$
-CREATE TRIGGER token_usages_no_update BEFORE UPDATE ON token_usages FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='token_usages is append-only'; END$$
-CREATE TRIGGER token_usages_no_delete BEFORE DELETE ON token_usages FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='token_usages is append-only'; END$$
 CREATE TRIGGER security_logs_no_update BEFORE UPDATE ON security_logs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='security_logs is append-only'; END$$
 CREATE TRIGGER security_logs_no_delete BEFORE DELETE ON security_logs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='security_logs is append-only'; END$$
-CREATE TRIGGER vehicle_status_logs_no_update BEFORE UPDATE ON vehicle_status_logs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='vehicle_status_logs is append-only'; END$$
-CREATE TRIGGER vehicle_status_logs_no_delete BEFORE DELETE ON vehicle_status_logs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='vehicle_status_logs is append-only'; END$$
 CREATE TRIGGER vehicle_mileage_logs_no_update BEFORE UPDATE ON vehicle_mileage_logs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='vehicle_mileage_logs is append-only'; END$$
 CREATE TRIGGER vehicle_mileage_logs_no_delete BEFORE DELETE ON vehicle_mileage_logs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='vehicle_mileage_logs is append-only'; END$$
 CREATE TRIGGER customer_notes_no_update BEFORE UPDATE ON customer_notes FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='customer_notes is append-only'; END$$
@@ -632,14 +707,8 @@ BEGIN
 END$$
 CREATE TRIGGER customer_identity_document_audit_logs_no_update BEFORE UPDATE ON customer_identity_document_audit_logs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='customer_identity_document_audit_logs is append-only'; END$$
 CREATE TRIGGER customer_identity_document_audit_logs_no_delete BEFORE DELETE ON customer_identity_document_audit_logs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='customer_identity_document_audit_logs is append-only'; END$$
-CREATE TRIGGER driver_status_logs_no_update BEFORE UPDATE ON driver_status_logs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='driver_status_logs is append-only'; END$$
-CREATE TRIGGER driver_status_logs_no_delete BEFORE DELETE ON driver_status_logs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='driver_status_logs is append-only'; END$$
 CREATE TRIGGER rental_charges_no_update BEFORE UPDATE ON rental_charges FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='rental_charges is append-only; record a reversal'; END$$
 CREATE TRIGGER rental_charges_no_delete BEFORE DELETE ON rental_charges FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='rental_charges is append-only'; END$$
-CREATE TRIGGER rental_status_logs_no_update BEFORE UPDATE ON rental_status_logs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='rental_status_logs is append-only'; END$$
-CREATE TRIGGER rental_status_logs_no_delete BEFORE DELETE ON rental_status_logs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='rental_status_logs is append-only'; END$$
-CREATE TRIGGER deposit_status_logs_no_update BEFORE UPDATE ON deposit_status_logs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='deposit_status_logs is append-only'; END$$
-CREATE TRIGGER deposit_status_logs_no_delete BEFORE DELETE ON deposit_status_logs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='deposit_status_logs is append-only'; END$$
 CREATE TRIGGER rules_acceptances_no_update BEFORE UPDATE ON rules_acceptances FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='rules_acceptances is append-only'; END$$
 CREATE TRIGGER rules_acceptances_no_delete BEFORE DELETE ON rules_acceptances FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='rules_acceptances is append-only'; END$$
 CREATE TRIGGER rental_agreements_identity_immutable BEFORE UPDATE ON rental_agreements FOR EACH ROW
@@ -650,14 +719,74 @@ CREATE TRIGGER rental_agreements_driver_immutable BEFORE UPDATE ON rental_agreem
 BEGIN
     IF NOT (NEW.driver_id <=> OLD.driver_id) AND OLD.status NOT IN ('reserved','confirmed') THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Rental agreement driver assignment is immutable after confirmation/pickup'; END IF;
 END$$
+-- The amount is fixed at booking. A downpayment is marked received only when its payment is in
+-- the payments table, and is never taken back.
+CREATE TRIGGER rental_agreements_downpayment_guard BEFORE UPDATE ON rental_agreements FOR EACH ROW
+BEGIN
+    IF NEW.downpayment_amount <> OLD.downpayment_amount THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='The downpayment amount is fixed when the booking is made';
+    END IF;
+    IF OLD.downpayment_status = 'received' AND NEW.downpayment_status <> 'received' THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='A recorded downpayment cannot be changed';
+    END IF;
+    IF NEW.downpayment_status = 'received' AND OLD.downpayment_status <> 'received' AND NOT EXISTS (SELECT 1 FROM payments WHERE paid_downpayment_agreement_id = NEW.agreement_id) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='A downpayment is received only when its payment is recorded';
+    END IF;
+END$$
+CREATE TRIGGER rules_versions_no_update BEFORE UPDATE ON rules_versions FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='rules_versions is append-only; publish a new version'; END$$
+CREATE TRIGGER rules_versions_no_delete BEFORE DELETE ON rules_versions FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='rules_versions is append-only'; END$$
+-- What the customer submitted never changes, and a decision is made once.
+CREATE TRIGGER payment_proofs_guard BEFORE UPDATE ON payment_proofs FOR EACH ROW
+BEGIN
+    IF NEW.agreement_id <> OLD.agreement_id OR NEW.reference_number <> OLD.reference_number OR NEW.storage_path <> OLD.storage_path OR NEW.submitted_at <> OLD.submitted_at THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='A submitted payment proof cannot be edited';
+    END IF;
+    IF OLD.proof_status <> 'submitted' THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='A payment proof that has been decided cannot be changed';
+    END IF;
+END$$
+CREATE TRIGGER payment_proofs_no_delete BEFORE DELETE ON payment_proofs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='payment_proofs is append-only'; END$$
+-- A downpayment is paid in full, at the amount stored on the booking: nothing typed in a
+-- browser can change what is charged.
+CREATE TRIGGER payments_amount_guard BEFORE INSERT ON payments FOR EACH ROW
+BEGIN
+    IF NEW.purpose = 'downpayment' AND NEW.amount <> (SELECT downpayment_amount FROM rental_agreements WHERE agreement_id = NEW.agreement_id) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='A downpayment is paid at the amount fixed when the booking was made';
+    END IF;
+END$$
+-- What was asked for never changes, and a payment is settled once.
+CREATE TRIGGER payments_guard BEFORE UPDATE ON payments FOR EACH ROW
+BEGIN
+    IF NEW.agreement_id <> OLD.agreement_id OR NEW.purpose <> OLD.purpose OR NEW.channel <> OLD.channel OR NEW.method <> OLD.method OR NEW.amount <> OLD.amount OR NEW.receipt_number <> OLD.receipt_number OR NEW.created_at <> OLD.created_at OR NOT (NEW.proof_id <=> OLD.proof_id) OR NOT (NEW.recorded_by <=> OLD.recorded_by) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='The details of a payment cannot be edited';
+    END IF;
+    IF OLD.payment_status <> 'pending' THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='A payment that has been settled cannot be changed';
+    END IF;
+END$$
+CREATE TRIGGER payments_no_delete BEFORE DELETE ON payments FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='payments is append-only'; END$$
+-- A booking keeps its reference and its source for life.
+CREATE TRIGGER rental_agreements_booking_identity BEFORE UPDATE ON rental_agreements FOR EACH ROW
+BEGIN
+    IF NEW.booking_reference <> OLD.booking_reference OR NEW.booking_source <> OLD.booking_source THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='A booking reference and source cannot be changed';
+    END IF;
+END$$
 CREATE TRIGGER damage_reports_no_update BEFORE UPDATE ON damage_reports FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Damage reports are append-only'; END$$
 CREATE TRIGGER damage_reports_no_delete BEFORE DELETE ON damage_reports FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Damage reports are append-only'; END$$
-CREATE TRIGGER damage_photos_no_update BEFORE UPDATE ON damage_photos FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Damage photos are append-only'; END$$
-CREATE TRIGGER damage_photos_no_delete BEFORE DELETE ON damage_photos FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Damage photos are append-only'; END$$
 CREATE TRIGGER damage_liability_no_update BEFORE UPDATE ON damage_liability_decisions FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Liability decisions are append-only'; END$$
 CREATE TRIGGER damage_liability_no_delete BEFORE DELETE ON damage_liability_decisions FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Liability decisions are append-only'; END$$
-CREATE TRIGGER damage_postings_no_update BEFORE UPDATE ON damage_charge_postings FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Damage charge postings are append-only'; END$$
-CREATE TRIGGER damage_postings_no_delete BEFORE DELETE ON damage_charge_postings FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Damage charge postings are append-only'; END$$
+CREATE TRIGGER customer_telegram_links_guard BEFORE UPDATE ON customer_telegram_links FOR EACH ROW
+BEGIN
+    IF NEW.customer_id <> OLD.customer_id OR NEW.chat_fingerprint <> OLD.chat_fingerprint OR NEW.chat_id_ciphertext <> OLD.chat_id_ciphertext OR NEW.linked_at <> OLD.linked_at OR NOT (NEW.code_id <=> OLD.code_id) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Telegram connections are append-only; only revocation may be recorded';
+    END IF;
+    IF OLD.link_status = 'revoked' THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='A revoked Telegram connection cannot be changed';
+    END IF;
+END$$
+CREATE TRIGGER customer_telegram_links_no_delete BEFORE DELETE ON customer_telegram_links FOR EACH ROW
+BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Telegram connections are append-only'; END$$
 DELIMITER ;
 
 -- ==========================================
@@ -760,37 +889,96 @@ CREATE TABLE maintenance_services (
     )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE maintenance_photos (
-    photo_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    service_id BIGINT UNSIGNED NOT NULL,
-    phase ENUM('before','after') NOT NULL,
-    storage_path VARCHAR(500) NOT NULL,
-    original_filename VARCHAR(255) NOT NULL,
-    mime VARCHAR(40) NOT NULL,
-    size_bytes INT UNSIGNED NOT NULL,
-    uploaded_by BIGINT UNSIGNED NOT NULL,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    PRIMARY KEY (photo_id),
-    UNIQUE KEY uq_maintenance_photo_path (storage_path),
-    KEY idx_maintenance_photo_phase (service_id, phase, photo_id),
-    CONSTRAINT fk_maintenance_photo_service FOREIGN KEY (service_id) REFERENCES maintenance_services(service_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_maintenance_photo_actor FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE RESTRICT,
-    CONSTRAINT chk_maintenance_photo_size CHECK (size_bytes > 0)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
-CREATE TABLE maintenance_service_status_logs (
+-- Every status change of a vehicle, a driver, a rental, a rental's deposit or a maintenance
+-- service. subject says which, each kind of record has its own column with a foreign key, and
+-- the CHECK rules hold each kind to its own statuses and mandatory facts. It is defined here
+-- because it needs every one of those tables to exist.
+CREATE TABLE status_logs (
     status_log_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    service_id BIGINT UNSIGNED NOT NULL,
-    old_status ENUM('in_progress','completed','cancelled') NULL,
-    new_status ENUM('in_progress','completed','cancelled') NOT NULL,
+    subject ENUM('vehicle','driver','rental','deposit','maintenance_service') NOT NULL,
+    vehicle_id BIGINT UNSIGNED NULL,
+    driver_id BIGINT UNSIGNED NULL,
+    agreement_id BIGINT UNSIGNED NULL,
+    maintenance_service_id BIGINT UNSIGNED NULL,
+    old_status VARCHAR(20) NULL,
+    new_status VARCHAR(20) NOT NULL,
     reason VARCHAR(500) NULL,
+    old_amount DECIMAL(10,2) NULL,
+    new_amount DECIMAL(10,2) NULL,
+    location_id BIGINT UNSIGNED NULL,
+    mileage INT UNSIGNED NULL,
     actor_user_id BIGINT UNSIGNED NOT NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     PRIMARY KEY (status_log_id),
-    KEY idx_maintenance_service_status_log (service_id, created_at, status_log_id),
-    CONSTRAINT fk_maintenance_status_log_service FOREIGN KEY (service_id) REFERENCES maintenance_services(service_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_maintenance_status_log_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE RESTRICT,
-    CONSTRAINT chk_maintenance_cancel_reason CHECK (new_status<>'cancelled' OR (reason IS NOT NULL AND CHAR_LENGTH(TRIM(reason))>0))
+    KEY idx_status_logs_vehicle (vehicle_id, created_at, status_log_id),
+    KEY idx_status_logs_driver (driver_id, created_at, status_log_id),
+    KEY idx_status_logs_agreement (agreement_id, subject, created_at, status_log_id),
+    KEY idx_status_logs_maintenance_service (maintenance_service_id, created_at, status_log_id),
+    CONSTRAINT fk_status_logs_vehicle FOREIGN KEY (vehicle_id) REFERENCES vehicles(vehicle_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_status_logs_driver FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_status_logs_agreement FOREIGN KEY (agreement_id) REFERENCES rental_agreements(agreement_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_status_logs_maintenance_service FOREIGN KEY (maintenance_service_id) REFERENCES maintenance_services(service_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_status_logs_location FOREIGN KEY (location_id) REFERENCES vehicle_locations(location_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_status_logs_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE RESTRICT,
+    CONSTRAINT chk_status_logs_owner CHECK (
+        (subject = 'vehicle' AND vehicle_id IS NOT NULL AND driver_id IS NULL AND agreement_id IS NULL AND maintenance_service_id IS NULL)
+        OR (subject = 'driver' AND driver_id IS NOT NULL AND vehicle_id IS NULL AND agreement_id IS NULL AND maintenance_service_id IS NULL)
+        OR (subject IN ('rental','deposit') AND agreement_id IS NOT NULL AND vehicle_id IS NULL AND driver_id IS NULL AND maintenance_service_id IS NULL)
+        OR (subject = 'maintenance_service' AND maintenance_service_id IS NOT NULL AND vehicle_id IS NULL AND driver_id IS NULL AND agreement_id IS NULL)
+    ),
+    CONSTRAINT chk_status_logs_statuses CHECK (
+        (subject = 'vehicle' AND new_status IN ('available','rented','maintenance','reserved','cleaning','out_of_service','retired')
+            AND (old_status IS NULL OR old_status IN ('available','rented','maintenance','reserved','cleaning','out_of_service','retired')))
+        OR (subject = 'driver' AND new_status IN ('active','inactive')
+            AND (old_status IS NULL OR old_status IN ('active','inactive')))
+        OR (subject = 'rental' AND new_status IN ('reserved','confirmed','active','returned','completed','cancelled','no_show')
+            AND (old_status IS NULL OR old_status IN ('reserved','confirmed','active','returned','completed','cancelled','no_show')))
+        OR (subject = 'deposit' AND new_status IN ('not_required','due','held','released','refunded','forfeited')
+            AND (old_status IS NULL OR old_status IN ('not_required','due','held','released','refunded','forfeited')))
+        OR (subject = 'maintenance_service' AND new_status IN ('in_progress','completed','cancelled')
+            AND (old_status IS NULL OR old_status IN ('in_progress','completed','cancelled')))
+    ),
+    CONSTRAINT chk_status_logs_reason CHECK (
+        (subject IN ('vehicle','driver') AND reason IS NULL)
+        OR (subject = 'rental' AND (new_status NOT IN ('cancelled','no_show') OR (reason IS NOT NULL AND CHAR_LENGTH(TRIM(reason)) > 0)))
+        OR (subject = 'deposit' AND reason IS NOT NULL AND CHAR_LENGTH(TRIM(reason)) > 0)
+        OR (subject = 'maintenance_service' AND (new_status <> 'cancelled' OR (reason IS NOT NULL AND CHAR_LENGTH(TRIM(reason)) > 0)))
+    ),
+    CONSTRAINT chk_status_logs_amounts CHECK (
+        (subject = 'deposit' AND new_amount IS NOT NULL AND new_amount >= 0)
+        OR (subject <> 'deposit' AND old_amount IS NULL AND new_amount IS NULL)
+    ),
+    CONSTRAINT chk_status_logs_vehicle_facts CHECK (subject = 'vehicle' OR (location_id IS NULL AND mileage IS NULL))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- Every stored photo: of a vehicle, of a damage report, or of a maintenance service. Each kind
+-- of owner has its own column with a foreign key, and exactly one of them is set. It is
+-- defined here because it needs all three owner tables to exist.
+CREATE TABLE photos (
+    photo_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    vehicle_id BIGINT UNSIGNED NULL,
+    damage_report_id BIGINT UNSIGNED NULL,
+    maintenance_service_id BIGINT UNSIGNED NULL,
+    phase ENUM('before','after') NULL,
+    sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+    storage_path VARCHAR(500) NOT NULL,
+    original_filename VARCHAR(255) NOT NULL,
+    mime VARCHAR(100) NOT NULL,
+    size_bytes BIGINT UNSIGNED NOT NULL,
+    uploaded_by BIGINT UNSIGNED NOT NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (photo_id),
+    UNIQUE KEY uq_photos_storage_path (storage_path),
+    KEY idx_photos_vehicle (vehicle_id, sort_order, photo_id),
+    KEY idx_photos_damage_report (damage_report_id, photo_id),
+    KEY idx_photos_maintenance_service (maintenance_service_id, phase, photo_id),
+    CONSTRAINT fk_photos_vehicle FOREIGN KEY (vehicle_id) REFERENCES vehicles(vehicle_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_photos_damage_report FOREIGN KEY (damage_report_id) REFERENCES damage_reports(report_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_photos_maintenance_service FOREIGN KEY (maintenance_service_id) REFERENCES maintenance_services(service_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_photos_uploader FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE RESTRICT,
+    CONSTRAINT chk_photos_one_owner CHECK ((vehicle_id IS NOT NULL) + (damage_report_id IS NOT NULL) + (maintenance_service_id IS NOT NULL) = 1),
+    CONSTRAINT chk_photos_phase CHECK ((maintenance_service_id IS NOT NULL) = (phase IS NOT NULL)),
+    CONSTRAINT chk_photos_size CHECK (size_bytes > 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE maintenance_schedule_logs (
@@ -842,14 +1030,23 @@ CREATE TABLE maintenance_cost_audit_logs (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DELIMITER $$
-CREATE TRIGGER maintenance_service_status_logs_no_update BEFORE UPDATE ON maintenance_service_status_logs FOR EACH ROW
-BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Maintenance service status logs are append-only'; END$$
-CREATE TRIGGER maintenance_service_status_logs_no_delete BEFORE DELETE ON maintenance_service_status_logs FOR EACH ROW
-BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Maintenance service status logs are append-only'; END$$
-CREATE TRIGGER maintenance_photos_no_update BEFORE UPDATE ON maintenance_photos FOR EACH ROW
-BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Maintenance photos are append-only'; END$$
-CREATE TRIGGER maintenance_photos_no_delete BEFORE DELETE ON maintenance_photos FOR EACH ROW
-BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Maintenance photos are append-only'; END$$
+CREATE TRIGGER status_logs_no_update BEFORE UPDATE ON status_logs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='status_logs is append-only'; END$$
+CREATE TRIGGER status_logs_no_delete BEFORE DELETE ON status_logs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='status_logs is append-only'; END$$
+CREATE TRIGGER photos_guard_update BEFORE UPDATE ON photos FOR EACH ROW
+BEGIN
+    IF OLD.vehicle_id IS NULL THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Damage and maintenance photos are append-only';
+    END IF;
+    IF NOT (NEW.vehicle_id <=> OLD.vehicle_id) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='A photo cannot be moved to another record';
+    END IF;
+END$$
+CREATE TRIGGER photos_guard_delete BEFORE DELETE ON photos FOR EACH ROW
+BEGIN
+    IF OLD.vehicle_id IS NULL THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Damage and maintenance photos are append-only';
+    END IF;
+END$$
 CREATE TRIGGER maintenance_schedule_logs_no_update BEFORE UPDATE ON maintenance_schedule_logs FOR EACH ROW
 BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Maintenance schedule logs are append-only'; END$$
 CREATE TRIGGER maintenance_schedule_logs_no_delete BEFORE DELETE ON maintenance_schedule_logs FOR EACH ROW
@@ -883,4 +1080,13 @@ INSERT INTO schema_migrations (migration,checksum) VALUES
 ('008_rental_agreement_identity_immutable.sql','ab8e5f069f559d8d4f1ce4dcf3866997077b51bfd44d72a7ae2904d3b5cb0f0e'),
 ('009_chauffeur_guards.sql','e22e6f29136ea179cbf8ee1f85838ea3432d074a67d7d50b600280cad7f56da2'),
 ('010_damage.sql','1085ead11231251cf1ff7375688a862e8f66abfdb2a1ebf38b28f1a5860e466d'),
-('011_maintenance.sql','322ee929af214400e52857c9b369bb91f544f898ad5bd2b0cad7661269a097fb');
+('011_maintenance.sql','322ee929af214400e52857c9b369bb91f544f898ad5bd2b0cad7661269a097fb'),
+('012_telegram.sql','32af0e695691ab35ca761b08d6ec4c207bd630595c3a673f3931544e0b5dc2f4'),
+('013_token_usage_into_security_logs.sql','6b3a63835026920cd81a07764133e4b7275f5ebd6453c3e6cd8e08ac42f9f7eb'),
+('014_damage_posting_into_rental_charges.sql','a3ea4be229643fce6b0133f3b8d57734db9c0e242dfa7daccd8359c03307839a'),
+('015_rate_counters.sql','13abdbf1aaf04edff8c1a2facd710b6085a4debfd64c7fdc1305c1594bdd2944'),
+('016_photos.sql','4d6dd613cc9639fa2abad96e5a173f263b5e2b54cc2ca90a6cbc7229055a6c48'),
+('017_status_logs.sql','babe36b0e5155084f28bfac46179cc6aaedab4f7f5ef4f395a0b1dadc4d2ee22'),
+('018_downpayment.sql','f6588e45156e677d35409a1b51b5ba3404520b90d6dc8a0fb4c1cf6e20d27fba'),
+('019_online_booking.sql','b0f596c6bb57ead3d1c1896085404b651cfeda862b2111166a3cc2aff49a9ff7'),
+('020_payments.sql','98c3b62a03c0554643faf1d5fd4e716a774b74b9136fafe0f93d3b9225724ba3');

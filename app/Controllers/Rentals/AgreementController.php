@@ -21,7 +21,7 @@ final class AgreementController
     // The list and detail pages. Driver coordinators assign drivers there (M6); the views show them
     // the schedule and the driver panel only, never charges, deposits or damage records.
     private const VIEW=['system_admin','fleet_manager','front_desk','finance_staff','auditor','driver_coordinator'];
-    public function __construct(private readonly AuthMiddleware $guard,private readonly RentalRepository $rentals,private readonly ChargeRepository $charges,private readonly RentalService $service, private readonly ChauffeurService $chauffeurs, private readonly DriverService $driverService, private readonly DamageService $damage) {}
+    public function __construct(private readonly AuthMiddleware $guard,private readonly RentalRepository $rentals,private readonly ChargeRepository $charges,private readonly RentalService $service, private readonly ChauffeurService $chauffeurs, private readonly DriverService $driverService, private readonly DamageService $damage, private readonly \TripleR\Repositories\PaymentProofRepository $proofs, private readonly \TripleR\Repositories\RulesAcceptanceRepository $rules, private readonly \TripleR\Repositories\PaymentRepository $payments, private readonly \TripleR\Services\PaymentService $paymentService) {}
 
     public function index(Request $request): Response
     {
@@ -70,7 +70,7 @@ final class AgreementController
             }
         }
         $drivers = $this->driverService->selectableForAssignment();
-        $notice=$_SESSION['_rental_notice']??null;unset($_SESSION['_rental_notice']);return $this->render('rentals/agreement-detail',['user'=>$user,'agreement'=>$row,'charges'=>$this->charges->forAgreement($id),'total'=>$this->service->total($id),'statusHistory'=>$this->rentals->statusHistory($id),'depositHistory'=>$this->rentals->depositHistory($id),'drivers'=>$drivers,'damageReports'=>$this->damage->forAgreement($id),'notice'=>$notice]);
+        $notice=$_SESSION['_rental_notice']??null;unset($_SESSION['_rental_notice']);return $this->render('rentals/agreement-detail',['user'=>$user,'agreement'=>$row,'charges'=>$this->charges->forAgreement($id),'total'=>$this->service->total($id),'statusHistory'=>$this->rentals->statusHistory($id),'depositHistory'=>$this->rentals->depositHistory($id),'drivers'=>$drivers,'damageReports'=>$this->damage->forAgreement($id),'proofs'=>$this->proofs->forAgreement($id),'policyAcceptance'=>$this->rules->acceptanceForAgreement($id),'payments'=>$this->payments->forAgreement($id),'outstanding'=>$this->service->outstandingCents($id)/100,'notice'=>$notice]);
     }
 
     public function action(Request $request): Response
@@ -90,6 +90,13 @@ final class AgreementController
 
     public function deposit(Request $request): Response
     { $user=$this->guard->requireRoles(['system_admin','finance_staff']);if($user instanceof Response)return $user;if(!Csrf::valid($request))return Response::html('Invalid request token.',403);$id=$this->id($request->form['agreement_id']??null);if(!$id)return Response::html('Invalid rental agreement.',422);try{$this->service->setDeposit($id,(string)($request->form['deposit_status']??''),(string)($request->form['amount']??''),(string)($request->form['reason']??''),(int)$user['id']);}catch(RuntimeException $e){$_SESSION['_rental_notice']=$e->getMessage();}return Response::redirect('/rentals/detail?agreement_id='.$id); }
+
+    public function downpayment(Request $request): Response
+    { $user=$this->guard->requireRoles(['system_admin','finance_staff']);if($user instanceof Response)return $user;if(!Csrf::valid($request))return Response::html('Invalid request token.',403);$id=$this->id($request->form['agreement_id']??null);if(!$id)return Response::html('Invalid rental agreement.',422);try{$this->service->recordDownpayment($id,(string)($request->form['reference']??''),(int)$user['id'],(string)($request->form['method']??'gcash'));$_SESSION['_rental_notice']='Downpayment recorded. The reservation can now be confirmed.';}catch(RuntimeException $e){$_SESSION['_rental_notice']=$e->getMessage();}return Response::redirect('/rentals/detail?agreement_id='.$id.'#downpayment'); }
+
+    /** Finance records money received toward the balance, by any method; a blank amount means all that is owed. */
+    public function balance(Request $request): Response
+    { $user=$this->guard->requireRoles(['system_admin','finance_staff']);if($user instanceof Response)return $user;if(!Csrf::valid($request))return Response::html('Invalid request token.',403);$id=$this->id($request->form['agreement_id']??null);if(!$id)return Response::html('Invalid rental agreement.',422);try{$receipt=$this->paymentService->recordBalance($id,(string)($request->form['method']??''),(string)($request->form['reference']??''),(string)($request->form['amount']??''),(int)$user['id']);$_SESSION['_rental_notice']='Payment recorded. Receipt '.$receipt.'.';}catch(RuntimeException $e){$_SESSION['_rental_notice']=$e->getMessage();}return Response::redirect('/rentals/detail?agreement_id='.$id.'#payments'); }
 
     public function issueLink(Request $request): Response
     { $user=$this->guard->requireRoles(['system_admin','front_desk']);if($user instanceof Response)return $user;if(!Csrf::valid($request))return Response::html('Invalid request token.',403);$id=$this->id($request->form['agreement_id']??null);if(!$id)return Response::html('Invalid rental agreement.',422);try{$this->service->issueManagementLink($id);$_SESSION['_rental_notice']='A booking-management link was queued.';}catch(RuntimeException $e){$_SESSION['_rental_notice']=$e->getMessage();}return Response::redirect('/rentals/detail?agreement_id='.$id); }

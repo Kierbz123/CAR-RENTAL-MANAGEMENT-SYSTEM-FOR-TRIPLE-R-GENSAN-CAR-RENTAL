@@ -12,6 +12,17 @@ use TripleR\Controllers\StaffHomeController;
 use TripleR\Controllers\Fleet\VehicleController;
 use TripleR\Controllers\Fleet\DriverController;
 use TripleR\Controllers\Customers\CustomerController;
+use TripleR\Controllers\CustomerBookingController;
+use TripleR\Controllers\DemoCheckoutController;
+use TripleR\Controllers\PublicBookingController;
+use TripleR\Controllers\Rentals\PaymentController;
+use TripleR\Repositories\PaymentProofRepository;
+use TripleR\Repositories\PaymentRepository;
+use TripleR\Services\OnlineBookingService;
+use TripleR\Services\PaymentProofService;
+use TripleR\Services\PaymentService;
+use TripleR\Services\Payments\PaymentGatewayFactory;
+use TripleR\Services\Payments\SimulatedGateway;
 use TripleR\Controllers\Rentals\AgreementController;
 use TripleR\Controllers\Api\RentalApiController;
 use TripleR\Database;
@@ -55,6 +66,7 @@ use TripleR\Services\ChauffeurService;
 use TripleR\Services\RentalService;
 use TripleR\Services\DamageService;
 use TripleR\Services\MaintenanceService;
+use TripleR\Services\TelegramLinkService;
 
 require dirname(__DIR__) . '/app/bootstrap.php';
 
@@ -96,7 +108,8 @@ try {
     $sessionAdmin = new SessionController($db, $authMiddleware, $users, $sessions, $securityLogs);
     $webhooks = new SmsWebhookController($inboundRepository, $notificationRepository);
     $rulesAcceptanceRepository = new RulesAcceptanceRepository($db);
-    $notificationService = new NotificationService($notificationRepository, $inboundRepository, $messageCipher, $rulesAcceptanceRepository);
+    $telegramLinks = TelegramLinkService::create($db);
+    $notificationService = new NotificationService($notificationRepository, $inboundRepository, $messageCipher, $rulesAcceptanceRepository, $telegramLinks);
     $magicLinkService = new MagicLinkService(
         new MagicLinkRepository($db),
         new RateLimiter($db),
@@ -115,19 +128,29 @@ try {
     $customerRepository = new CustomerRepository($db);
     $customerPiiCipher = new CustomerPiiCipher();
     $customerService = new CustomerService($db, $customerRepository, $customerPiiCipher);
-    $customerController = new CustomerController($authMiddleware, $customerRepository, $customerService, $customerPiiCipher);
+    $customerController = new CustomerController($authMiddleware, $customerRepository, $customerService, $customerPiiCipher, $telegramLinks);
     $bookingOverlapService = new BookingOverlapService($db);
     $rentalRepository = new RentalRepository($db, $bookingOverlapService);
     $chargeRepository = new ChargeRepository($db);
     $chauffeurService = new ChauffeurService($db, $rentalRepository, $chargeRepository, $vehicleRepository, $bookingOverlapService);
-    $rentalService = new RentalService($db, $rentalRepository, $chargeRepository, $vehicleRepository, $customerRepository, $customerPiiCipher, $vehicleService, $notificationService, $magicLinkService, $chauffeurService);
+    $paymentRepository = new PaymentRepository($db);
+    $rentalService = new RentalService($db, $rentalRepository, $chargeRepository, $vehicleRepository, $customerRepository, $customerPiiCipher, $vehicleService, $notificationService, $magicLinkService, $chauffeurService, $paymentRepository);
     $damageService = new DamageService($db, new DamageReportRepository($db), $rentalRepository, $vehiclePhotos, $rentalService);
     $maintenanceRepository = new MaintenanceRepository($db);
     $maintenanceService = new MaintenanceService($db, $maintenanceRepository, $vehicleService, $vehiclePhotos);
     $maintenance = new MaintenanceController($authMiddleware, $maintenanceRepository, $vehicleRepository, $maintenanceService);
-    $staffHome = new StaffHomeController($authMiddleware, new DashboardRepository($db), $maintenanceRepository, $maintenanceService);
+    $paymentProofs = new PaymentProofRepository($db);
+    $paymentProofService = new PaymentProofService($db, $paymentProofs, $rentalRepository, $rentalService, $vehiclePhotos, new RateLimiter($db), $paymentRepository);
+    // Online payment goes through the gateway named by PAYMENT_GATEWAY; null switches it off.
+    $paymentGateway = PaymentGatewayFactory::create();
+    $paymentService = new PaymentService($db, $paymentRepository, $rentalRepository, $rentalService, $paymentProofs, $rulesAcceptanceRepository, new RateLimiter($db), $securityLogs, $paymentGateway);
+    $payments = new PaymentController($authMiddleware, $paymentProofs, $paymentProofService, $paymentRepository);
+    $demoCheckout = new DemoCheckoutController($magicLinkService, $paymentService, $paymentGateway instanceof SimulatedGateway ? $paymentGateway : null);
+    $onlineBookings = new PublicBookingController(new OnlineBookingService($db, $rentalService, $rentalRepository, $vehicleRepository, $bookingOverlapService, $customerService, $rulesAcceptanceRepository, new RateLimiter($db)));
+    $customerBooking = new CustomerBookingController($magicLinkService, $rentalRepository, $rentalService, $paymentProofs, $paymentProofService, $rulesAcceptanceRepository, $paymentRepository, $paymentService);
+    $staffHome = new StaffHomeController($authMiddleware, new DashboardRepository($db), $maintenanceRepository, $maintenanceService, $paymentProofs);
     $damageController = new \TripleR\Controllers\Rentals\DamageController($authMiddleware, $damageService);
-    $agreements = new AgreementController($authMiddleware, $rentalRepository, $chargeRepository, $rentalService, $chauffeurService, $driverService, $damageService);
+    $agreements = new AgreementController($authMiddleware, $rentalRepository, $chargeRepository, $rentalService, $chauffeurService, $driverService, $damageService, $paymentProofs, $rulesAcceptanceRepository, $paymentRepository, $paymentService);
     $driverAssignments = new \TripleR\Controllers\Rentals\DriverAssignmentController($authMiddleware, $chauffeurService);
     $rentalApi = new RentalApiController($authMiddleware, $rentalService, $magicLinkService);
 
@@ -158,6 +181,16 @@ try {
     $router->get('/auth/change-password', static fn (): Response => $authController->showChangePassword());
     $router->post('/auth/change-password', static fn (Request $request): Response => $authController->changePassword($request));
     $router->get('/staff', static fn (): Response => $staffHome->index());
+    $router->get('/staff/booking-qr', static fn (): Response => $staffHome->bookingQr());
+    $router->get('/book', static fn (Request $request): Response => $onlineBookings->form($request));
+    $router->post('/book', static fn (Request $request): Response => $onlineBookings->submit($request));
+    $router->get('/book/find', static fn (): Response => $onlineBookings->findForm());
+    $router->post('/book/find', static fn (Request $request): Response => $onlineBookings->find($request));
+    $router->get('/payments', static fn (): Response => $payments->index());
+    $router->post('/payments/verify', static fn (Request $request): Response => $payments->verify($request));
+    $router->post('/payments/reject', static fn (Request $request): Response => $payments->reject($request));
+    $router->get('/payments/proof', static fn (Request $request): Response => $payments->screenshot($request));
+    $router->get('/payments/receipt', static fn (Request $request): Response => $payments->receipt($request));
     $router->get('/admin/users', static fn (): Response => $userAdmin->index());
     $router->post('/admin/users/create', static fn (Request $request): Response => $userAdmin->create($request));
     $router->get('/admin/users/edit', static fn (Request $request): Response => $userAdmin->edit($request));
@@ -232,6 +265,9 @@ try {
     $router->post('/customers/unblacklist', static fn (Request $request): Response => $customerController->unblacklist($request));
     $router->post('/customers/delete', static fn (Request $request): Response => $customerController->softDelete($request));
     $router->post('/customers/reveal', static fn (Request $request): Response => $customerController->reveal($request));
+    $router->post('/customers/telegram/code', static fn (Request $request): Response => $customerController->telegramCode($request));
+    $router->post('/customers/telegram/disconnect', static fn (Request $request): Response => $customerController->telegramDisconnect($request));
+    $router->get('/api/customers/telegram/status', static fn (Request $request): Response => $customerController->telegramStatus($request));
     $router->get('/rentals', static fn (Request $request): Response => $agreements->index($request));
     $router->get('/rentals/new', static fn (): Response => $agreements->newForm());
     $router->get('/rentals/detail', static fn (Request $request): Response => $agreements->detail($request));
@@ -242,6 +278,8 @@ try {
     $router->post('/rentals/charge', static fn (Request $request): Response => $agreements->addCharge($request));
     $router->post('/rentals/charge/reverse', static fn (Request $request): Response => $agreements->reverseCharge($request));
     $router->post('/rentals/deposit', static fn (Request $request): Response => $agreements->deposit($request));
+    $router->post('/rentals/downpayment', static fn (Request $request): Response => $agreements->downpayment($request));
+    $router->post('/rentals/payment', static fn (Request $request): Response => $agreements->balance($request));
     $router->post('/rentals/damage/report', static fn (Request $request): Response => $damageController->record($request));
     $router->post('/rentals/damage/liability', static fn (Request $request): Response => $damageController->decide($request));
     $router->post('/rentals/damage/charge', static fn (Request $request): Response => $damageController->postCharge($request));
@@ -250,7 +288,13 @@ try {
     $router->post('/rentals/link', static fn (Request $request): Response => $agreements->issueLink($request));
     $router->post('/api/rentals', static fn (Request $request): Response => $rentalApi->create($request));
     $router->get('/api/rentals/booking-context', static fn (Request $request): Response => $rentalApi->bookingContext($request));
-    $router->get('/customer/booking', static function (): Response { ob_start(); require APP_ROOT . '/app/Views/customer/booking.php'; return Response::html((string) ob_get_clean()); });
+    $router->get('/customer/booking', static fn (): Response => $customerBooking->page());
+    $router->post('/customer/booking/proof', static fn (Request $request): Response => $customerBooking->submitProof($request));
+    $router->post('/customer/booking/pay', static fn (Request $request): Response => $customerBooking->pay($request));
+    $router->get('/customer/booking/payment', static fn (Request $request): Response => $customerBooking->payment($request));
+    $router->get('/pay/demo', static fn (Request $request): Response => $demoCheckout->page($request));
+    $router->post('/pay/demo', static fn (Request $request): Response => $demoCheckout->submit($request));
+    $router->post('/webhooks/payments', static fn (Request $request): Response => $demoCheckout->webhook($request));
 
     $router->dispatch($request)->send();
 } catch (\Throwable $error) {

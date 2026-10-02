@@ -10,22 +10,27 @@ use RuntimeException;
 use TripleR\Config;
 use TripleR\Repositories\CustomerRepository;
 use TripleR\Repositories\ChargeRepository;
+use TripleR\Repositories\PaymentRepository;
 use TripleR\Repositories\RentalRepository;
 use TripleR\Repositories\VehicleRepository;
+use TripleR\Support\PaymentMethods;
 
 final class RentalService
 {
     public const STATUSES=['reserved','confirmed','active','returned','completed','cancelled','no_show'];
     public const CHARGE_TYPES=['fee','discount','tax','damage','chauffeur_fee','other'];
+    /** Share of the rental paid before a reservation can be confirmed. Non-refundable; the rest is paid at pickup. */
+    public const DOWNPAYMENT_PERCENT=30;
     /** The sole charge-sign mapping used by every total calculation. */
     private const CHARGE_SIGN=['fee'=>1,'discount'=>-1,'tax'=>1,'damage'=>1,'chauffeur_fee'=>1,'other'=>1];
 
-    public function __construct(private readonly PDO $db,private readonly RentalRepository $rentals,private readonly ChargeRepository $charges,private readonly VehicleRepository $vehicles,private readonly CustomerRepository $customers,private readonly CustomerPiiCipher $customerCipher,private readonly VehicleService $vehicleService,private readonly NotificationService $notifications,private readonly MagicLinkService $magicLinks,private readonly ChauffeurService $chauffeurs) {}
+    public function __construct(private readonly PDO $db,private readonly RentalRepository $rentals,private readonly ChargeRepository $charges,private readonly VehicleRepository $vehicles,private readonly CustomerRepository $customers,private readonly CustomerPiiCipher $customerCipher,private readonly VehicleService $vehicleService,private readonly NotificationService $notifications,private readonly MagicLinkService $magicLinks,private readonly ChauffeurService $chauffeurs,private readonly PaymentRepository $payments) {}
 
     public function eligibleCustomers(): array { return $this->customers->eligibleForBooking(); }
     public function availableVehicles(): array { return $this->vehicles->availableForBooking(); }
 
-    public function create(array $input,int $actor): int
+    /** $source is 'online' when the customer made the booking themselves on the public site. */
+    public function create(array $input,int $actor,string $source='staff'): int
     {
         $rentalType=(string)($input['rental_type']??'self_drive');
         if(!in_array($rentalType, ['self_drive', 'chauffeur'], true))throw new RuntimeException('Invalid rental type.');
@@ -39,9 +44,9 @@ final class RentalService
         if((new DateTimeImmutable($pickup,new DateTimeZone('UTC')))->setTimezone(new DateTimeZone('Asia/Manila'))->format('Y-m-d')!==$start||(new DateTimeImmutable($return,new DateTimeZone('UTC')))->setTimezone(new DateTimeZone('Asia/Manila'))->format('Y-m-d')!==$end)throw new RuntimeException('Scheduled pickup and return times must fall on their selected Manila rental dates.');
         $deposit=$this->money((string)($input['deposit_amount']??'0'),'security deposit');
         if($pickup!==null&&$return!==null&&$return<$pickup)throw new RuntimeException('Scheduled return must not be before scheduled pickup.');
-        $id=$this->rentals->createInTransaction(['customer_id'=>$customer,'vehicle_id'=>$vehicle,'rental_type'=>$rentalType,'start_date'=>$start,'end_date'=>$end,'scheduled_pickup_at'=>$pickup,'scheduled_return_at'=>$return,'deposit_amount'=>$deposit,'hold_minutes'=>Config::int('RESERVATION_HOLD_MINUTES',60)],$actor);
+        $id=$this->rentals->createInTransaction(['customer_id'=>$customer,'vehicle_id'=>$vehicle,'rental_type'=>$rentalType,'start_date'=>$start,'end_date'=>$end,'scheduled_pickup_at'=>$pickup,'scheduled_return_at'=>$return,'deposit_amount'=>$deposit,'downpayment_percent'=>self::DOWNPAYMENT_PERCENT,'booking_source'=>$source,'hold_minutes'=>Config::int('RESERVATION_HOLD_MINUTES',1440)],$actor);
         // The reservation is durable even if provider queuing fails; staff can reissue from the detail view.
-        try{$phone=$this->primaryCustomerPhone($customer);if($phone!==null){$r=$this->rentals->find($id);$this->magicLinks->issue($phone,null,'booking_manage',$id,new DateTimeImmutable((string)$r['hold_expires_at'],new DateTimeZone('UTC')),null);}}catch(\Throwable $e){error_log('Booking management link could not be queued for agreement '.$id.': '.get_class($e));}
+        try{$phone=$this->primaryCustomerPhone($customer);if($phone!==null){$r=$this->rentals->find($id);$this->magicLinks->issue($phone,null,'booking_manage',$id,new DateTimeImmutable((string)$r['hold_expires_at'],new DateTimeZone('UTC')),(string)$r['booking_reference'],$customer);}}catch(\Throwable $e){error_log('Booking management link could not be queued for agreement '.$id.': '.get_class($e));}
         return $id;
     }
 
@@ -69,6 +74,8 @@ final class RentalService
                 case 'complete':
                     if($from!=='returned')throw new RuntimeException('Only a returned agreement can be completed.');
                     if(!in_array($r['deposit_status'],['not_required','released','refunded','forfeited'],true))throw new RuntimeException('Settle the security deposit before completing this agreement.');
+                    // An agreement that took a downpayment is finished only when the rest has been received too.
+                    if($r['downpayment_status']==='received'&&($owed=$this->outstandingCents($id))>0)throw new RuntimeException('Record the balance of '.$this->pesos($owed).' before completing this agreement.');
                     $to='completed';break;
                 case 'cancel': if(!in_array($from,['reserved','confirmed'],true))throw new RuntimeException('Only a reserved or confirmed agreement can be cancelled.');$to='cancelled';break;
                 case 'no_show':
@@ -80,7 +87,9 @@ final class RentalService
                 default: throw new RuntimeException('Unknown rental action.');
             }
             if($action==='confirm') $this->chauffeurs->validateForConfirmation($r,$driver);
-            if($action==='confirm'&&($r['hold_expires_at']===null||new DateTimeImmutable((string)$r['hold_expires_at'],new DateTimeZone('UTC'))<=new DateTimeImmutable('now',new DateTimeZone('UTC'))))throw new RuntimeException('The reservation hold has expired and cannot be confirmed.');
+            if($action==='confirm'&&$r['downpayment_status']==='due')throw new RuntimeException('Record the '.self::DOWNPAYMENT_PERCENT.'% downpayment before confirming this reservation.');
+            // A received downpayment stops the hold clock: the customer has paid, so the vehicle stays theirs.
+            if($action==='confirm'&&$r['downpayment_status']!=='received'&&($r['hold_expires_at']===null||new DateTimeImmutable((string)$r['hold_expires_at'],new DateTimeZone('UTC'))<=new DateTimeImmutable('now',new DateTimeZone('UTC'))))throw new RuntimeException('The reservation hold has expired and cannot be confirmed.');
             if($to==='confirmed'&&!in_array($vehicle['current_status'],['available','reserved'],true))throw new RuntimeException('The vehicle is no longer available for confirmation.');
             if($to==='active'&&$vehicle['current_status']!=='reserved')throw new RuntimeException('The vehicle is not in the reserved status required for pickup.');
             if($to==='returned'&&$vehicle['current_status']!=='rented')throw new RuntimeException('The vehicle is not marked rented.');
@@ -105,12 +114,13 @@ final class RentalService
         if($template!==null)$this->notifyCustomer($r,$template,$to);
     }
 
-    public function addCharge(int $id,string $type,string $amount,string $description,int $actor,?callable $afterAppend=null): int
+    /** $beforeAppend runs inside the transaction, after the agreement is locked and before the charge is written; throwing cancels the charge. */
+    public function addCharge(int $id,string $type,string $amount,string $description,int $actor,?callable $beforeAppend=null,?int $damageDecisionId=null,?string $damageAdjustmentReason=null): int
     {
         if(!in_array($type,self::CHARGE_TYPES,true)||$type==='chauffeur_fee')throw new RuntimeException('Choose a supported charge type.');
         $amount=$this->money($amount,'charge amount');$description=trim($description);if($description===''||mb_strlen($description)>500)throw new RuntimeException('Enter a charge description up to 500 characters.');
         if($this->toCents($amount)<=0)throw new RuntimeException('Charge amount must be greater than zero.');
-        $this->db->beginTransaction();try{$r=$this->rentals->find($id,true);if(!$r)throw new RuntimeException('Rental agreement not found.');if(in_array($r['status'],['completed','cancelled','no_show'],true))throw new RuntimeException('Charges are locked for terminal agreements.');$this->charges->appendCharge($id,$type,$amount,$description,$actor);$chargeId=(int)$this->db->lastInsertId();if($afterAppend!==null)$afterAppend($chargeId);if($this->totalCents($id)<0)throw new RuntimeException('Discounts cannot make the rental total negative.');$this->db->commit();return $chargeId;}catch(\Throwable $e){if($this->db->inTransaction())$this->db->rollBack();throw $e;}
+        $this->db->beginTransaction();try{$r=$this->rentals->find($id,true);if(!$r)throw new RuntimeException('Rental agreement not found.');if(in_array($r['status'],['completed','cancelled','no_show'],true))throw new RuntimeException('Charges are locked for terminal agreements.');if($beforeAppend!==null)$beforeAppend();$this->charges->appendCharge($id,$type,$amount,$description,$actor,$damageDecisionId,$damageAdjustmentReason);$chargeId=(int)$this->db->lastInsertId();if($this->totalCents($id)<0)throw new RuntimeException('Discounts cannot make the rental total negative.');$this->db->commit();return $chargeId;}catch(\Throwable $e){if($this->db->inTransaction())$this->db->rollBack();throw $e;}
     }
 
     public function reverseCharge(int $id,int $chargeId,string $reason,int $actor): void
@@ -125,6 +135,71 @@ final class RentalService
         $this->db->beginTransaction();try{$r=$this->rentals->find((int)$id,true);if(!$r)throw new RuntimeException('Rental agreement not found.');if(in_array($r['status'],['completed','cancelled','no_show'],true))throw new RuntimeException('Deposit is locked for terminal agreements.');$legal=['not_required'=>['due','held'],'due'=>['held','released','refunded','forfeited'],'held'=>['released','refunded','forfeited'],'released'=>[],'refunded'=>[],'forfeited'=>[]];if($status!==$r['deposit_status']&&!in_array($status,$legal[$r['deposit_status']],true))throw new RuntimeException('That deposit transition is not allowed.');$q=$this->db->prepare('UPDATE rental_agreements SET deposit_status=:status,security_deposit_amount=:amount WHERE agreement_id=:id AND deposit_status=:old');$q->execute(['status'=>$status,'amount'=>$amount,'id'=>$id,'old'=>$r['deposit_status']]);if($q->rowCount()!==1)throw new RuntimeException('Deposit changed in another request. Reload and try again.');$this->rentals->appendDeposit($id,$r['deposit_status'],$status,(string)$r['security_deposit_amount'],$amount,$reason,$actor);$this->db->commit();}catch(\Throwable $e){if($this->db->inTransaction())$this->db->rollBack();throw $e;}
     }
 
+    /**
+     * Finance records a downpayment received outside the system: cash handed over at the
+     * counter, or GCash, Maya, GrabPay, a card or a bank transfer quoted with its reference.
+     */
+    public function recordDownpayment(int $id,string $reference,int $actor,string $method='gcash'): void
+    {
+        $this->applyDownpayment($id,$method,$reference,$actor,true,null,null);
+    }
+
+    /**
+     * Finance accepts a GCash proof the customer submitted while the hold was running. The hold
+     * clock no longer matters, and $markProof runs in the same transaction so the proof, the
+     * payment and the agreement can never disagree.
+     */
+    public function recordDownpaymentFromProof(int $id,string $reference,int $actor,callable $markProof,int $proofId): void
+    {
+        $this->applyDownpayment($id,'gcash',$reference,$actor,false,$markProof,$proofId);
+    }
+
+    /** Upper case, no spaces; refused unless it is 6 to 40 letters, digits or dashes. */
+    public static function normalizePaymentReference(string $reference,string $label='reference number'): string
+    {
+        $reference=strtoupper(preg_replace('/\s+/','',$reference)??'');
+        if(preg_match('/^[A-Z0-9-]{6,40}$/',$reference)!==1)throw new RuntimeException('Enter the '.$label.': 6 to 40 letters, digits or dashes.');
+        return $reference;
+    }
+
+    /** The method as staff may record it, with its reference: none for cash, required for everything else. */
+    public static function staffPaymentReference(string $method,string $reference): ?string
+    {
+        $known=PaymentMethods::staff()[$method]??null;
+        if($known===null)throw new RuntimeException('Choose how the payment was made.');
+        if($known['reference_label']===null){if(trim($reference)!=='')throw new RuntimeException('A cash payment has no reference number. Leave it blank.');return null;}
+        return self::normalizePaymentReference($reference,$known['reference_label']);
+    }
+
+    private function applyDownpayment(int $id,string $method,string $reference,int $actor,bool $requireLiveHold,?callable $inTransaction,?int $proofId): void
+    {
+        $reference=self::staffPaymentReference($method,$reference);
+        $this->db->beginTransaction();
+        try{
+            $r=$this->rentals->find($id,true);if(!$r)throw new RuntimeException('Rental agreement not found.');
+            if($r['downpayment_status']==='not_required')throw new RuntimeException('No downpayment is required for this agreement.');
+            if($r['downpayment_status']==='received')throw new RuntimeException('The downpayment for this agreement has already been recorded.');
+            if($r['status']!=='reserved')throw new RuntimeException('A downpayment can only be recorded while the agreement is reserved.');
+            if($requireLiveHold&&($r['hold_expires_at']===null||new DateTimeImmutable((string)$r['hold_expires_at'],new DateTimeZone('UTC'))<=new DateTimeImmutable('now',new DateTimeZone('UTC'))))throw new RuntimeException('The reservation hold has run out, so the vehicle is no longer held. Make a new reservation before recording a payment.');
+            if($this->payments->hasPending($id))throw new RuntimeException('The customer is paying online right now. Wait for that payment to finish, then reload.');
+            if($inTransaction!==null)$inTransaction();
+            // The payment first, then the agreement: the database marks a downpayment received only when its payment exists.
+            $this->payments->insertStaffPayment(['agreement_id'=>$id,'purpose'=>'downpayment','method'=>$method,'amount'=>(string)$r['downpayment_amount'],'external_reference'=>$reference,'proof_id'=>$proofId,'recorded_by'=>$actor]);
+            if(!$this->rentals->markDownpaymentReceived($id))throw new RuntimeException('The downpayment changed in another request. Reload and try again.');
+            $this->db->commit();
+        }catch(\PDOException $e){
+            if($this->db->inTransaction())$this->db->rollBack();
+            if((int)($e->errorInfo[1]??0)===1062)throw new RuntimeException(str_contains($e->getMessage(),'uq_payments_external_reference')?'That reference number is already recorded on another agreement.':'The downpayment for this agreement has already been recorded.',0,$e);
+            throw $e;
+        }catch(\Throwable $e){if($this->db->inTransaction())$this->db->rollBack();throw $e;}
+    }
+
+    /** What is still owed, in centavos: the total to bill less every payment received. Never below zero. */
+    public function outstandingCents(int $id): int
+    {
+        return max(0,$this->totalCents($id)-$this->payments->paidCents($id));
+    }
+
     public function total(int $id): string
     {
         $cents=$this->totalCents($id);$absolute=abs($cents);return ($cents<0?'-':'').intdiv($absolute,100).'.'.str_pad((string)($absolute%100),2,'0',STR_PAD_LEFT);
@@ -133,31 +208,48 @@ final class RentalService
     public function bookingContext(int $id): array
     {
         $r=$this->rentals->find($id);if(!$r)throw new RuntimeException('Booking context unavailable.');
-        return ['agreement_id'=>(int)$r['agreement_id'],'status'=>$r['status'],'start_date'=>$r['start_date'],'end_date'=>$r['end_date'],'pickup_at'=>$r['scheduled_pickup_at'],'return_at'=>$r['scheduled_return_at'],'vehicle'=>trim($r['plate_number'].' '.$r['make'].' '.$r['model']),'base_amount'=>$r['base_amount'],'rental_days'=>(int)$r['rental_days']];
+        return ['agreement_id'=>(int)$r['agreement_id'],'booking_reference'=>$r['booking_reference'],'status'=>$r['status'],'start_date'=>$r['start_date'],'end_date'=>$r['end_date'],'pickup_at'=>$r['scheduled_pickup_at'],'return_at'=>$r['scheduled_return_at'],'vehicle'=>trim($r['plate_number'].' '.$r['make'].' '.$r['model']),'base_amount'=>$r['base_amount'],'rental_days'=>(int)$r['rental_days'],'total_amount'=>$this->total($id),'downpayment_amount'=>$r['downpayment_amount'],'downpayment_status'=>$r['downpayment_status'],'balance_at_pickup'=>$this->centsToAmount(max(0,$this->totalCents($id)-$this->toCents((string)$r['downpayment_amount'])-$this->payments->paidCents($id,'balance')))];
     }
 
     public function issueManagementLink(int $id): void
     {
         $r=$this->rentals->find($id);if(!$r)throw new RuntimeException('Rental agreement not found.');if(in_array($r['status'],['completed','cancelled','no_show'],true))throw new RuntimeException('Management links cannot be issued for terminal agreements.');$phone=$this->primaryCustomerPhone((int)$r['customer_id']);if($phone===null)throw new RuntimeException('The customer has no primary phone contact.');
         $hold=$r['status']==='reserved'&&$r['hold_expires_at']!==null?new DateTimeImmutable((string)$r['hold_expires_at'],new DateTimeZone('UTC')):null;
-        $this->magicLinks->issue($phone,null,'booking_manage',(int)$r['agreement_id'],$hold,null);
+        $this->magicLinks->issue($phone,null,'booking_manage',(int)$r['agreement_id'],$hold,null,(int)$r['customer_id']);
     }
 
     public function expireReservation(int $id,int $actor): bool
     {
-        $this->db->beginTransaction();try{$snapshot=$this->rentals->find($id);if(!$snapshot){$this->db->commit();return false;}$this->rentals->lockVehicle((int)$snapshot['vehicle_id']);$this->rentals->lockCustomer((int)$snapshot['customer_id']);$r=$this->rentals->lockAgreement($id);if(!$r||$r['status']!=='reserved'||$r['hold_expires_at']===null||new DateTimeImmutable((string)$r['hold_expires_at'],new DateTimeZone('UTC'))>new DateTimeImmutable('now',new DateTimeZone('UTC'))){$this->db->commit();return false;}if(!$this->rentals->setStatus($id,'reserved','cancelled','Reservation hold expired',$actor)){$this->db->commit();return false;}$this->invalidateLinks($id);$this->db->commit();return true;}catch(\Throwable $e){if($this->db->inTransaction())$this->db->rollBack();throw $e;}
+        $this->db->beginTransaction();try{$snapshot=$this->rentals->find($id);if(!$snapshot){$this->db->commit();return false;}$this->rentals->lockVehicle((int)$snapshot['vehicle_id']);$this->rentals->lockCustomer((int)$snapshot['customer_id']);$r=$this->rentals->lockAgreement($id);if(!$r||$r['status']!=='reserved'||$r['downpayment_status']==='received'||$this->hasProofAwaitingReview($id)||$this->payments->hasPending($id)||$r['hold_expires_at']===null||new DateTimeImmutable((string)$r['hold_expires_at'],new DateTimeZone('UTC'))>new DateTimeImmutable('now',new DateTimeZone('UTC'))){$this->db->commit();return false;}if(!$this->rentals->setStatus($id,'reserved','cancelled','Reservation hold expired',$actor)){$this->db->commit();return false;}$this->invalidateLinks($id);$this->db->commit();return true;}catch(\Throwable $e){if($this->db->inTransaction())$this->db->rollBack();throw $e;}
     }
 
     public function enqueueDueReminders(): int
     {
         $sql="SELECT agreement_id,customer_id,status FROM rental_agreements WHERE (status='confirmed' AND scheduled_pickup_at BETWEEN UTC_TIMESTAMP(6) AND DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 24 HOUR)) OR (status='active' AND scheduled_return_at BETWEEN UTC_TIMESTAMP(6) AND DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 24 HOUR)) ORDER BY agreement_id LIMIT 500";
-        $rows=$this->db->query($sql)->fetchAll();$count=0;foreach($rows as $r){$pickup=$r['status']==='confirmed';$phone=$this->primaryCustomerPhone((int)$r['customer_id']);if($phone===null)continue;$kind=$pickup?'pickup':'return';$text=$pickup?'Reminder: your Triple R Gensan rental pickup is scheduled within 24 hours. Agreement #'.$r['agreement_id'].'.':'Reminder: your Triple R Gensan rental return is scheduled within 24 hours. Agreement #'.$r['agreement_id'].'.';try{$this->notifications->enqueue($phone,'rental.'.$kind.'_reminder',$text,'transactional','normal','rental-'.$r['agreement_id'].'-'.$kind.'-reminder');$count++;}catch(\Throwable $e){error_log('Rental reminder could not be queued for agreement '.$r['agreement_id'].': '.get_class($e));}}return $count;
+        $rows=$this->db->query($sql)->fetchAll();$count=0;foreach($rows as $r){$pickup=$r['status']==='confirmed';$phone=$this->primaryCustomerPhone((int)$r['customer_id']);if($phone===null)continue;$kind=$pickup?'pickup':'return';$text=$pickup?'Reminder: your Triple R Gensan rental pickup is scheduled within 24 hours. Agreement #'.$r['agreement_id'].'.':'Reminder: your Triple R Gensan rental return is scheduled within 24 hours. Agreement #'.$r['agreement_id'].'.';try{$this->notifications->enqueue($phone,'rental.'.$kind.'_reminder',$text,'transactional','normal','rental-'.$r['agreement_id'].'-'.$kind.'-reminder',false,(int)$r['customer_id']);$count++;}catch(\Throwable $e){error_log('Rental reminder could not be queued for agreement '.$r['agreement_id'].': '.get_class($e));}}return $count;
     }
 
+    /** The customer's primary mobile number, or null when they have none. */
+    public function customerPhone(int $customerId): ?string { return $this->primaryCustomerPhone($customerId); }
     private function primaryCustomerPhone(int $customerId): ?string
     { foreach($this->customers->contacts($customerId) as $contact)if($contact['contact_type']==='phone'&&(int)$contact['is_primary']===1)return $this->customerCipher->decrypt($contact['contact_ciphertext'],'customer-contact:phone');return null; }
+    /** Queues one message to the booking's customer. A queueing problem is logged, never raised. */
+    public function notifyBooking(array $r,string $template,string $text,string $idempotencyKey): void
+    { try{$phone=$this->primaryCustomerPhone((int)$r['customer_id']);if($phone===null)return;$this->notifications->enqueue($phone,$template,$text,'transactional','normal',$idempotencyKey,false,(int)$r['customer_id']);}catch(\Throwable $e){error_log('Booking message could not be queued for agreement '.$r['agreement_id'].': '.get_class($e));} }
     private function notifyCustomer(array $r,string $template,string $state): void
-    { try{$phone=$this->primaryCustomerPhone((int)$r['customer_id']);if($phone===null)return;$text=match($state){'confirmed'=>'Your Triple R Gensan rental is confirmed. Agreement #'.$r['agreement_id'].'.','active'=>'Your rental pickup has been recorded. Agreement #'.$r['agreement_id'].'.','returned'=>'Your vehicle return has been recorded. Agreement #'.$r['agreement_id'].'.'};$this->notifications->enqueue($phone,$template,$text,'transactional','normal','rental-'.$r['agreement_id'].'-'.$state);}catch(\Throwable $e){error_log('Rental lifecycle SMS could not be queued for agreement '.$r['agreement_id'].': '.get_class($e));} }
+    { try{$phone=$this->primaryCustomerPhone((int)$r['customer_id']);if($phone===null)return;$text=match($state){'confirmed'=>'Your Triple R Gensan rental is confirmed. Agreement #'.$r['agreement_id'].'.'.$this->downpaymentSentence($r),'active'=>'Your rental pickup has been recorded. Agreement #'.$r['agreement_id'].'.','returned'=>'Your vehicle return has been recorded. Agreement #'.$r['agreement_id'].'.'};$this->notifications->enqueue($phone,$template,$text,'transactional','normal','rental-'.$r['agreement_id'].'-'.$state,false,(int)$r['customer_id']);}catch(\Throwable $e){error_log('Rental lifecycle SMS could not be queued for agreement '.$r['agreement_id'].': '.get_class($e));} }
+    /** "Downpayment received: P3,000. Balance of P7,000 is due at pickup." Empty when no downpayment was taken. */
+    private function downpaymentSentence(array $r): string
+    {
+        if(($r['downpayment_status']??'')!=='received')return '';
+        $paid=$this->toCents((string)$r['downpayment_amount']);$balance=max(0,$this->totalCents((int)$r['agreement_id'])-$paid);
+        return ' Downpayment received: '.$this->pesos($paid).'. Balance of '.$this->pesos($balance).' is due at pickup.';
+    }
+    /** A customer who has sent their proof, or is on the checkout right now, is not cancelled until that is settled. */
+    private function hasProofAwaitingReview(int $id): bool
+    { $q=$this->db->prepare("SELECT 1 FROM payment_proofs WHERE agreement_id=:id AND proof_status='submitted' LIMIT 1");$q->execute(['id'=>$id]);return $q->fetchColumn()!==false; }
+    private function pesos(int $cents): string { return '₱'.number_format($cents/100,$cents%100===0?0:2); }
+    private function centsToAmount(int $cents): string { return intdiv($cents,100).'.'.str_pad((string)($cents%100),2,'0',STR_PAD_LEFT); }
     private function positiveId(mixed $v,string $name): int { $n=filter_var($v,FILTER_VALIDATE_INT);if($n===false||$n<1)throw new RuntimeException('Choose a valid '.$name.'.');return (int)$n; }
     private function totalCents(int $id): int{$r=$this->rentals->find($id);if(!$r)throw new RuntimeException('Rental agreement not found.');$total=$this->toCents((string)$r['base_amount']);foreach($this->charges->forAgreement($id) as $charge)$total+=$this->toCents((string)$charge['amount'])*self::CHARGE_SIGN[$charge['charge_type']]*($charge['entry_kind']==='reversal'?-1:1);return $total;}
     private function toCents(string $amount): int{[$whole,$fraction]=array_pad(explode('.', $amount,2),2,'0');return ((int)$whole*100)+(int)str_pad(substr($fraction,0,2),2,'0');}

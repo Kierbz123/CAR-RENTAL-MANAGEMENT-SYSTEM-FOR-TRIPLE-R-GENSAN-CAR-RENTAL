@@ -1,5 +1,7 @@
 # M4 — Drivers
 
+> **Table names changed on 2026-10-01** (migrations 013 to 017). This document uses the names from when it was written. The table "Was / Now" in the README section "Schema consolidation" says where each one lives now.
+
 ## File trace
 
 - `database/migrations/006_drivers.sql` creates `drivers`, `driver_contacts`, and append-only `driver_status_logs`; license fingerprints are unique and state/history references use restrictive foreign keys.

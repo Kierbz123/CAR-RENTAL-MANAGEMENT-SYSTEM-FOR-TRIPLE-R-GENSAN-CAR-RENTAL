@@ -12,9 +12,15 @@
          APP_BASE_URL     set to the public address, so SMS booking links and the
                           customer's secure-link page work through the tunnel.
        Your .env file is not changed.
+    4. Once a minute, runs the two jobs a real server would have scheduled: cancelling
+       reservations whose hold has run out (which frees their vehicles) and queueing
+       pickup and return reminders.
+    5. If a Telegram bot is configured in .env (TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_USERNAME),
+       also starts the two background workers that make Telegram work: one that listens for
+       customers pressing Start, and one that sends queued messages every few seconds.
 
     The site is online only while this window stays open. Press Ctrl+C to take it
-    offline; the tunnel and the PHP server started here are both stopped.
+    offline; the tunnel, the PHP server and the workers started here are all stopped.
 
     Needs cloudflared. Install it once with:
         winget install --id Cloudflare.cloudflared
@@ -56,8 +62,20 @@ $tunnelLog = Join-Path $logDirectory 'demo-tunnel.log'
 $tunnelOut = Join-Path $logDirectory 'demo-tunnel.out.log'
 Remove-Item -LiteralPath $tunnelLog, $tunnelOut -ErrorAction SilentlyContinue
 
+# Telegram is switched on by .env alone; the token is only checked for presence here, never shown.
+$telegramReady = $false
+$envFile = Join-Path $root '.env'
+if (Test-Path -LiteralPath $envFile) {
+    $envLines = Get-Content -LiteralPath $envFile
+    $hasToken = [bool]($envLines | Where-Object { $_ -match '^\s*TELEGRAM_BOT_TOKEN\s*=\s*\S' })
+    $hasName = [bool]($envLines | Where-Object { $_ -match '^\s*TELEGRAM_BOT_USERNAME\s*=\s*\S' })
+    $telegramReady = $hasToken -and $hasName
+}
+
 $tunnel = $null
 $server = $null
+$listener = $null
+$sender = $null
 try {
     Write-Host 'Opening the tunnel...'
     $tunnel = Start-Process -FilePath $cloudflared `
@@ -116,17 +134,61 @@ try {
     Write-Host '  A new address is issued each time this script starts.'
     Write-Host ''
 
+    if ($telegramReady) {
+        $listenerLog = Join-Path $logDirectory 'demo-telegram-listener.log'
+        $senderLog = Join-Path $logDirectory 'demo-telegram-sender.log'
+        $listener = Start-Process -FilePath $php -ArgumentList @('bin/telegram-updates.php') `
+            -WorkingDirectory $root -WindowStyle Hidden -PassThru `
+            -RedirectStandardOutput $listenerLog -RedirectStandardError "$listenerLog.err"
+        $sender = Start-Process -FilePath $php -ArgumentList @('bin/notifications-worker.php', '--watch=3') `
+            -WorkingDirectory $root -WindowStyle Hidden -PassThru `
+            -RedirectStandardOutput $senderLog -RedirectStandardError "$senderLog.err"
+        Start-Sleep -Seconds 3
+        if ($listener.HasExited) {
+            Write-Warning "Telegram is OFF: the listener could not start. Reason:"
+            Get-Content -LiteralPath "$listenerLog.err" -ErrorAction SilentlyContinue | Select-Object -First 3 | ForEach-Object { Write-Warning "  $_" }
+        } else {
+            Write-Host '  Telegram is ON: listening for customers pressing Start, and sending queued messages.' -ForegroundColor Green
+            Write-Host ''
+        }
+    } else {
+        Write-Host '  Telegram is off (no bot in .env). See docs/TELEGRAM_NOTIFICATIONS_PLAN.md to turn it on.'
+        Write-Host ''
+    }
+
+    Write-Host '  Every minute: reservations whose hold has run out are cancelled, and reminders are queued.'
+    Write-Host ''
+
+    $telegramWarned = $false
+    $jobsWarned = $false
+    $jobsLog = Join-Path $logDirectory 'demo-jobs.log'
+    $lastJobs = [datetime]::MinValue
     while (-not $tunnel.HasExited -and -not $server.HasExited) {
         Start-Sleep -Seconds 2
+        if (((Get-Date) - $lastJobs).TotalSeconds -ge 60) {
+            $lastJobs = Get-Date
+            foreach ($job in @('bin/rentals-expire.php', 'bin/rentals-reminders.php')) {
+                $run = Start-Process -FilePath $php -ArgumentList @($job) -WorkingDirectory $root -WindowStyle Hidden -Wait -PassThru `
+                    -RedirectStandardOutput $jobsLog -RedirectStandardError "$jobsLog.err"
+                if ($run.ExitCode -ne 0 -and -not $jobsWarned) {
+                    Write-Warning "$job did not finish cleanly. The site is still online; see $jobsLog.err"
+                    $jobsWarned = $true
+                }
+            }
+        }
+        if ($telegramReady -and -not $telegramWarned -and (($listener -and $listener.HasExited) -or ($sender -and $sender.HasExited))) {
+            Write-Warning "A Telegram worker stopped. The site is still online; see the demo-telegram-*.log files in $logDirectory"
+            $telegramWarned = $true
+        }
     }
     if ($tunnel.HasExited) { Write-Warning "The tunnel stopped. See $tunnelLog" }
     if ($server.HasExited) { Write-Warning "The web server stopped. See $serverLog" }
 }
 finally {
-    foreach ($process in @($tunnel, $server)) {
+    foreach ($process in @($tunnel, $server, $listener, $sender)) {
         if ($process -and -not $process.HasExited) {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
         }
     }
-    Write-Host 'Tunnel closed and web server stopped. The site is offline.'
+    Write-Host 'Tunnel closed, web server and workers stopped. The site is offline.'
 }

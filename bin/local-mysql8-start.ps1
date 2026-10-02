@@ -9,8 +9,21 @@ $mysqladmin = Join-Path $install 'bin\mysqladmin.exe'
 $mysql = Join-Path $install 'bin\mysql.exe'
 $errorLog = Join-Path $base 'mysql-error.log'
 
-$ping = & $mysqladmin --host=127.0.0.1 --port=$port --user=root ping 2>$null
-if ($LASTEXITCODE -eq 0) {
+# Windows PowerShell turns a native program's error output into a terminating error while
+# $ErrorActionPreference is 'Stop', so "is the server up?" is asked with that relaxed.
+# Without this the script failed exactly when the server was not running yet.
+function Test-ServerUp {
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $mysqladmin --host=127.0.0.1 --port=$port --user=root ping 2>$null | Out-Null
+        return $LASTEXITCODE -eq 0
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
+if (Test-ServerUp) {
     $result = & $mysql --host=127.0.0.1 --port=$port --user=root --batch --skip-column-names --execute='SELECT VERSION(), @@log_bin_trust_function_creators;'
     if ($LASTEXITCODE -ne 0 -or $result -notmatch '^8\.' -or $result -notmatch '\s1$') {
         throw "MySQL is listening on port $port, but version or log_bin_trust_function_creators verification failed: $result"
@@ -51,8 +64,7 @@ Start-Process -FilePath $mysqld -ArgumentList $arguments -WindowStyle Hidden
 $ready = $false
 for ($i = 0; $i -lt 30; $i++) {
     Start-Sleep -Seconds 1
-    & $mysqladmin --host=127.0.0.1 --port=$port --user=root ping 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) {
+    if (Test-ServerUp) {
         $ready = $true
         break
     }

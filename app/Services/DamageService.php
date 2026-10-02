@@ -59,7 +59,7 @@ final class DamageService
         }catch(\Throwable $e){if($this->db->inTransaction())$this->db->rollBack();throw $e;}
     }
 
-    /** The RentalService owns the sole charge insertion path; its callback records review atomically. */
+    /** The RentalService owns the sole charge insertion path; the charge row itself records the decision and any adjustment reason. */
     public function postCharge(int $decisionId,string $amount,string $adjustmentReason,int $actor): int
     {
         $amount=$this->money($amount);$reason=trim($adjustmentReason);if($this->cents($amount)<=0)throw new RuntimeException('Charge amount must be positive.');if(mb_strlen($reason)>500)throw new RuntimeException('Adjustment reason must be 500 characters or fewer.');
@@ -68,11 +68,10 @@ final class DamageService
         if($this->reports->hasPosting($decisionId))throw new RuntimeException('A damage charge has already been posted for this liability decision.');
         if($this->cents($amount)>(int)$this->cents((string)$decision['liable_amount']))throw new RuntimeException('The charge cannot exceed the approved liability amount.');
         $adjusted=$this->cents($amount)!==$this->cents((string)$decision['liable_amount']);if($adjusted&&$reason==='')throw new RuntimeException('A reason is required when finance adjusts the approved amount.');
-        try{return $this->rentalService->addCharge((int)$decision['agreement_id'],'damage',$amount,'Damage report #'.$decision['report_id'].' liability decision #'.$decisionId,$actor,function(int $chargeId)use($decisionId,$amount,$reason,$actor):void{
+        try{return $this->rentalService->addCharge((int)$decision['agreement_id'],'damage',$amount,'Damage report #'.$decision['report_id'].' liability decision #'.$decisionId,$actor,function()use($decisionId):void{
             $current=$this->reports->currentDecisionForPosting($decisionId);
             if(!$current)throw new RuntimeException('A superseded liability decision cannot be charged.');
-            $this->reports->appendPosting($decisionId,$chargeId,$amount,$reason===''?null:$reason,$actor);
-        });}catch(\PDOException $e){if($e->getCode()==='23000')throw new RuntimeException('A damage charge has already been posted for this liability decision.',0,$e);throw $e;}
+        },$decisionId,$reason===''?null:$reason);}catch(\PDOException $e){if($e->getCode()==='23000')throw new RuntimeException('A damage charge has already been posted for this liability decision.',0,$e);throw $e;}
     }
 
     public function streamPhoto(int $photoId): array

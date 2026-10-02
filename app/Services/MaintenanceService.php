@@ -113,12 +113,12 @@ final class MaintenanceService
         $service=$this->repository->service($serviceId);if(!$service)throw new RuntimeException('Maintenance service not found.');
         if(($phase==='before'&&$service['status']!=='in_progress')||($phase==='after'&&$service['status']!=='completed'))throw new RuntimeException('Before photos belong to an in-progress service; after photos belong to a completed service.');
         $stored=$this->photos->storeEvidence($file,'maintenance/'.$service['vehicle_id'].'/'.$serviceId);
-        try{$this->db->beginTransaction();$q=$this->db->prepare('SELECT status FROM maintenance_services WHERE service_id=:id AND vehicle_id=:vehicle FOR UPDATE');$q->execute(['id'=>$serviceId,'vehicle'=>$service['vehicle_id']]);$status=$q->fetchColumn();if(($phase==='before'&&$status!=='in_progress')||($phase==='after'&&$status!=='completed'))throw new RuntimeException('Service status changed before the photo could be attached.');$count=$this->db->prepare('SELECT COUNT(*) FROM maintenance_photos WHERE service_id=:id AND phase=:phase');$count->execute(['id'=>$serviceId,'phase'=>$phase]);if((int)$count->fetchColumn()>=10)throw new RuntimeException('A maximum of 10 photos is allowed for each service phase.');$insert=$this->db->prepare('INSERT INTO maintenance_photos (service_id,phase,storage_path,original_filename,mime,size_bytes,uploaded_by) VALUES (:service,:phase,:path,:name,:mime,:size,:actor)');$insert->execute(['service'=>$serviceId,'phase'=>$phase,'path'=>$stored['storage_path'],'name'=>$stored['original_filename'],'mime'=>$stored['mime'],'size'=>$stored['size_bytes'],'actor'=>$actor]);$this->db->commit();}catch(\Throwable $e){if($this->db->inTransaction())$this->db->rollBack();$this->photos->removeEvidence($stored['storage_path']);throw $e;}
+        try{$this->db->beginTransaction();$q=$this->db->prepare('SELECT status FROM maintenance_services WHERE service_id=:id AND vehicle_id=:vehicle FOR UPDATE');$q->execute(['id'=>$serviceId,'vehicle'=>$service['vehicle_id']]);$status=$q->fetchColumn();if(($phase==='before'&&$status!=='in_progress')||($phase==='after'&&$status!=='completed'))throw new RuntimeException('Service status changed before the photo could be attached.');$count=$this->db->prepare('SELECT COUNT(*) FROM photos WHERE maintenance_service_id=:id AND phase=:phase');$count->execute(['id'=>$serviceId,'phase'=>$phase]);if((int)$count->fetchColumn()>=10)throw new RuntimeException('A maximum of 10 photos is allowed for each service phase.');$insert=$this->db->prepare('INSERT INTO photos (maintenance_service_id,phase,storage_path,original_filename,mime,size_bytes,uploaded_by) VALUES (:service,:phase,:path,:name,:mime,:size,:actor)');$insert->execute(['service'=>$serviceId,'phase'=>$phase,'path'=>$stored['storage_path'],'name'=>$stored['original_filename'],'mime'=>$stored['mime'],'size'=>$stored['size_bytes'],'actor'=>$actor]);$this->db->commit();}catch(\Throwable $e){if($this->db->inTransaction())$this->db->rollBack();$this->photos->removeEvidence($stored['storage_path']);throw $e;}
     }
 
     public function streamPhoto(int $photoId): array
     {
-        $q=$this->db->prepare('SELECT storage_path,mime FROM maintenance_photos WHERE photo_id=:id');$q->execute(['id'=>$photoId]);$row=$q->fetch();if(!$row)throw new RuntimeException('Photo not found.');return ['body'=>$this->photos->readEvidence((string)$row['storage_path']),'mime'=>(string)$row['mime']];
+        $q=$this->db->prepare('SELECT storage_path,mime FROM photos WHERE photo_id=:id AND maintenance_service_id IS NOT NULL');$q->execute(['id'=>$photoId]);$row=$q->fetch();if(!$row)throw new RuntimeException('Photo not found.');return ['body'=>$this->photos->readEvidence((string)$row['storage_path']),'mime'=>(string)$row['mime']];
     }
 
     public function scheduleData(array $input): array
@@ -175,7 +175,7 @@ final class MaintenanceService
 
     private function appendStatusLog(int $id,?string $old,string $new,?string $reason,int $actor): void
     {
-        $q=$this->db->prepare('INSERT INTO maintenance_service_status_logs (service_id,old_status,new_status,reason,actor_user_id) VALUES (:service,:old,:new,:reason,:actor)');$q->execute(['service'=>$id,'old'=>$old,'new'=>$new,'reason'=>$reason,'actor'=>$actor]);
+        $q=$this->db->prepare('INSERT INTO status_logs (subject,maintenance_service_id,old_status,new_status,reason,actor_user_id) VALUES (\'maintenance_service\',:service,:old,:new,:reason,:actor)');$q->execute(['service'=>$id,'old'=>$old,'new'=>$new,'reason'=>$reason,'actor'=>$actor]);
     }
 
     private function appendScheduleLog(int $id,?array $old,array $new,string $reason,int $actor): void

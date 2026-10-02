@@ -18,15 +18,16 @@ final class VehiclePhotoService
     {
         $stored = $this->storeEvidence($file, 'vehicles/' . $vehicleId);
         try {
-            $order=$this->db->prepare('SELECT COALESCE(MAX(sort_order),0)+1 FROM vehicle_photos WHERE vehicle_id=:id'); $order->execute(['id'=>$vehicleId]);
-            $stmt=$this->db->prepare('INSERT INTO vehicle_photos (vehicle_id,storage_path,original_filename,mime,size_bytes,sort_order,uploaded_by) VALUES (:vehicle,:path,:original,:mime,:size,:sort,:actor)');
+            $order=$this->db->prepare('SELECT COALESCE(MAX(sort_order),0)+1 FROM photos WHERE vehicle_id=:id'); $order->execute(['id'=>$vehicleId]);
+            $stmt=$this->db->prepare('INSERT INTO photos (vehicle_id,storage_path,original_filename,mime,size_bytes,sort_order,uploaded_by) VALUES (:vehicle,:path,:original,:mime,:size,:sort,:actor)');
             $stmt->execute(['vehicle'=>$vehicleId,'path'=>$stored['storage_path'],'original'=>$stored['original_filename'],'mime'=>$stored['mime'],'size'=>$stored['size_bytes'],'sort'=>(int)$order->fetchColumn(),'actor'=>$actor]);
         } catch (\Throwable $e) { $this->removeEvidence($stored['storage_path']); throw $e; }
     }
 
     public function stream(int $photoId): array
     {
-        $stmt=$this->db->prepare('SELECT storage_path,mime,original_filename FROM vehicle_photos WHERE photo_id=:id'); $stmt->execute(['id'=>$photoId]); $row=$stmt->fetch();
+        // Photos of every kind share one table: this route serves vehicle photos only.
+        $stmt=$this->db->prepare('SELECT storage_path,mime,original_filename FROM photos WHERE photo_id=:id AND vehicle_id IS NOT NULL'); $stmt->execute(['id'=>$photoId]); $row=$stmt->fetch();
         if (!$row) throw new RuntimeException('Photo not found.');
         return ['body'=>$this->readEvidence((string)$row['storage_path']),'mime'=>(string)$row['mime']];
     }

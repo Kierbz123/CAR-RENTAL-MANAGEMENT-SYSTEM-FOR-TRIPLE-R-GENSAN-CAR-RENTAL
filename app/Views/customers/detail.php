@@ -8,8 +8,17 @@ use TripleR\Support\View;
 $e = static fn (mixed $value): string => View::e($value);
 $deleted = $customer['deleted_at'] !== null;
 $blacklisted = (int) $customer['is_blacklisted'] === 1;
+$pendingCode = $telegram['pending'] ?? null;
+$telegramEnded = [
+    'customer_stop' => 'the customer sent /stop',
+    'staff' => 'disconnected by staff',
+    'bot_blocked' => 'the customer blocked the bot',
+    'relinked' => 'replaced by a newer connection',
+];
+// The QR library is only loaded while a connection code is on screen.
+$scripts = $pendingCode ? ['customers.js', 'vendor/qrcode-generator.js', 'qr-render.js', 'telegram-connect.js'] : ['customers.js'];
 
-View::begin('staff', ['title' => (string) $customer['full_name'], 'crumbs' => [['Customers', '/customers'], [(string) $customer['full_name'], null]], 'scripts' => ['customers.js']]);
+View::begin('staff', ['title' => (string) $customer['full_name'], 'crumbs' => [['Customers', '/customers'], [(string) $customer['full_name'], null]], 'scripts' => $scripts]);
 ?>
 <div data-reveal-url="/customers/reveal" data-csrf="<?= $e($csrfToken) ?>">
 <header class="page-header">
@@ -232,6 +241,49 @@ View::begin('staff', ['title' => (string) $customer['full_name'], 'crumbs' => [[
         </section>
 
 <?php if (!$deleted): ?>
+        <section class="panel" id="telegram" aria-labelledby="telegram-title">
+            <div class="panel-heading">
+                <div><h2 id="telegram-title">Telegram</h2><p>Booking links, confirmations and reminders can go to the customer’s Telegram for free instead of by SMS.</p></div>
+<?php if ($telegram['connected']): ?>
+                <span class="badge badge-success">Connected</span>
+<?php elseif ($telegram['configured']): ?>
+                <span class="badge badge-neutral">Not connected</span>
+<?php endif; ?>
+            </div>
+            <div class="panel-body">
+<?php if (!$telegram['configured']): ?>
+                <p class="muted">Telegram is not set up on this installation yet. Once the bot token and username are added to the configuration, customers can be connected from here.</p>
+<?php elseif ($telegram['connected']): ?>
+                <p>Connected since <?= $e(Format::datetime($telegram['linked_at'])) ?>. This customer’s messages are sent to their Telegram chat. They can send <span class="mono">/stop</span> to the bot at any time.</p>
+                <form method="post" action="/customers/telegram/disconnect" data-confirm="Disconnect <?= $e($customer['full_name']) ?> from Telegram? Their messages will go by SMS until they connect again." data-confirm-action="Disconnect">
+                    <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
+                    <input type="hidden" name="customer_id" value="<?= (int) $customer['customer_id'] ?>">
+                    <button class="button button-danger" type="submit">Disconnect Telegram</button>
+                </form>
+<?php else: ?>
+<?php if ($telegram['last_ended_at']): ?>
+                <p class="muted">The last connection ended on <?= $e(Format::datetime($telegram['last_ended_at'])) ?>: <?= $e($telegramEnded[$telegram['last_ended_reason']] ?? 'ended') ?><?= $telegram['last_ended_by'] ? ' (' . $e($telegram['last_ended_by']) . ')' : '' ?>.</p>
+<?php endif; ?>
+<?php if ($pendingCode): ?>
+                <div class="telegram-connect" data-telegram-connect data-status-url="/api/customers/telegram/status?customer_id=<?= (int) $customer['customer_id'] ?>" data-expires-at="<?= (int) $pendingCode['expires_at'] ?>">
+                    <p>Ask <strong><?= $e($customer['full_name']) ?></strong> to scan this with their phone’s camera, then press <strong>Start</strong> in Telegram.</p>
+                    <div class="qr-code" data-qr="<?= $e($pendingCode['link']) ?>" role="img" aria-label="QR code that opens the @<?= $e($telegram['bot_username']) ?> bot in Telegram with this customer’s connection code"></div>
+                    <p class="field-label">Or open @<?= $e($telegram['bot_username']) ?> in Telegram and send this code</p>
+                    <p class="connect-code mono"><?= $e(substr((string) $pendingCode['code'], 0, 4) . '-' . substr((string) $pendingCode['code'], 4)) ?></p>
+                    <p class="muted connect-link">Link for the customer’s own phone: <?= $e($pendingCode['link']) ?></p>
+                    <p class="muted" role="status" data-telegram-wait>Waiting for the customer… The code works once and expires at <?= $e(Format::datetime(gmdate('Y-m-d H:i:s', (int) $pendingCode['expires_at']))) ?>.</p>
+                </div>
+<?php else: ?>
+                <p>Show a one-time QR code, then have the customer scan it with their own phone and press Start in Telegram. Pressing Start is the customer’s consent to receive messages there.</p>
+<?php endif; ?>
+                <form method="post" action="/customers/telegram/code">
+                    <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
+                    <input type="hidden" name="customer_id" value="<?= (int) $customer['customer_id'] ?>">
+                    <button class="button <?= $pendingCode ? 'button-secondary' : 'button-primary' ?>" type="submit"><?= $pendingCode ? 'Create a new QR code' : 'Show Telegram QR code' ?></button>
+                </form>
+<?php endif; ?>
+            </div>
+        </section>
         <section class="panel" aria-labelledby="status-title">
             <div class="panel-heading"><div><h2 id="status-title">Booking status</h2><p>Blacklisting blocks new bookings. Rentals already made stay valid.</p></div></div>
             <div class="panel-body">

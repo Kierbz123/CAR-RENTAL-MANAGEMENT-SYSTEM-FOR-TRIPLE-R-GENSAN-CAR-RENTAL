@@ -123,7 +123,7 @@ $agrm3 = $rentalService->create([
 ], $adminActor);
 assertException(fn() => $rentalService->transition($agrm3, 'confirm', $adminActor), 'driver', 'FR-05 Confirmation Guard (rejects driverless)');
 $chauffeurService->assignDriver($agrm3, $driverId2, $adminActor);
-$rentalService->transition($agrm3, 'confirm', $adminActor);
+$rentalService->recordDownpayment($agrm3,'T'.strtoupper(bin2hex(random_bytes(8))),$adminActor);$rentalService->transition($agrm3, 'confirm', $adminActor);
 echo "PASS: FR-05 Confirmation Guard (allows with driver)\n";
 
 // 4. License expiry is enforced at assignment and rechecked at confirmation.
@@ -213,7 +213,7 @@ if (!$pass5) {
 }
 
 // 8. Driver removal (blocked on confirmed, works on reserved, fee reversed)
-$rentalService->transition($agrm5, 'confirm', $adminActor);
+$rentalService->recordDownpayment($agrm5,'T'.strtoupper(bin2hex(random_bytes(8))),$adminActor);$rentalService->transition($agrm5, 'confirm', $adminActor);
 assertException(fn() => $chauffeurService->removeDriver($agrm5, $adminActor), 'reserved', 'Driver removal on confirmed agreement rejected');
 
 $agrm6 = $rentalService->create([

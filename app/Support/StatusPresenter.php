@@ -32,6 +32,7 @@ final class StatusPresenter
     /** Labels that depend on what the value describes. */
     private const KIND_LABELS = [
         'due' => ['due' => 'Due now'],
+        'payment' => ['pending' => 'In progress', 'failed' => 'Not paid', 'expired' => 'Timed out'],
     ];
 
     private const TONES = [
@@ -46,6 +47,12 @@ final class StatusPresenter
         'deposit' => [
             'not_required' => 'neutral', 'due' => 'warning', 'held' => 'info',
             'released' => 'success', 'refunded' => 'success', 'forfeited' => 'danger',
+        ],
+        'downpayment' => [
+            'not_required' => 'neutral', 'due' => 'warning', 'received' => 'success',
+        ],
+        'payment' => [
+            'pending' => 'info', 'paid' => 'success', 'failed' => 'danger', 'cancelled' => 'neutral', 'expired' => 'neutral',
         ],
         'driver' => [
             'active' => 'success', 'on_assignment' => 'info', 'off_duty' => 'warning',

@@ -33,13 +33,13 @@ if ($LASTEXITCODE -ne 0) { throw 'Unable to create isolated MySQL 8 acceptance s
 
 Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'database\schema.sql') | & $mysql --host=127.0.0.1 --port=3307 --user=root "--database=$schemaDbName"
 if ($LASTEXITCODE -ne 0) { throw 'The consolidated clean-install schema failed to import into its isolated MySQL 8 database.' }
-$schemaMetaQuery = "SELECT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$schemaDbName'),(SELECT COUNT(*) FROM information_schema.table_constraints WHERE constraint_schema='$schemaDbName' AND constraint_type='PRIMARY KEY'),(SELECT COUNT(*) FROM information_schema.table_constraints WHERE constraint_schema='$schemaDbName' AND constraint_type='FOREIGN KEY'),(SELECT checksum FROM $schemaDbName.schema_migrations WHERE migration='011_maintenance.sql');"
+$schemaMetaQuery = "SELECT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$schemaDbName'),(SELECT COUNT(*) FROM information_schema.table_constraints WHERE constraint_schema='$schemaDbName' AND constraint_type='PRIMARY KEY'),(SELECT COUNT(*) FROM information_schema.table_constraints WHERE constraint_schema='$schemaDbName' AND constraint_type='FOREIGN KEY'),(SELECT checksum FROM $schemaDbName.schema_migrations WHERE migration='020_payments.sql');"
 $schemaMeta = & $mysql --host=127.0.0.1 --port=3307 --user=root --batch --skip-column-names "--execute=$schemaMetaQuery"
 if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect consolidated schema metadata.' }
-$schemaExpectedChecksum = (Get-FileHash -Algorithm SHA256 (Join-Path $PSScriptRoot 'database\migrations\011_maintenance.sql')).Hash.ToLowerInvariant()
+$schemaExpectedChecksum = (Get-FileHash -Algorithm SHA256 (Join-Path $PSScriptRoot 'database\migrations\020_payments.sql')).Hash.ToLowerInvariant()
 $schemaMetaFields = (($schemaMeta -join "`n").Trim() -split "`t")
-if ($schemaMetaFields.Count -ne 4 -or $schemaMetaFields[0] -ne '39' -or $schemaMetaFields[1] -ne '39' -or $schemaMetaFields[2] -ne '66' -or $schemaMetaFields[3] -ne $schemaExpectedChecksum) { throw "Consolidated schema metadata mismatch: $($schemaMeta -join ' ')" }
-"Canonical schema import verified: $($schemaMetaFields[0]) tables, $($schemaMetaFields[1]) primary keys, $($schemaMetaFields[2]) foreign keys, migration 011 checksum matches."
+if ($schemaMetaFields.Count -ne 4 -or $schemaMetaFields[0] -ne '35' -or $schemaMetaFields[1] -ne '35' -or $schemaMetaFields[2] -ne '71' -or $schemaMetaFields[3] -ne $schemaExpectedChecksum) { throw "Consolidated schema metadata mismatch: $($schemaMeta -join ' ')" }
+"Canonical schema import verified: $($schemaMetaFields[0]) tables, $($schemaMetaFields[1]) primary keys, $($schemaMetaFields[2]) foreign keys, migration 020 checksum matches."
 
 # Process-local environment overrides the existing ignored .env without changing it.
 $env:DB_HOST = '127.0.0.1'
@@ -85,6 +85,10 @@ if ($LASTEXITCODE -ne 0) { throw "M8 due-soon CLI report failed with exit code $
 if ($LASTEXITCODE -ne 0) { throw "M8 due-soon CSV report failed with exit code $LASTEXITCODE." }
 & $php 'bin\test-m6-db-guards.php'
 if ($LASTEXITCODE -ne 0) { throw "Migration 009 raw-SQL checks failed with exit code $LASTEXITCODE." }
+& $php 'bin\test-downpayment.php'
+if ($LASTEXITCODE -ne 0) { throw "Downpayment checks failed with exit code $LASTEXITCODE." }
+& $php 'bin\test-payments.php'
+if ($LASTEXITCODE -ne 0) { throw "Payment checks failed with exit code $LASTEXITCODE." }
 
 $env:M4_HTTP_TEST_PASSWORD = "M4-Http-$(New-RandomHex 20)Aa1!"
 $serverLog = Join-Path $env:TEMP "TripleR-M4-http-$tag.log"

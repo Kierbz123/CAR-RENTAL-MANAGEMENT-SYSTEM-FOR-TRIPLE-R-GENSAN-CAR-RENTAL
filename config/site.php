@@ -37,6 +37,14 @@ return [
         'map_url' => 'https://maps.app.goo.gl/H1HPtYuUbwq3KWRRA',
     ],
 
+    // Where customers send the 30% downpayment. Shown on the customer's booking page.
+    // Left empty, the page tells the customer to call the office for the number.
+    'payments' => [
+        // Shown to customers who pay by GCash transfer and upload a proof. The other ways to pay are in config/payments.php.
+        'gcash_number' => '',                                       // e.g. '0917 123 4567'
+        'gcash_account_name' => '',                                 // the name GCash shows for that number
+    ],
+
     // Hand-written list for the landing page. It is NOT read from the vehicles table.
     'currency_symbol' => '₱',                                       // Philippine peso, matching the staff workspace
     // Rates are illustrative starting prices in the range of typical Philippine market rates

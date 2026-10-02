@@ -12,17 +12,18 @@ use TripleR\Repositories\CustomerRepository;
 use TripleR\Security\Csrf;
 use TripleR\Services\CustomerPiiCipher;
 use TripleR\Services\CustomerService;
+use TripleR\Services\TelegramLinkService;
 
 final class CustomerController
 {
     private const ROLES=['system_admin','front_desk'];
-    public function __construct(private readonly AuthMiddleware $guard,private readonly CustomerRepository $customers,private readonly CustomerService $service,private readonly CustomerPiiCipher $cipher) {}
+    public function __construct(private readonly AuthMiddleware $guard,private readonly CustomerRepository $customers,private readonly CustomerService $service,private readonly CustomerPiiCipher $cipher,private readonly TelegramLinkService $telegram) {}
 
     public function index(Request $request): Response
     {
         $user=$this->guard->requireRoles(self::ROLES); if ($user instanceof Response) return $user;
         $type=trim((string)($request->query['type']??'')); if ($type!==''&&!in_array($type,['walk_in','online','corporate','repeat','referral'],true)) $type='';
-        return $this->render('customers/list',['customers'=>$this->customers->list($type?:null,(string)($request->query['search']??'')),'type'=>$type,'search'=>(string)($request->query['search']??''),'user'=>$user]);
+        return $this->render('customers/list',['customers'=>$this->customers->list($type?:null,(string)($request->query['search']??'')),'type'=>$type,'search'=>(string)($request->query['search']??''),'telegramOn'=>$this->telegram->isConfigured(),'user'=>$user]);
     }
 
     public function newForm(): Response
@@ -48,7 +49,7 @@ final class CustomerController
         $contacts=$this->customers->contacts($id); foreach ($contacts as &$contact) $contact['masked_value']=$this->service->maskContact($contact); unset($contact);
         $documents=$this->customers->documents($id); foreach ($documents as &$doc) $doc['masked_value']=$this->service->maskDocument($doc); unset($doc);
         $notice=$_SESSION['_customer_notice']??null; unset($_SESSION['_customer_notice']);
-        return $this->render('customers/detail',['customer'=>$customer,'contacts'=>$contacts,'documents'=>$documents,'notes'=>$this->customers->notes($id),'documentAudits'=>$this->customers->documentAuditHistory($id),'rentals'=>$this->customers->rentalHistory($id),'notice'=>$notice,'user'=>$user]);
+        return $this->render('customers/detail',['customer'=>$customer,'contacts'=>$contacts,'documents'=>$documents,'notes'=>$this->customers->notes($id),'documentAudits'=>$this->customers->documentAuditHistory($id),'rentals'=>$this->customers->rentalHistory($id),'telegram'=>$this->telegramPanel($id),'notice'=>$notice,'user'=>$user]);
     }
 
     public function editForm(Request $request): Response
@@ -166,6 +167,43 @@ final class CustomerController
         if (!$customer||!$record||!in_array($kind,['contact','document'],true)) return Response::json(['error'=>'Invalid customer value.'],422);
         try { $value=$kind==='contact'?$this->service->revealContact($customer,$record):$this->service->revealDocument($customer,$record); return Response::json(['value'=>$value]); }
         catch (RuntimeException) { return Response::json(['error'=>'Value not found or unavailable.'],404); }
+    }
+
+    /** Creates the one-time code the customer sends to the bot. It is shown on the customer page until it is used or expires. */
+    public function telegramCode(Request $request): Response
+    {
+        $user=$this->guard->requireRoles(self::ROLES); if ($user instanceof Response) return $user;
+        if (!Csrf::valid($request)) return Response::html('Invalid request token.',403);
+        $id=$this->id($request->form['customer_id']??null); if (!$id) return Response::html('Invalid customer.',422);
+        try { $_SESSION['_telegram_codes'][$id]=$this->telegram->createCode($id,(int)$user['id']); }
+        catch (RuntimeException $e) { $_SESSION['_customer_notice']=$e->getMessage(); }
+        return Response::redirect('/customers/detail?customer_id='.$id.'#telegram');
+    }
+
+    public function telegramDisconnect(Request $request): Response
+    {
+        $user=$this->guard->requireRoles(self::ROLES); if ($user instanceof Response) return $user;
+        if (!Csrf::valid($request)) return Response::html('Invalid request token.',403);
+        $id=$this->id($request->form['customer_id']??null); if (!$id) return Response::html('Invalid customer.',422);
+        unset($_SESSION['_telegram_codes'][$id]);
+        $_SESSION['_customer_notice']=$this->telegram->disconnectByStaff($id,(int)$user['id'])?'Telegram disconnected. This customer\'s messages go by SMS from now on.':'This customer is not connected to Telegram.';
+        return Response::redirect('/customers/detail?customer_id='.$id.'#telegram');
+    }
+
+    /** Lets the customer page notice, without a reload, that the customer has pressed Start. */
+    public function telegramStatus(Request $request): Response
+    {
+        $user=$this->guard->requireRoles(self::ROLES,true); if ($user instanceof Response) return $user;
+        $id=$this->id($request->query['customer_id']??null); if (!$id||!$this->customers->find($id,false,true)) return Response::json(['error'=>'Customer not found.'],404);
+        return Response::json(['connected'=>$this->telegram->activeLink($id)!==null]);
+    }
+
+    /** Connection status plus, while it is still usable, the code this staff member created. */
+    private function telegramPanel(int $customerId): array
+    {
+        $panel=$this->telegram->statusFor($customerId); $pending=$_SESSION['_telegram_codes'][$customerId]??null;
+        if (!is_array($pending)||$panel['connected']||$panel['open_code_expires_at']===null||(int)($pending['expires_at']??0)<=time()) { unset($_SESSION['_telegram_codes'][$customerId]); $pending=null; }
+        $panel['pending']=$pending; return $panel;
     }
 
     private function render(string $view,array $data): Response

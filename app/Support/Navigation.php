@@ -16,6 +16,7 @@ final class Navigation
         'Operations' => [
             ['label' => 'Workspace', 'href' => '/staff', 'icon' => 'home', 'roles' => self::ALL],
             ['label' => 'Agreements', 'href' => '/rentals', 'icon' => 'document', 'roles' => ['system_admin', 'fleet_manager', 'front_desk', 'finance_staff', 'auditor', 'driver_coordinator']],
+            ['label' => 'Payments', 'href' => '/payments', 'icon' => 'check', 'roles' => ['system_admin', 'finance_staff', 'auditor']],
             ['label' => 'Customers', 'href' => '/customers', 'icon' => 'users', 'roles' => ['system_admin', 'front_desk']],
         ],
         'Fleet' => [

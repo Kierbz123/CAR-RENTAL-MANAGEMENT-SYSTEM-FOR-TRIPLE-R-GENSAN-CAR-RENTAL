@@ -1,5 +1,7 @@
 # M2 — Vehicle Fleet
 
+> **Table names changed on 2026-10-01** (migrations 013 to 017). This document uses the names from when it was written. The table "Was / Now" in the README section "Schema consolidation" says where each one lives now.
+
 ## File trace and contracts
 
 - `database/migrations/004_vehicles.sql` adds `vehicles`, `vehicle_photos`, `vehicle_locations`, `vehicle_status_logs`, and `vehicle_mileage_logs`.

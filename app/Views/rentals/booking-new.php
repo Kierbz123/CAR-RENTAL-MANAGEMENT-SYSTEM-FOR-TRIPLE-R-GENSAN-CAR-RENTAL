@@ -13,7 +13,7 @@ View::begin('staff', ['title' => 'New reservation', 'crumbs' => [['Agreements', 
 <header class="page-header">
     <div class="page-header-text">
         <h1>New reservation</h1>
-        <p class="page-lead">Saving holds the vehicle for 60 minutes. Confirm the reservation within that time to keep it.</p>
+        <p class="page-lead">Saving holds the vehicle for 24 hours. In that time the customer pays a 30% downpayment (non-refundable): online from their booking link, by a GCash proof, or at the counter in cash or any other method. Once it is in, the reservation is confirmed. The balance is paid at pickup.</p>
     </div>
 </header>
 <?php if ($error): ?>

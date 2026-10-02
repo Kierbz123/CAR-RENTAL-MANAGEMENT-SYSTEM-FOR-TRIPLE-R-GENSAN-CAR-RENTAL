@@ -21,7 +21,7 @@ $mapUrl = (string) SiteProfile::get('contact.map_url', '');
 
 View::begin('public', [
     'title' => SiteProfile::get('brand.full_name') . ' — self-drive and chauffeur service',
-    'description' => 'Self-drive rentals and chauffeur service' . ($city !== '' ? ' in ' . $city : '') . '. Choose a vehicle, pick your dates, and get a secure booking link by SMS.',
+    'description' => 'Self-drive rentals and chauffeur service' . ($city !== '' ? ' in ' . $city : '') . '. Choose your dates and a vehicle online, and reserve it with a 30% GCash downpayment.',
     'nav' => [['Fleet', '#fleet'], ['Services', '#services'], ['How it works', '#how'], ['Requirements', '#requirements'], ['Contact', '#book']],
 ]);
 ?>
@@ -46,13 +46,13 @@ View::begin('public', [
         <h1 id="hero-title">Your road,<br>your rules.</h1>
         <p class="hero-lead">Sedans, SUVs, vans and limousines, ready when you are. Drive yourself or sit back with a vetted chauffeur. Pick a vehicle, pick your dates, and go.</p>
         <div class="hero-actions">
-            <a class="button button-primary button-large" href="#book">Book now</a>
+            <a class="button button-primary button-large" href="/book">Book now</a>
             <a class="button button-outline button-large" href="#fleet">See the fleet</a>
         </div>
         <ul class="hero-points" aria-label="At a glance">
             <li>Self-drive and chauffeur</li>
             <li><?= $e($hours) ?></li>
-            <li>Booking link by SMS</li>
+            <li>Book online in minutes</li>
         </ul>
     </div>
 </section>
@@ -128,18 +128,18 @@ View::begin('public', [
         <ol class="steps">
             <li class="step reveal">
                 <span class="step-number" aria-hidden="true">1</span>
-                <h3>Tell us what you need</h3>
-                <p>Call with your dates, the kind of vehicle, and whether you want a driver. We check what is free.</p>
+                <h3>Choose dates and a vehicle</h3>
+                <p>Pick your dates online to see which vehicles are free and what each costs. Want a driver? Call us and we arrange it.</p>
             </li>
             <li class="step reveal">
                 <span class="step-number" aria-hidden="true">2</span>
-                <h3>Get your booking link</h3>
-                <p>We reserve the vehicle and send a secure link by SMS. Open it any time to see your booking details.</p>
+                <h3>Pay the 30% downpayment</h3>
+                <p>The vehicle is held for 24 hours. Pay 30% by GCash and send the receipt from your booking page. We check it and confirm your reservation.</p>
             </li>
             <li class="step reveal">
                 <span class="step-number" aria-hidden="true">3</span>
                 <h3>Pick up and go</h3>
-                <p>Bring your ID. We inspect the vehicle together, record the mileage, and hand over the keys.</p>
+                <p>Bring your ID and pay the balance. We inspect the vehicle together, record the mileage, and hand over the keys.</p>
             </li>
         </ol>
     </div>
@@ -180,8 +180,9 @@ View::begin('public', [
         <div class="book-copy reveal">
             <p class="eyebrow">Book or ask a question</p>
             <h2 id="book-title">Ready when you are</h2>
-            <p>Call us with your dates and we will hold a vehicle while you decide. Reservations are confirmed by a secure link sent to your phone.</p>
-            <a class="button button-primary button-large" href="<?= $e($phoneHref) ?>"><?= Icon::svg('phone') ?>Call <?= $e($phone) ?></a>
+            <p>Book online and reserve your vehicle with a 30% downpayment, or call us with your dates. Already booked? <a href="/book/find">Find my booking</a>.</p>
+            <a class="button button-primary button-large" href="/book"><?= Icon::svg('calendar') ?>Book online</a>
+            <a class="button button-outline button-large" href="<?= $e($phoneHref) ?>"><?= Icon::svg('phone') ?>Call <?= $e($phone) ?></a>
         </div>
         <address class="contact-card reveal">
             <h3>Contact</h3>

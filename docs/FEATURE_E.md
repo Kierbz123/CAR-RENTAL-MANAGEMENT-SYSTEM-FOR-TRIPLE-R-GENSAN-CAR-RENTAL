@@ -1,5 +1,7 @@
 # Feature E — SMS notification service
 
+> **Table names changed on 2026-10-01** (migrations 013 to 017). This document uses the names from when it was written. The table "Was / Now" in the README section "Schema consolidation" says where each one lives now.
+
 This module is the shared SMS service used by later booking, payment, and magic-link features. The staff view reads the real notification table. It contains no test adapter or hardcoded response data.
 
 ## File trace

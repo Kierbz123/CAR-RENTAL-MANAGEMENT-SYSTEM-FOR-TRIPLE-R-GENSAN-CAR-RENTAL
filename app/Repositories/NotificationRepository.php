@@ -38,24 +38,33 @@ final class NotificationRepository
 
     public function lockDailyBudget(string $phone, string $budgetDate): int
     {
-        $insert = $this->db->prepare('INSERT IGNORE INTO sms_daily_budgets (recipient_phone, budget_date, message_count) VALUES (:phone, :budget_date, 0)');
-        $insert->execute(['phone' => $phone, 'budget_date' => $budgetDate]);
-        $select = $this->db->prepare('SELECT message_count FROM sms_daily_budgets WHERE recipient_phone = :phone AND budget_date = :budget_date FOR UPDATE');
-        $select->execute(['phone' => $phone, 'budget_date' => $budgetDate]);
+        // The day's count for one phone is a rate_counters row keyed "<phone>|<date>".
+        $insert = $this->db->prepare("INSERT IGNORE INTO rate_counters (scope, counter_key, window_started_at, hits) VALUES ('message_daily', :key, :day, 0)");
+        $insert->execute(['key' => self::dailyBudgetKey($phone, $budgetDate), 'day' => $budgetDate . ' 00:00:00']);
+        $select = $this->db->prepare("SELECT hits FROM rate_counters WHERE scope = 'message_daily' AND counter_key = :key FOR UPDATE");
+        $select->execute(['key' => self::dailyBudgetKey($phone, $budgetDate)]);
         return (int) $select->fetchColumn();
     }
 
     public function incrementDailyBudget(string $phone, string $budgetDate): void
     {
-        $statement = $this->db->prepare('UPDATE sms_daily_budgets SET message_count = message_count + 1 WHERE recipient_phone = :phone AND budget_date = :budget_date');
-        $statement->execute(['phone' => $phone, 'budget_date' => $budgetDate]);
+        $statement = $this->db->prepare("UPDATE rate_counters SET hits = hits + 1 WHERE scope = 'message_daily' AND counter_key = :key");
+        $statement->execute(['key' => self::dailyBudgetKey($phone, $budgetDate)]);
+    }
+
+    private static function dailyBudgetKey(string $phone, string $budgetDate): string
+    {
+        return $phone . '|' . $budgetDate;
     }
 
     public function insertQueued(array $message, int $maxAttempts): int
     {
-        $statement = $this->db->prepare('INSERT INTO notifications (recipient_phone, idempotency_key, template_key, rendered_message, message_class, provider, status, priority, max_attempts) VALUES (:phone, :idempotency_key, :template, :body, :class, :provider, \'queued\', :priority, :max_attempts)');
+        $statement = $this->db->prepare('INSERT INTO notifications (recipient_phone, customer_id, telegram_link_id, idempotency_key, channel, template_key, rendered_message, message_class, provider, status, priority, max_attempts) VALUES (:phone, :customer_id, :telegram_link_id, :idempotency_key, :channel, :template, :body, :class, :provider, \'queued\', :priority, :max_attempts)');
         $statement->execute([
             'phone' => $message['recipient_phone'],
+            'customer_id' => $message['customer_id'] ?? null,
+            'telegram_link_id' => $message['telegram_link_id'] ?? null,
+            'channel' => $message['channel'] ?? 'sms',
             'idempotency_key' => $message['idempotency_key'],
             'template' => $message['template_key'],
             'body' => $message['encrypt_at_rest']
@@ -71,9 +80,9 @@ final class NotificationRepository
 
     public function insertSuppressedByPolicy(array $message): int
     {
-        $statement=$this->db->prepare("INSERT INTO notifications (recipient_phone,idempotency_key,template_key,rendered_message,message_class,provider,status,priority,max_attempts,last_error) VALUES (:phone,:idempotency_key,:template,:body,:class,:provider,'suppressed_by_policy',:priority,0,:reason)");
+        $statement=$this->db->prepare("INSERT INTO notifications (recipient_phone,customer_id,telegram_link_id,idempotency_key,channel,template_key,rendered_message,message_class,provider,status,priority,max_attempts,last_error) VALUES (:phone,:customer_id,:telegram_link_id,:idempotency_key,:channel,:template,:body,:class,:provider,'suppressed_by_policy',:priority,0,:reason)");
         $body=$message['encrypt_at_rest']?(new \TripleR\Services\SmsMessageCipher())->encrypt($message['message'],\TripleR\Services\SmsMessageCipher::context($message['recipient_phone'],$message['template_key'])):$message['message'];
-        $statement->execute(['phone'=>$message['recipient_phone'],'idempotency_key'=>$message['idempotency_key'],'template'=>$message['template_key'],'body'=>$body,'class'=>$message['message_class'],'provider'=>$message['provider'],'priority'=>$message['priority'],'reason'=>substr((string)$message['suppression_reason'],0,512)]);
+        $statement->execute(['phone'=>$message['recipient_phone'],'customer_id'=>$message['customer_id']??null,'telegram_link_id'=>$message['telegram_link_id']??null,'channel'=>$message['channel']??'sms','idempotency_key'=>$message['idempotency_key'],'template'=>$message['template_key'],'body'=>$body,'class'=>$message['message_class'],'provider'=>$message['provider'],'priority'=>$message['priority'],'reason'=>substr((string)$message['suppression_reason'],0,512)]);
         return (int)$this->db->lastInsertId();
     }
 
@@ -82,7 +91,7 @@ final class NotificationRepository
         $limit = max(1, min(100, $limit));
         $this->db->beginTransaction();
         try {
-            $select = $this->db->query("SELECT id, recipient_phone, template_key, rendered_message, message_class, provider, priority, attempt_count, max_attempts FROM notifications WHERE status = 'queued' AND next_attempt_at <= UTC_TIMESTAMP() ORDER BY CASE priority WHEN 'high' THEN 0 ELSE 1 END, created_at ASC LIMIT {$limit} FOR UPDATE SKIP LOCKED");
+            $select = $this->db->query("SELECT id, recipient_phone, channel, telegram_link_id, template_key, rendered_message, message_class, provider, priority, attempt_count, max_attempts FROM notifications WHERE status = 'queued' AND next_attempt_at <= UTC_TIMESTAMP() ORDER BY CASE priority WHEN 'high' THEN 0 ELSE 1 END, created_at ASC LIMIT {$limit} FOR UPDATE SKIP LOCKED");
             $rows = $select->fetchAll();
             $claim = $this->db->prepare("UPDATE notifications SET status = 'sending', claim_token = :token, claimed_at = UTC_TIMESTAMP(), attempt_count = attempt_count + 1 WHERE id = :id AND status = 'queued'");
             $claimed = [];
@@ -110,6 +119,25 @@ final class NotificationRepository
     {
         $statement = $this->db->query("SELECT 1 FROM notifications WHERE status = 'queued' AND next_attempt_at <= UTC_TIMESTAMP() AND rendered_message LIKE 'smsenc:v1:%' LIMIT 1");
         return $statement->fetchColumn() !== false;
+    }
+
+    public function hasDueQueuedOnChannel(string $channel): bool
+    {
+        $statement = $this->db->prepare("SELECT 1 FROM notifications WHERE status = 'queued' AND next_attempt_at <= UTC_TIMESTAMP() AND channel = :channel LIMIT 1");
+        $statement->execute(['channel' => $channel]);
+        return $statement->fetchColumn() !== false;
+    }
+
+    /**
+     * Hands a claimed Telegram row to the SMS route after its connection ended. The Telegram
+     * attempt is not counted against the row, and telegram_link_id stays as the record of how
+     * it was first addressed.
+     */
+    public function rerouteToSms(int $id, string $claimToken, string $smsProvider, string $note): bool
+    {
+        $statement = $this->db->prepare("UPDATE notifications SET channel = 'sms', provider = :provider, status = 'queued', attempt_count = attempt_count - 1, next_attempt_at = UTC_TIMESTAMP(), last_error = :note, claim_token = NULL, claimed_at = NULL WHERE id = :id AND status = 'sending' AND claim_token = :token AND channel = 'telegram' AND attempt_count > 0");
+        $statement->execute(['provider' => $smsProvider, 'note' => substr($note, 0, 512), 'id' => $id, 'token' => $claimToken]);
+        return $statement->rowCount() === 1;
     }
 
     public function markSent(int $id, string $claimToken, string $providerMessageId, string $providerStatus): bool
@@ -161,7 +189,7 @@ final class NotificationRepository
     public function history(int $limit): array
     {
         $limit = max(1, min(200, $limit));
-        $statement = $this->db->query("SELECT id, recipient_phone, template_key, rendered_message, message_class, provider, status, priority, provider_status, attempt_count, retry_count, last_error, created_at, sent_at FROM notifications ORDER BY created_at DESC LIMIT {$limit}");
+        $statement = $this->db->query("SELECT id, recipient_phone, channel, template_key, rendered_message, message_class, provider, status, priority, provider_status, attempt_count, retry_count, last_error, created_at, sent_at FROM notifications ORDER BY created_at DESC, id DESC LIMIT {$limit}");
         return $statement->fetchAll();
     }
 

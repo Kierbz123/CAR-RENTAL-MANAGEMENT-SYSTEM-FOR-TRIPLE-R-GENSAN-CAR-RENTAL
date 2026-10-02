@@ -1,5 +1,7 @@
 # Database audit and consolidated schema
 
+> **Table names changed on 2026-10-01** (migrations 013 to 017). This document uses the names from when it was written. The table "Was / Now" in the README section "Schema consolidation" says where each one lives now.
+
 Audit date: 2026-09-30. Canonical clean-install DDL: [`../database/schema.sql`](../database/schema.sql).
 
 ## Scope and method

@@ -51,7 +51,7 @@ $isDemo = (bool) SiteProfile::get('is_demo');
         </ul>
         <div class="site-nav-actions">
             <a class="link-quiet" href="/staff/login">Staff sign in</a>
-            <a class="button button-primary" href="#book">Book now</a>
+            <a class="button button-primary" href="/book">Book now</a>
         </div>
     </nav>
 </header>

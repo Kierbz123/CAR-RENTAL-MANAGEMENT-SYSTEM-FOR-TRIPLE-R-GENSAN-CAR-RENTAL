@@ -12,7 +12,8 @@ use TripleR\Support\PhoneNumber;
 
 final class MagicLinkService
 {
-    private const PURPOSES = ['booking_manage', 'accept_rules', 'submit_payment'];
+    /** Only purposes that have a page behind them. Add one here when its page exists, not before. */
+    private const PURPOSES = ['booking_manage'];
     private const MAX_TTL_SECONDS = 172800;
 
     public function __construct(
@@ -29,6 +30,7 @@ final class MagicLinkService
         ?int $bookingId = null,
         ?DateTimeInterface $holdExpiresAt = null,
         ?string $bookingReference = null,
+        ?int $customerId = null,
     ): int {
         $phone = PhoneNumber::normalize($phone);
         $email = $email === null || trim($email) === '' ? null : mb_strtolower(trim($email));
@@ -67,8 +69,7 @@ final class MagicLinkService
             $link = $this->linkFor($rawToken, $purpose);
             $hours = max(1, (int) ceil(($expiresAt->getTimestamp() - $now->getTimestamp()) / 3600));
             $reference = $bookingReference === null ? '' : ' Booking reference: ' . trim($bookingReference) . '.';
-            $refundReminder = $purpose === 'submit_payment' ? ' The 30% GCash downpayment is non-refundable.' : '';
-            $message = 'Use this secure Triple R Gensan link to continue: ' . $link . ' It expires in about ' . $hours . ' hour(s).' . $reference . $refundReminder;
+            $message = 'Use this secure Triple R Gensan link to continue: ' . $link . ' It expires in about ' . $hours . ' hour(s).' . $reference;
             $this->notifications->enqueue(
                 $phone,
                 'magic_link.' . $purpose,
@@ -77,6 +78,7 @@ final class MagicLinkService
                 'high',
                 'magic-link:' . $tokenId,
                 true,
+                $customerId,
             );
         } catch (\Throwable $error) {
             $this->tokens->invalidate($tokenId);
@@ -133,11 +135,6 @@ final class MagicLinkService
             return null;
         }
         return $current;
-    }
-
-    public static function purposes(): array
-    {
-        return self::PURPOSES;
     }
 
     private function assertPurpose(string $purpose): void

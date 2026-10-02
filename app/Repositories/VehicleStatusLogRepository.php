@@ -11,7 +11,7 @@ final class VehicleStatusLogRepository
 
     public function append(int $vehicleId, ?string $oldStatus, string $newStatus, ?int $locationId, ?int $mileage, int $actorId): void
     {
-        $stmt = $this->db->prepare('INSERT INTO vehicle_status_logs (vehicle_id, old_status, new_status, location_id, mileage, actor_user_id) VALUES (:vehicle, :old, :new, :location, :mileage, :actor)');
+        $stmt = $this->db->prepare('INSERT INTO status_logs (subject, vehicle_id, old_status, new_status, location_id, mileage, actor_user_id) VALUES (\'vehicle\', :vehicle, :old, :new, :location, :mileage, :actor)');
         $stmt->execute(['vehicle'=>$vehicleId,'old'=>$oldStatus,'new'=>$newStatus,'location'=>$locationId,'mileage'=>$mileage,'actor'=>$actorId]);
     }
 }

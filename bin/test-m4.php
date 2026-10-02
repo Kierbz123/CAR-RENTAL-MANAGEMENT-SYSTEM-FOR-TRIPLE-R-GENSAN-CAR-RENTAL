@@ -131,13 +131,13 @@ checkResult(!in_array($inactiveId, $selectedAfterDelete, true), 'Soft-deleted dr
 
 $service->changeStatus($driverId, 'inactive', 1);
 $service->changeStatus($driverId, 'active', 1);
-$history = $db->prepare('SELECT status_log_id FROM driver_status_logs WHERE driver_id=:id ORDER BY status_log_id');
+$history = $db->prepare('SELECT status_log_id FROM status_logs WHERE driver_id=:id AND subject=\'driver\' ORDER BY status_log_id');
 $history->execute(['id' => $driverId]);
 $logIds = array_map('intval', $history->fetchAll(PDO::FETCH_COLUMN));
 checkResult(count($logIds) === 3, 'Driver status changes append status history');
 if ($logIds !== []) {
-    expectFailure(fn() => $guardDb->exec('UPDATE driver_status_logs SET new_status=new_status WHERE status_log_id=' . $logIds[0]), 'append-only', 'Status history rejects direct UPDATE');
-    expectFailure(fn() => $guardDb->exec('DELETE FROM driver_status_logs WHERE status_log_id=' . $logIds[0]), 'append-only', 'Status history rejects direct DELETE');
+    expectFailure(fn() => $guardDb->exec('UPDATE status_logs SET new_status=new_status WHERE status_log_id=' . $logIds[0]), 'append-only', 'Status history rejects direct UPDATE');
+    expectFailure(fn() => $guardDb->exec('DELETE FROM status_logs WHERE status_log_id=' . $logIds[0]), 'append-only', 'Status history rejects direct DELETE');
 }
 
 $rentalService = RentalRuntimeFactory::service($db);
