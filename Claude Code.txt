@@ -1,0 +1,4 @@
+cd C:\path\to\your\project
+headroom wrap claude
+
+          |

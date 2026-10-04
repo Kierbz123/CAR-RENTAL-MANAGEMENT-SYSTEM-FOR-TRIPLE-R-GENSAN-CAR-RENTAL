@@ -1,5 +1,7 @@
 # M8 — Maintenance: Requirements Resolution
 
+> **Removed on 2026-10-04** by migration `022_remove_maintenance_and_roles.sql`, together with the `mechanic`, `auditor` and `support_staff` roles. Only the vehicle status `maintenance` remains, set by hand from the vehicle page. This document describes the module as it was.
+
 > **Table names changed on 2026-10-01** (migrations 013 to 017). This document uses the names from when it was written. The table "Was / Now" in the README section "Schema consolidation" says where each one lives now.
 
 **Status:** Implemented on migration 011; isolated MySQL 8 and HTTP acceptance passed on 2026-09-30. The full acceptance command also reran M4, M5 reconciliation, M6, M7, and migration 009 guards.

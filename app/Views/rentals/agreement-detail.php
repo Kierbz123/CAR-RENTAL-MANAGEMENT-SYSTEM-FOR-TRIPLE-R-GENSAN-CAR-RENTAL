@@ -64,14 +64,14 @@ $owesBalance = $downpayment === 'received' && $outstanding > 0;
 $canRecordDownpayment = $canFinance && $downpaymentDue && $s === 'reserved' && $paymentInProgress === null;
 $canRecordBalance = $canFinance && !$downpaymentDue && in_array($s, ['confirmed', 'active', 'returned'], true) && $outstanding > 0;
 $staffMethods = PaymentMethods::staff();
-// Proofs the customer sent from their booking page. Finance decides; finance, administrators and auditors may open the screenshot.
+// Proofs the customer sent from their booking page. Finance decides; finance and administrators may open the screenshot.
 $pendingProof = null;
 foreach ($proofs as $proof) {
     if ($proof['proof_status'] === 'submitted') {
         $pendingProof = $proof;
     }
 }
-$canSeeScreenshots = in_array($role, ['system_admin', 'finance_staff', 'auditor'], true);
+$canSeeScreenshots = in_array($role, ['system_admin', 'finance_staff'], true);
 $bookedOnline = $agreement['booking_source'] === 'online';
 
 // Lifecycle actions available to this role at this stage.
@@ -651,6 +651,14 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
                 <p class="muted">Times are in Manila time.</p>
             </div>
         </section>
+<?php if ($canTrip && in_array($s, ['confirmed', 'active'], true)): ?>
+        <section class="panel">
+            <div class="panel-heading"><div><h2>Live tracking</h2><p>A phone travelling with the vehicle shares its GPS position, so the vehicle shows on the live map while it is out.</p></div></div>
+            <div class="panel-body">
+                <a class="button button-secondary" href="/fleet/tracking/connect?agreement_id=<?= $id ?>">Connect a tracker phone</a>
+            </div>
+        </section>
+<?php endif; ?>
 <?php if ($canOps): ?>
         <section class="panel">
             <div class="panel-heading"><div><h2>Customer’s booking link</h2><p>Sends a secure link to the customer’s booking page, where they see what to pay and send their proof. The customer needs a primary phone number. They can also open it with reference <span class="mono"><?= $e($agreement['booking_reference']) ?></span> and their mobile number.</p></div></div>

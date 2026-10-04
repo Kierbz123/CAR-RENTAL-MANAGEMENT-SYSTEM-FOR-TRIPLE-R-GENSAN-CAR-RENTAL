@@ -16,7 +16,7 @@ use TripleR\Services\PaymentProofService;
 final class PaymentController
 {
     /** Who may see payments, proofs and their screenshots. */
-    public const REVIEW = ['system_admin', 'finance_staff', 'auditor'];
+    public const REVIEW = ['system_admin', 'finance_staff'];
     /** Who may decide them, the same roles that handle every other money step. */
     public const DECIDE = ['system_admin', 'finance_staff'];
 

@@ -2,15 +2,18 @@
 declare(strict_types=1);
 
 use TripleR\Support\Icon;
+use TripleR\Support\SiteProfile;
 use TripleR\Support\View;
 
 /**
  * Entry layout for pages outside the staff workspace: sign-in, password change,
- * secure links, the customer booking page and error pages.
+ * secure links, the customer booking page and error pages. Dark, like the public
+ * site; the arrival of the brand panel and the card is CSS only (app.css, "Motion").
  *
  * Options: title, description, scripts, variant ('split' shows the brand panel
  * beside the card; 'solo' is a single centred card), headline, blurb,
- * back ([href, label]) for the link under the card, wide (true for a card with room for a list).
+ * back ([href, label]) for the link under the card, wide (true for a card with room for a list),
+ * manifest (address of a web app manifest, for a page a phone can add to its home screen).
  */
 $e = static fn (mixed $value): string => View::e($value);
 $title = (string) ($options['title'] ?? 'Triple R Gensan');
@@ -24,11 +27,15 @@ $back = $options['back'] ?? null;
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex, nofollow">
+    <meta name="theme-color" content="#0d1b1e">
     <title><?= $e($title) ?> | Triple R Gensan</title>
 <?php if (!empty($options['description'])): ?>
     <meta name="description" content="<?= $e($options['description']) ?>">
 <?php endif; ?>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<?php if (!empty($options['manifest'])): ?>
+    <link rel="manifest" href="<?= $e($options['manifest']) ?>">
+<?php endif; ?>
     <link rel="stylesheet" href="/assets/css/app.css">
 <?php foreach ($scripts as $script): ?>
     <script src="/assets/js/<?= $e($script) ?>" defer></script>
@@ -40,21 +47,10 @@ $back = $options['back'] ?? null;
     <aside class="entry-brand" aria-label="Triple R Gensan Car Rental">
         <a class="entry-brand-logo" href="/"><?= Icon::mark() ?><span class="app-brand-name">TRIPLE R<small>GENSAN · CAR RENTAL</small></span></a>
         <div class="entry-brand-body">
-            <p class="entry-brand-headline"><?= $e($options['headline'] ?? 'Every booking, every vehicle, one workspace.') ?></p>
-            <p class="entry-brand-blurb"><?= $e($options['blurb'] ?? 'Reservations, fleet readiness, drivers and maintenance for the Triple R team.') ?></p>
+            <p class="entry-brand-headline"><?= View::rise((string) ($options['headline'] ?? 'Every booking, every vehicle, one workspace.')) ?></p>
+            <p class="entry-brand-blurb"><?= $e($options['blurb'] ?? 'Reservations, fleet readiness, drivers and payments for the Triple R team.') ?></p>
         </div>
-        <svg class="entry-brand-art" viewBox="0 0 400 400" aria-hidden="true" focusable="false">
-            <g fill="none" stroke="currentColor">
-                <circle cx="200" cy="200" r="182" stroke-width="26" opacity=".5"/>
-                <circle cx="200" cy="200" r="146" stroke-width="6"/>
-                <circle cx="200" cy="200" r="56" stroke-width="5"/>
-                <circle cx="200" cy="200" r="24" stroke-width="10"/>
-                <g stroke-width="7" stroke-linecap="round">
-                    <path d="M200 144V58M200 256v86M144 200H58M256 200h86"/>
-                    <path d="m160 160-61-61M240 240l61 61M160 240l-61 61M240 160l61-61"/>
-                </g>
-            </g>
-        </svg>
+        <p class="entry-brand-foot"><span><?= $e(SiteProfile::get('contact.city', '')) ?></span><span><?= $e(SiteProfile::get('contact.hours', '')) ?></span></p>
     </aside>
 <?php endif; ?>
     <main class="entry-main" id="main">

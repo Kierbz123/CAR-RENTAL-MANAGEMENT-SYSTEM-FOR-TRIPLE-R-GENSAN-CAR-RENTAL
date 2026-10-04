@@ -42,14 +42,14 @@ final class DamageController
 
     public function photo(Request $request): Response
     {
-        $user=$this->guard->requireRoles(['system_admin','front_desk','fleet_manager','finance_staff','auditor']);if($user instanceof Response)return $user;
+        $user=$this->guard->requireRoles(['system_admin','front_desk','fleet_manager','finance_staff']);if($user instanceof Response)return $user;
         $id=$this->id($request->query['photo_id']??null);if(!$id)return Response::html('Photo not found.',404);
         try{$photo=$this->damage->streamPhoto($id);return Response::binary($photo['body'],$photo['mime']);}catch(RuntimeException){return Response::html('Photo not found.',404);}
     }
 
     public function detail(Request $request): Response
     {
-        $user=$this->guard->requireRoles(['system_admin','front_desk','fleet_manager','finance_staff','auditor']);if($user instanceof Response)return $user;
+        $user=$this->guard->requireRoles(['system_admin','front_desk','fleet_manager','finance_staff']);if($user instanceof Response)return $user;
         $id=$this->id($request->query['report_id']??null);if(!$id)return Response::html('Damage report not found.',404);$report=$this->damage->detail($id);if(!$report)return Response::html('Damage report not found.',404);
         $e=static fn(mixed $v):string=>htmlspecialchars((string)$v,ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8');ob_start();require APP_ROOT.'/app/Views/rentals/damage-report.php';return Response::html((string)ob_get_clean());
     }

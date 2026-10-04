@@ -7,19 +7,28 @@ use TripleR\Support\View;
 
 /**
  * Public site layout: header with section links, the page content, and the footer.
- * Options: title, description, nav (list of [label, href]).
+ * Options: title, description, nav (list of [label, href]), home (where the brand links;
+ * '#top' on the landing page, '/' elsewhere), intro (true to play the loading screen on a
+ * fresh visit), actions (list of [label, href, 'quiet'|'primary'|'outline'] for the header),
+ * scripts (extra files in public/assets/js), page (a class for <body>).
  * Business details come from config/site.php.
  */
 $e = static fn (mixed $value): string => View::e($value);
 $title = (string) ($options['title'] ?? SiteProfile::get('brand.full_name'));
 $description = (string) ($options['description'] ?? '');
 $nav = $options['nav'] ?? [];
+$home = (string) ($options['home'] ?? '#top');
+$intro = !empty($options['intro']);
+$actions = $options['actions'] ?? [['Staff sign in', '/staff/login', 'quiet'], ['Book now', '/book', 'primary']];
+$scripts = $options['scripts'] ?? [];
+$page = (string) ($options['page'] ?? '');
 $brand = (string) SiteProfile::get('brand.name');
 $fullName = (string) SiteProfile::get('brand.full_name');
+$city = (string) SiteProfile::get('contact.city', '');
 $isDemo = (bool) SiteProfile::get('is_demo');
 ?>
 <!doctype html>
-<html lang="en">
+<html lang="en"<?= $intro ? ' data-intro' : '' ?>>
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -36,22 +45,39 @@ $isDemo = (bool) SiteProfile::get('is_demo');
 <?php endif; ?>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="/assets/css/landing.css">
+    <script src="/assets/js/landing-boot.js"></script>
     <script src="/assets/js/landing.js" defer></script>
+<?php foreach ($scripts as $script): ?>
+    <script src="/assets/js/<?= $e($script) ?>" defer></script>
+<?php endforeach; ?>
 </head>
-<body>
+<body<?= $page !== '' ? ' class="' . $e($page) . '"' : '' ?>>
 <a class="skip-link" href="#main">Skip to content</a>
+<?php if ($intro): ?>
+<div class="page-loader" data-loader aria-hidden="true">
+    <div class="page-loader-brand" data-loader-brand>
+        <p class="page-loader-name"><?= Icon::mark() ?><span><?= $e(strtoupper($brand)) ?></span></p>
+        <p class="page-loader-line">Self-drive and chauffeur service<?= $city !== '' ? ' in ' . $e($city) : '' ?>.</p>
+    </div>
+    <div class="page-loader-progress">
+        <div class="page-loader-track"><span data-loader-fill></span></div>
+        <p class="page-loader-row"><span>Loading</span><span class="page-loader-count" data-loader-count>000</span></p>
+    </div>
+</div>
+<?php endif; ?>
 <header class="site-header" data-site-header>
-    <a class="site-brand" href="#top" aria-label="<?= $e($fullName) ?> — back to top"><?= Icon::mark() ?><span><?= $e(strtoupper($brand)) ?></span></a>
-    <button class="nav-toggle" type="button" aria-controls="site-nav" aria-expanded="false" data-nav-toggle><?= Icon::svg('menu') ?><span>Menu</span></button>
+    <a class="site-brand" href="<?= $e($home) ?>" aria-label="<?= $e($fullName) ?> — <?= $home === '#top' ? 'back to top' : 'home' ?>"><?= Icon::mark() ?><span><?= $e(strtoupper($brand)) ?></span></a>
+    <button class="nav-toggle" type="button" aria-controls="site-nav" aria-expanded="false" data-nav-toggle><?= Icon::svg('menu', 'icon icon-menu') ?><?= Icon::svg('close', 'icon icon-close') ?><span data-nav-toggle-label>Menu</span></button>
     <nav class="site-nav" id="site-nav" aria-label="Main" data-site-nav>
         <ul>
 <?php foreach ($nav as [$label, $href]): ?>
-            <li><a href="<?= $e($href) ?>"><?= $e($label) ?></a></li>
+            <li><a href="<?= $e($href) ?>"><span><?= $e($label) ?></span></a></li>
 <?php endforeach; ?>
         </ul>
         <div class="site-nav-actions">
-            <a class="link-quiet" href="/staff/login">Staff sign in</a>
-            <a class="button button-primary" href="/book">Book now</a>
+<?php foreach ($actions as [$label, $href, $kind]): ?>
+            <a class="<?= $kind === 'quiet' ? 'link-quiet' : 'button button-' . $e($kind) ?>" href="<?= $e($href) ?>"><?= $e($label) ?></a>
+<?php endforeach; ?>
         </div>
     </nav>
 </header>
@@ -61,7 +87,7 @@ $isDemo = (bool) SiteProfile::get('is_demo');
 <footer class="site-footer">
     <div class="site-footer-inner">
         <div class="site-footer-brand">
-            <a class="site-brand" href="#top"><?= Icon::mark() ?><span><?= $e(strtoupper($brand)) ?></span></a>
+            <a class="site-brand" href="<?= $e($home) ?>"><?= Icon::mark() ?><span><?= $e(strtoupper($brand)) ?></span></a>
             <p><?= $e($fullName) ?></p>
         </div>
         <address class="site-footer-contact">
@@ -78,6 +104,7 @@ $isDemo = (bool) SiteProfile::get('is_demo');
 <?php foreach ($nav as [$label, $href]): ?>
             <a href="<?= $e($href) ?>"><?= $e($label) ?></a>
 <?php endforeach; ?>
+            <a href="/book/find">Find my booking</a>
             <a href="/staff/login">Staff sign in</a>
         </nav>
     </div>
@@ -87,6 +114,7 @@ $isDemo = (bool) SiteProfile::get('is_demo');
         <span class="demo-notice">Demonstration site built for a school project. The vehicle classes, rates and photos shown are illustrative; call to confirm what is available.</span>
 <?php endif; ?>
     </div>
+    <p class="site-footer-watermark" aria-hidden="true"><?= $e(strtoupper($brand)) ?></p>
 </footer>
 </body>
 </html>

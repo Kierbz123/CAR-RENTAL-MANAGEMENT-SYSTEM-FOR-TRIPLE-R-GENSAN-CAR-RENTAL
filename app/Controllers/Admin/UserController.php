@@ -15,7 +15,7 @@ use TripleR\Security\Csrf;
 
 final class UserController
 {
-    private const ROLES = ['system_admin', 'fleet_manager', 'front_desk', 'driver_coordinator', 'mechanic', 'finance_staff', 'auditor', 'support_staff'];
+    private const ROLES = ['system_admin', 'fleet_manager', 'front_desk', 'driver_coordinator', 'finance_staff'];
 
     public function __construct(
         private readonly PDO $db,

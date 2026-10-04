@@ -10,23 +10,22 @@ namespace TripleR\Support;
  */
 final class Navigation
 {
-    private const ALL = ['system_admin', 'fleet_manager', 'front_desk', 'driver_coordinator', 'mechanic', 'finance_staff', 'auditor', 'support_staff'];
+    private const ALL = ['system_admin', 'fleet_manager', 'front_desk', 'driver_coordinator', 'finance_staff'];
 
     private const GROUPS = [
         'Operations' => [
             ['label' => 'Workspace', 'href' => '/staff', 'icon' => 'home', 'roles' => self::ALL],
-            ['label' => 'Agreements', 'href' => '/rentals', 'icon' => 'document', 'roles' => ['system_admin', 'fleet_manager', 'front_desk', 'finance_staff', 'auditor', 'driver_coordinator']],
-            ['label' => 'Payments', 'href' => '/payments', 'icon' => 'check', 'roles' => ['system_admin', 'finance_staff', 'auditor']],
+            ['label' => 'Agreements', 'href' => '/rentals', 'icon' => 'document', 'roles' => ['system_admin', 'fleet_manager', 'front_desk', 'finance_staff', 'driver_coordinator']],
+            ['label' => 'Payments', 'href' => '/payments', 'icon' => 'check', 'roles' => ['system_admin', 'finance_staff']],
             ['label' => 'Customers', 'href' => '/customers', 'icon' => 'users', 'roles' => ['system_admin', 'front_desk']],
         ],
         'Fleet' => [
             ['label' => 'Vehicles', 'href' => '/fleet/vehicles', 'icon' => 'car', 'roles' => ['system_admin', 'fleet_manager']],
             ['label' => 'Locations', 'href' => '/fleet/locations', 'icon' => 'pin', 'roles' => ['system_admin', 'fleet_manager']],
             ['label' => 'Drivers', 'href' => '/fleet/drivers', 'icon' => 'id', 'roles' => ['system_admin', 'fleet_manager', 'driver_coordinator']],
-            ['label' => 'Maintenance', 'href' => '/maintenance', 'icon' => 'wrench', 'roles' => ['system_admin', 'fleet_manager', 'mechanic', 'auditor']],
         ],
         'Administration' => [
-            ['label' => 'Notifications', 'href' => '/staff/notifications', 'icon' => 'bell', 'roles' => ['system_admin', 'fleet_manager', 'support_staff']],
+            ['label' => 'Notifications', 'href' => '/staff/notifications', 'icon' => 'bell', 'roles' => ['system_admin', 'fleet_manager']],
             ['label' => 'Staff accounts', 'href' => '/admin/users', 'icon' => 'shield', 'roles' => ['system_admin'], 'also' => ['/admin/sessions']],
         ],
     ];

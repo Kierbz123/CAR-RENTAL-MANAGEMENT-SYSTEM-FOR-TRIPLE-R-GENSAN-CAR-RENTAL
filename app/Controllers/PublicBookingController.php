@@ -9,6 +9,7 @@ use TripleR\Http\Response;
 use TripleR\Security\Csrf;
 use TripleR\Security\CustomerBookingAccess;
 use TripleR\Services\OnlineBookingService;
+use TripleR\Support\SiteProfile;
 
 /** The public booking pages: choose dates and a vehicle, enter details, accept the policy. No sign-in. */
 final class PublicBookingController
@@ -21,7 +22,8 @@ final class PublicBookingController
     {
         $start = is_string($request->query['start_date'] ?? null) ? trim($request->query['start_date']) : '';
         $end = is_string($request->query['end_date'] ?? null) ? trim($request->query['end_date']) : '';
-        return $this->render(['start_date' => $start, 'end_date' => $end], null);
+        $class = is_string($request->query['class'] ?? null) ? trim($request->query['class']) : '';
+        return $this->render(['start_date' => $start, 'end_date' => $end, 'class' => $class], null);
     }
 
     public function submit(Request $request): Response
@@ -66,6 +68,13 @@ final class PublicBookingController
     {
         $start = (string) ($values['start_date'] ?? '');
         $end = (string) ($values['end_date'] ?? '');
+        // The vehicle class chosen on the landing page (config/site.php 'fleet'), or null for every class.
+        $class = null;
+        foreach ((array) SiteProfile::get('fleet', []) as $candidate) {
+            if (is_string($values['class'] ?? null) && ($candidate['slug'] ?? null) === $values['class']) {
+                $class = $candidate;
+            }
+        }
         $vehicles = null;
         $period = null;
         $policy = null;
@@ -78,7 +87,9 @@ final class PublicBookingController
         } catch (RuntimeException $problem) {
             $error ??= $problem->getMessage();
         }
-        $pickupTimes = $this->bookings->pickupTimes();
+        // Only the times still ahead on the pickup date, so a time that has passed today is never offered.
+        $pickupTimes = $this->bookings->pickupTimes($period['start'] ?? null);
+        $earliestDate = $this->bookings->earliestDate();
         $csrfToken = Csrf::token();
         ob_start();
         require APP_ROOT . '/app/Views/public/book.php';

@@ -6,7 +6,7 @@ use TripleR\Support\StatusPresenter as Status;
 use TripleR\Support\View;
 
 $e = static fn (mixed $value): string => View::e($value);
-$roles = ['system_admin', 'fleet_manager', 'front_desk', 'driver_coordinator', 'mechanic', 'finance_staff', 'auditor', 'support_staff'];
+$roles = ['system_admin', 'fleet_manager', 'front_desk', 'driver_coordinator', 'finance_staff'];
 $pager = new Pager($users);
 
 View::begin('staff', ['title' => 'Staff accounts', 'crumbs' => [['Administration', null], ['Staff accounts', null]]]);

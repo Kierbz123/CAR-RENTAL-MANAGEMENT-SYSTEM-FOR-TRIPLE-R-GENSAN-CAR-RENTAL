@@ -14,8 +14,6 @@ $name = ucfirst(explode('@', (string) $user['email'])[0]);
 
 $available = $vehicleCounts['available'] ?? 0;
 $inFleet = $vehicleCounts !== null ? array_sum($vehicleCounts) : 0;
-$dueNow = $maintenanceDue !== null ? count(array_filter($maintenanceDue, static fn (array $row): bool => $row['due_state'] === 'due')) : 0;
-$dueSoon = $maintenanceDue !== null ? count($maintenanceDue) - $dueNow : 0;
 
 // "Needs attention" lists only what this role is the one to act on, matching who may perform each step.
 $mine = static fn (string ...$roles): bool => in_array($user['role'], $roles, true);
@@ -37,16 +35,13 @@ if ($rentalCounts !== null) {
 if ($proofsToCheck > 0) {
     $attention[] = ['count' => $proofsToCheck, 'danger' => false, 'title' => 'Payments to check', 'sub' => 'GCash proofs of downpayment sent by customers', 'href' => '/payments'];
 }
-if ($maintenanceDue !== null && $dueNow > 0 && $mine('system_admin', 'fleet_manager', 'mechanic')) {
-    $attention[] = ['count' => $dueNow, 'danger' => true, 'title' => 'Maintenance due now', 'sub' => 'Schedules past their date or mileage', 'href' => '/maintenance/due'];
-}
 
 View::begin('staff', ['title' => 'Workspace']);
 ?>
 <header class="page-header">
     <div class="page-header-text">
         <p class="eyebrow"><?= $e($now->format('l, F j')) ?></p>
-        <h1><?= $e($greeting) ?>, <?= $e($name) ?></h1>
+        <h1><?= View::rise($greeting . ', ' . $name) ?></h1>
         <p class="page-lead">Signed in as <?= $e(Status::label($user['role'])) ?>. Here is what needs you today.</p>
     </div>
 <?php if ($canCreateRentals || $canManageCustomers || $canManageFleet): ?>
@@ -65,24 +60,24 @@ View::begin('staff', ['title' => 'Workspace']);
 <?php endif; ?>
 </header>
 
-<?php if ($vehicleCounts !== null || $rentalCounts !== null || $maintenanceDue !== null): ?>
+<?php if ($vehicleCounts !== null || $rentalCounts !== null): ?>
 <section aria-labelledby="today-heading">
     <h2 class="visually-hidden" id="today-heading">Today at a glance</h2>
     <div class="stat-grid">
 <?php if ($rentalCounts !== null): ?>
         <a class="stat-card" href="/rentals?status=confirmed">
             <span class="stat-label">Pickups today</span>
-            <span class="stat-value"><?= (int) $rentalCounts['pickups_today'] ?></span>
+            <span class="stat-value" data-count-up><?= (int) $rentalCounts['pickups_today'] ?></span>
             <span class="stat-hint">Reserved or confirmed to start today</span>
         </a>
         <a class="stat-card<?= $rentalCounts['overdue'] > 0 ? ' stat-card--alert' : '' ?>" href="/rentals?status=active">
             <span class="stat-label">Returns today</span>
-            <span class="stat-value"><?= (int) $rentalCounts['returns_today'] ?></span>
+            <span class="stat-value" data-count-up><?= (int) $rentalCounts['returns_today'] ?></span>
             <span class="stat-hint"><?= $rentalCounts['overdue'] > 0 ? $e(Format::plural($rentalCounts['overdue'], 'rental') . ' overdue') : 'None overdue' ?></span>
         </a>
         <a class="stat-card" href="/rentals?status=active">
             <span class="stat-label">Active rentals</span>
-            <span class="stat-value"><?= (int) $rentalCounts['active'] ?></span>
+            <span class="stat-value" data-count-up><?= (int) $rentalCounts['active'] ?></span>
             <span class="stat-hint">Vehicles currently with customers</span>
         </a>
 <?php endif; ?>
@@ -93,23 +88,16 @@ View::begin('staff', ['title' => 'Workspace']);
         <div class="stat-card">
 <?php endif; ?>
             <span class="stat-label">Vehicles available</span>
-            <span class="stat-value"><?= (int) $available ?></span>
+            <span class="stat-value" data-count-up><?= (int) $available ?></span>
             <span class="stat-hint">of <?= $e(Format::plural($inFleet, 'vehicle')) ?> in service</span>
 <?= $canManageFleet ? '        </a>' : '        </div>' ?>
 
-<?php endif; ?>
-<?php if ($maintenanceDue !== null): ?>
-        <a class="stat-card<?= $dueNow > 0 ? ' stat-card--warn' : '' ?>" href="/maintenance/due">
-            <span class="stat-label">Maintenance due</span>
-            <span class="stat-value"><?= (int) $dueNow ?></span>
-            <span class="stat-hint"><?= $e(Format::plural($dueSoon, 'schedule') . ' due soon') ?></span>
-        </a>
 <?php endif; ?>
     </div>
 </section>
 <?php endif; ?>
 
-<?php if ($rentalCounts !== null || $maintenanceDue !== null): ?>
+<?php if ($rentalCounts !== null): ?>
 <div class="dashboard-grid">
     <section class="panel" aria-labelledby="attention-heading">
         <div class="panel-heading"><div><h2 id="attention-heading">Needs attention</h2><p>Items waiting on someone in your role.</p></div></div>
@@ -164,11 +152,10 @@ View::begin('staff', ['title' => 'Workspace']);
 <?php if ($canManageFleet): ?><a class="button button-secondary" href="/fleet/vehicles"><?= Icon::svg('car') ?>Vehicles</a><?php endif; ?>
 <?php if ($canManageFleet): ?><a class="button button-secondary" href="/fleet/locations"><?= Icon::svg('pin') ?>Locations</a><?php endif; ?>
 <?php if ($canReadDrivers): ?><a class="button button-secondary" href="/fleet/drivers"><?= Icon::svg('id') ?>Drivers</a><?php endif; ?>
-<?php if ($canViewMaintenance): ?><a class="button button-secondary" href="/maintenance"><?= Icon::svg('wrench') ?>Maintenance</a><?php endif; ?>
 <?php if ($canViewNotifications): ?><a class="button button-secondary" href="/staff/notifications"><?= Icon::svg('bell') ?>SMS notifications</a><?php endif; ?>
 <?php if ($canManageUsers): ?><a class="button button-secondary" href="/admin/users"><?= Icon::svg('shield') ?>Staff accounts</a><?php endif; ?>
         </div>
-<?php if (!$canViewRentals && !$canManageFleet && !$canReadDrivers && !$canViewMaintenance && !$canViewNotifications && !$canManageUsers && !$canManageCustomers): ?>
+<?php if (!$canViewRentals && !$canManageFleet && !$canReadDrivers && !$canViewNotifications && !$canManageUsers && !$canManageCustomers): ?>
         <p class="muted">Your account is active. Tools for your role will appear here as they are released.</p>
 <?php endif; ?>
     </div>

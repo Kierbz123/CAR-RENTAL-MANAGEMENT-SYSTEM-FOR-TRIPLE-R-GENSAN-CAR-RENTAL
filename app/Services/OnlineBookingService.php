@@ -27,6 +27,8 @@ final class OnlineBookingService
     private const MAX_DAYS_AHEAD = 90;
     private const EARLIEST_PICKUP = '06:00';
     private const LATEST_PICKUP = '21:00';
+    /** How far ahead a pickup must be, so the office has time to prepare the vehicle. */
+    public const MIN_NOTICE_MINUTES = 120;
 
     public function __construct(
         private readonly PDO $db,
@@ -50,14 +52,41 @@ final class OnlineBookingService
         return $policy;
     }
 
-    /** @return list<string> pickup times offered, every half hour within opening hours */
-    public function pickupTimes(): array
+    /**
+     * Pickup times offered, every half hour within opening hours. With a date, only the
+     * times on that date that are still far enough ahead: today's earlier times are left out.
+     *
+     * @return list<string>
+     */
+    public function pickupTimes(?string $date = null): array
     {
+        return self::timesFor($date, new DateTimeImmutable('now', new DateTimeZone('Asia/Manila')));
+    }
+
+    /**
+     * @param string|null $date a valid Y-m-d date in Manila, or null for every time of day
+     * @return list<string>
+     */
+    public static function timesFor(?string $date, DateTimeImmutable $now): array
+    {
+        $manila = new DateTimeZone('Asia/Manila');
+        $earliest = $now->modify('+' . self::MIN_NOTICE_MINUTES . ' minutes');
         $times = [];
         for ($minutes = 6 * 60; $minutes <= 21 * 60; $minutes += 30) {
-            $times[] = sprintf('%02d:%02d', intdiv($minutes, 60), $minutes % 60);
+            $time = sprintf('%02d:%02d', intdiv($minutes, 60), $minutes % 60);
+            if ($date !== null && new DateTimeImmutable($date . ' ' . $time, $manila) < $earliest) {
+                continue;
+            }
+            $times[] = $time;
         }
         return $times;
+    }
+
+    /** The first date a pickup can still be booked for: today, or tomorrow once today's times have passed. */
+    public function earliestDate(): string
+    {
+        $today = new DateTimeImmutable('today', new DateTimeZone('Asia/Manila'));
+        return $this->pickupTimes($today->format('Y-m-d')) === [] ? $today->modify('+1 day')->format('Y-m-d') : $today->format('Y-m-d');
     }
 
     /**
@@ -76,6 +105,9 @@ final class OnlineBookingService
         $today = new DateTimeImmutable('today', $manila);
         if ($from < $today) {
             throw new RuntimeException('The pickup date cannot be in the past.');
+        }
+        if ($this->pickupTimes($start) === []) {
+            throw new RuntimeException('It is too late to book a pickup for today. Choose tomorrow or a later date, or call the rental office.');
         }
         if ($from > $today->modify('+' . self::MAX_DAYS_AHEAD . ' days')) {
             throw new RuntimeException('Online bookings can be made up to ' . self::MAX_DAYS_AHEAD . ' days ahead. For later dates, please call the rental office.');
@@ -107,6 +139,7 @@ final class OnlineBookingService
             $available[] = [
                 'vehicle_id' => (int) $vehicle['vehicle_id'],
                 'name' => trim($vehicle['make'] . ' ' . $vehicle['model'] . ' ' . $vehicle['model_year']),
+                'body_type' => (string) $vehicle['body_type'],
                 'details' => ucfirst((string) $vehicle['body_type']) . ' · ' . ucfirst((string) $vehicle['transmission']) . ' · ' . (int) $vehicle['seating_capacity'] . ' seats · ' . ucfirst((string) $vehicle['fuel_type']),
                 'daily_rate' => (string) $vehicle['daily_rate'],
                 'total' => self::amount($totalCents),
@@ -136,6 +169,9 @@ final class OnlineBookingService
         $time = (string) ($input['pickup_time'] ?? '');
         if (!in_array($time, $this->pickupTimes(), true)) {
             throw new RuntimeException('Choose a pickup time between ' . self::EARLIEST_PICKUP . ' and ' . self::LATEST_PICKUP . '.');
+        }
+        if (!in_array($time, $this->pickupTimes($period['start']), true)) {
+            throw new RuntimeException('That pickup time is too soon. A pickup today must be at least ' . intdiv(self::MIN_NOTICE_MINUTES, 60) . ' hours from now: choose a later time, or a later date.');
         }
         $name = trim(preg_replace('/\s+/', ' ', (string) ($input['full_name'] ?? '')) ?? '');
         if (mb_strlen($name) < 2 || mb_strlen($name) > 160) {

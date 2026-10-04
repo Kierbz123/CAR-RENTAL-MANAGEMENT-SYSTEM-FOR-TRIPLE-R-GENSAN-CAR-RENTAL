@@ -26,14 +26,17 @@ return [
     ],
 
     'contact' => [
-        'phone_display' => '0934 517 3581',
-        'phone_href' => 'tel:+639345173581',
+        'phone_display' => '09676355474',
+        'phone_href' => 'tel:+639676355474',
         'address_lines' => [
             'Blk 4 Lot 4, Reformville, Calumpang',
             'General Santos City, 9500 South Cotabato',
         ],
         'city' => 'General Santos City',
         'hours' => 'Mon–Sun, 6 AM–9 PM',
+        // The same hours as numbers (24-hour clock), for the "open now" line on the landing page.
+        'open_hour' => 6,
+        'close_hour' => 21,
         'map_url' => 'https://maps.app.goo.gl/H1HPtYuUbwq3KWRRA',
     ],
 
@@ -52,9 +55,14 @@ return [
     // 'image' is a file name in public/assets/img/landing/. The fleet photos were supplied by the
     // project owner for this demo; replace them with photos you have the right to use before any
     // public launch. Drawn alternatives (sedan.svg, suv.svg, van.svg, limo.svg) are in the same folder.
+    // Each class on the landing page opens the booking page at /book?class=<slug>. 'body_types' lists
+    // the vehicles.body_type values that belong to the class; leave it empty for a class that is not
+    // booked online (the limousine comes with a chauffeur and is arranged by phone).
     'fleet' => [                                                    // DEMO-PLACEHOLDER (classes, rates, capacities)
         [
             'name' => 'Business Sedan',
+            'slug' => 'sedan',
+            'body_types' => ['sedan', 'hatchback'],
             'from' => 2000,
             'unit' => 'day',
             'seats' => 3,
@@ -64,6 +72,8 @@ return [
         ],
         [
             'name' => 'Luxury SUV',
+            'slug' => 'suv',
+            'body_types' => ['SUV', 'pickup'],
             'from' => 3500,
             'unit' => 'day',
             'seats' => 6,
@@ -73,6 +83,8 @@ return [
         ],
         [
             'name' => 'Executive Van',
+            'slug' => 'van',
+            'body_types' => ['van'],
             'from' => 5000,
             'unit' => 'day',
             'seats' => 10,
@@ -82,6 +94,8 @@ return [
         ],
         [
             'name' => 'Stretch Limo',
+            'slug' => 'limo',
+            'body_types' => [],
             'from' => 8000,
             'unit' => 'event',
             'seats' => 8,

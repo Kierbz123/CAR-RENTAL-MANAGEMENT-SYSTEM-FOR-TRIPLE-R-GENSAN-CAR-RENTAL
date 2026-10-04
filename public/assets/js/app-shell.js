@@ -178,6 +178,33 @@
         showToast(message);
     });
 
+    /* ---- A line across the top while the next page loads ------------------ */
+    const progress = document.createElement('div');
+    progress.className = 'app-progress';
+    progress.setAttribute('aria-hidden', 'true');
+    body.append(progress);
+    let leavingTimer = 0;
+    const setLeaving = (on) => {
+        window.clearTimeout(leavingTimer);
+        root.classList.toggle('is-leaving', on);
+        // A download or a refused navigation never leaves the page, so the line clears itself.
+        if (on) leavingTimer = window.setTimeout(() => setLeaving(false), 8000);
+    };
+    document.addEventListener('click', (event) => {
+        if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        const link = event.target instanceof Element ? event.target.closest('a[href]') : null;
+        if (!link || link.hasAttribute('download') || (link.target && link.target !== '_self')) return;
+        const url = new URL(link.href, window.location.href);
+        const samePage = url.pathname === window.location.pathname && url.search === window.location.search;
+        if (url.origin !== window.location.origin || (samePage && url.hash !== '')) return;
+        setLeaving(true);
+    });
+    document.addEventListener('submit', (event) => {
+        if (!event.defaultPrevented && event.target instanceof HTMLFormElement && event.target.target !== '_blank') setLeaving(true);
+    });
+    // Coming back with the Back button restores the page as it was left; clear the line.
+    window.addEventListener('pageshow', () => setLeaving(false));
+
     /* ---- Lists ----------------------------------------------------------- */
     // Filters apply as soon as a choice is made; the Apply button remains for use without scripts.
     document.querySelectorAll('[data-auto-submit]').forEach((control) => {
@@ -189,6 +216,7 @@
         const row = event.target instanceof Element ? event.target.closest('tr[data-href]') : null;
         if (!row || event.target.closest('a, button, input, select, textarea, label, summary, details')) return;
         if (window.getSelection()?.toString()) return;
+        setLeaving(true);
         window.location.assign(row.dataset.href);
     });
 
@@ -211,6 +239,29 @@
     document.querySelectorAll('[data-status-changed]').forEach((badge) => {
         badge.classList.add('badge-status-morph');
         badge.addEventListener('animationend', () => badge.classList.remove('badge-status-morph'), { once: true });
+    });
+
+    // Dashboard numbers count up once on arrival. The real number is written at the end
+    // whatever happens to the animation, so a figure is never left half-counted.
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    document.querySelectorAll('[data-count-up]').forEach((element) => {
+        const target = Number(element.textContent.trim());
+        if (reducedMotion || !Number.isInteger(target) || target < 2) return;
+        const DURATION = 700;
+        let startedAt = 0;
+        let settled = false;
+        const step = (now) => {
+            if (settled) return;
+            startedAt = startedAt || now;
+            const t = Math.min(1, (now - startedAt) / DURATION);
+            element.textContent = String(Math.round(target * (1 - (1 - t) ** 3)));
+            if (t < 1) window.requestAnimationFrame(step);
+        };
+        window.requestAnimationFrame(step);
+        window.setTimeout(() => {
+            settled = true;
+            element.textContent = String(target);
+        }, DURATION + 400);
     });
 
     document.querySelectorAll('[data-print]').forEach((button) => {

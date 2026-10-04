@@ -17,10 +17,10 @@ use TripleR\Services\DamageService;
 
 final class AgreementController
 {
-    private const READ=['system_admin','fleet_manager','front_desk','finance_staff','auditor'];
+    private const READ=['system_admin','fleet_manager','front_desk','finance_staff'];
     // The list and detail pages. Driver coordinators assign drivers there (M6); the views show them
     // the schedule and the driver panel only, never charges, deposits or damage records.
-    private const VIEW=['system_admin','fleet_manager','front_desk','finance_staff','auditor','driver_coordinator'];
+    private const VIEW=['system_admin','fleet_manager','front_desk','finance_staff','driver_coordinator'];
     public function __construct(private readonly AuthMiddleware $guard,private readonly RentalRepository $rentals,private readonly ChargeRepository $charges,private readonly RentalService $service, private readonly ChauffeurService $chauffeurs, private readonly DriverService $driverService, private readonly DamageService $damage, private readonly \TripleR\Repositories\PaymentProofRepository $proofs, private readonly \TripleR\Repositories\RulesAcceptanceRepository $rules, private readonly \TripleR\Repositories\PaymentRepository $payments, private readonly \TripleR\Services\PaymentService $paymentService) {}
 
     public function index(Request $request): Response

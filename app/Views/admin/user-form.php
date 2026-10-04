@@ -6,7 +6,7 @@ use TripleR\Support\View;
 
 // $user here is the account being edited (set by UserController::edit), not the signed-in admin.
 $e = static fn (mixed $value): string => View::e($value);
-$roles = ['system_admin', 'fleet_manager', 'front_desk', 'driver_coordinator', 'mechanic', 'finance_staff', 'auditor', 'support_staff'];
+$roles = ['system_admin', 'fleet_manager', 'front_desk', 'driver_coordinator', 'finance_staff'];
 
 View::begin('staff', ['title' => 'Edit staff account', 'crumbs' => [['Administration', null], ['Staff accounts', '/admin/users'], ['Edit', null]]]);
 ?>

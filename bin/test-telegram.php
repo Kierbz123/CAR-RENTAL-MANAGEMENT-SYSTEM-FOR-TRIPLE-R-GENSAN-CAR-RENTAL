@@ -189,7 +189,7 @@ check($activeLink($customerA) === null, 'a refused code connects nobody');
 /* ---------------------------------------------------------------------- */
 section('What the bot answers');
 check($handler->handle($message($chat(2), '/start')) === 'needs_code' && str_contains(lastTextTo($chat(2)), 'connection code'), '/start without a code explains where a code comes from');
-check(str_contains(lastTextTo($chat(2)), '0934 517 3581'), 'the reply gives the office phone number');
+check(str_contains(lastTextTo($chat(2)), '09676355474'), 'the reply gives the office phone number');
 check($handler->handle($message($chat(2), '/start ZZZZZZZZ')) === 'invalid_code', 'a wrong code is refused');
 $before = count(stubState()['sent']);
 check($handler->handle($message($chat(3), '/start ' . $second['code'], 'group')) === 'ignored' && count(stubState()['sent']) === $before && $activeLink($customerA) === null, 'a group chat is ignored: no reply, no connection');

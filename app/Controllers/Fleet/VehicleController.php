@@ -17,7 +17,7 @@ use TripleR\Services\VehicleService;
 final class VehicleController
 {
     private const ROLES=['system_admin','fleet_manager'];
-    public function __construct(private readonly AuthMiddleware $guard,private readonly VehicleRepository $vehicles,private readonly VehicleLocationRepository $locations,private readonly VehicleService $service,private readonly VehiclePhotoService $photos) {}
+    public function __construct(private readonly AuthMiddleware $guard,private readonly VehicleRepository $vehicles,private readonly VehicleLocationRepository $locations,private readonly VehicleService $service,private readonly VehiclePhotoService $photos,private readonly \TripleR\Services\VehicleTrackingService $tracking) {}
 
     public function index(Request $request): Response
     {
@@ -111,7 +111,9 @@ final class VehicleController
     public function locations(): Response
     {
         $user=$this->guard->requireRoles(self::ROLES); if ($user instanceof Response) return $user;
-        return $this->render('fleet/locations',['locations'=>$this->locations->all(),'user'=>$user,'notice'=>null]);
+        // The live map's pictures come from the map server named in config/tracking.php; this is the one page allowed to load them.
+        $map=$this->tracking->settings();
+        return $this->render('fleet/locations',['locations'=>$this->locations->all(),'user'=>$user,'notice'=>null,'vehiclesOut'=>$this->tracking->feed(),'map'=>$map])->withImagesFrom($map['tiles']['origin']);
     }
 
     public function createLocation(Request $request): Response

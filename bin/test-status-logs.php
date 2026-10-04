@@ -1,9 +1,9 @@
 <?php
 /**
- * status_logs holds the status history of vehicles, drivers, rentals, deposits and maintenance
- * services in one table. These checks prove the database itself still holds each kind to its
- * own rules, as the five separate tables did: the right owner, the right statuses, the
- * mandatory reasons, and no edits or deletions.
+ * status_logs holds the status history of vehicles, drivers, rentals and deposits in one
+ * table. These checks prove the database itself still holds each kind to its own rules, as
+ * the separate tables did: the right owner, the right statuses, the mandatory reasons, and
+ * no edits or deletions.
  *
  * Every statement here is expected to be refused, so nothing is written. Needs a database that
  * already has at least one vehicle, driver, rental agreement and user.

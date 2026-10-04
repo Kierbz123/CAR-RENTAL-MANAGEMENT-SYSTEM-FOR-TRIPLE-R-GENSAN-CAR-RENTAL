@@ -25,7 +25,7 @@ $driverId = (new DriverService($db, new DriverRepository($db), new DriverPiiCiph
 
 $accounts = [
     'coordinator' => ['email' => "m4-coord-$tag@example.test", 'role' => 'driver_coordinator'],
-    'support' => ['email' => "m4-support-$tag@example.test", 'role' => 'support_staff'],
+    'finance' => ['email' => "m4-finance-$tag@example.test", 'role' => 'finance_staff'],
     'manager' => ['email' => "m4-manager-$tag@example.test", 'role' => 'fleet_manager'],
     'admin' => ['email' => "m4-admin-$tag@example.test", 'role' => 'system_admin'],
 ];
@@ -129,9 +129,9 @@ checkHttp($coordinatorNew['status'] === 403, 'driver_coordinator cannot open dri
 $coordinatorMutation = httpRequest($coordinator, 'POST', '/fleet/drivers/status', ['_csrf' => $coordinatorCsrf, 'driver_id' => $driverId, 'status' => 'inactive']);
 checkHttp($coordinatorMutation['status'] === 403, 'driver_coordinator cannot mutate driver status', 'HTTP ' . $coordinatorMutation['status']);
 
-[$support] = loginClient($accounts['support']);
-$supportPage = httpRequest($support, 'GET', '/fleet/drivers');
-checkHttp($supportPage['status'] === 403, 'support_staff cannot access driver management', 'HTTP ' . $supportPage['status'] . ' ' . substr(strip_tags($supportPage['body']), 0, 120));
+[$finance] = loginClient($accounts['finance']);
+$financePage = httpRequest($finance, 'GET', '/fleet/drivers');
+checkHttp($financePage['status'] === 403, 'finance_staff cannot access driver management', 'HTTP ' . $financePage['status'] . ' ' . substr(strip_tags($financePage['body']), 0, 120));
 
 foreach (['manager', 'admin'] as $roleKey) {
     [$manager, $csrf] = loginClient($accounts[$roleKey]);
@@ -146,7 +146,7 @@ foreach (['manager', 'admin'] as $roleKey) {
     curl_close($manager);
 }
 
-foreach ([$guest, $coordinator, $support] as $client) {
+foreach ([$guest, $coordinator, $finance] as $client) {
     curl_close($client);
 }
 

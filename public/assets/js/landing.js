@@ -1,54 +1,287 @@
 /*
- * Public landing page behaviour: header state, phone menu, section reveal, and
- * the 3D wheel in the hero. The page is complete without this file; the 3D
+ * Public site behaviour: the loading screen, header and phone menu, eased wheel
+ * scrolling, entrances and reveals, the count-up numbers, the office clock, and
+ * the moving light backdrop in the hero. Every page is complete without this file; the 3D
  * library is fetched only after the page has loaded and only when it can run.
+ *
+ * landing-boot.js runs first and puts .js (and, on a fresh visit, .intro) on <html>.
+ * The motion is declared in the markup:
+ *   data-enter="<ms>"     appears after the loading screen, <ms> later
+ *   data-split="lines"    a heading whose lines rise one after another
+ *   data-split="words"    a sentence whose words rise one after another
+ *   class="reveal"        fades up when scrolled into view (data-delay="<ms>" staggers a group)
+ *   data-count="<n>"      counts from 0 to <n> as it scrolls from the bottom of the screen to the middle
  */
 (() => {
     'use strict';
 
     const root = document.documentElement;
-    root.classList.add('js');
+    root.classList.add('js', 'is-booted');
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const finePointer = window.matchMedia('(pointer: fine)').matches;
 
-    /* ---- Header ---------------------------------------------------------- */
+    /* ---- Scroll lock (loading screen, phone menu) ----------------------- */
+    const locks = new Set();
+    const setLock = (name, on) => {
+        if (on) locks.add(name); else locks.delete(name);
+        root.classList.toggle('is-locked', locks.size > 0);
+    };
+
+    /* ---- Eased wheel scrolling -------------------------------------------
+     * The wheel moves a target and the page glides to it. Everything else (keys,
+     * scrollbar, touch, links to sections) scrolls the normal way and cancels the glide. */
+    if (finePointer && !reducedMotion) {
+        let target = window.scrollY;
+        let current = target;
+        let frame = 0;
+        const limit = () => Math.max(0, root.scrollHeight - window.innerHeight);
+        const glide = () => {
+            current += (target - current) * .11;
+            if (Math.abs(target - current) < .5) {
+                current = target;
+                frame = 0;
+            } else {
+                frame = window.requestAnimationFrame(glide);
+            }
+            window.scrollTo({ top: current, behavior: 'instant' });
+        };
+        const stop = () => {
+            if (frame) window.cancelAnimationFrame(frame);
+            frame = 0;
+        };
+        window.addEventListener('wheel', (event) => {
+            if (event.ctrlKey || event.defaultPrevented || locks.size > 0) return;
+            if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+            if (event.target instanceof Element && event.target.closest('select, textarea')) return;
+            event.preventDefault();
+            const unit = event.deltaMode === 1 ? 40 : event.deltaMode === 2 ? window.innerHeight : 1;
+            if (!frame) {
+                current = window.scrollY;
+                target = current;
+            }
+            target = Math.max(0, Math.min(limit(), target + event.deltaY * unit));
+            if (!frame) frame = window.requestAnimationFrame(glide);
+        }, { passive: false });
+        ['keydown', 'pointerdown', 'touchstart'].forEach((type) => window.addEventListener(type, stop, { passive: true }));
+    }
+
+    /* ---- Header and phone menu ------------------------------------------- */
     const header = document.querySelector('[data-site-header]');
     const toggle = document.querySelector('[data-nav-toggle]');
+    const toggleLabel = document.querySelector('[data-nav-toggle-label]');
     const nav = document.querySelector('[data-site-nav]');
 
     const syncHeader = () => header?.classList.toggle('is-scrolled', window.scrollY > 24);
     window.addEventListener('scroll', syncHeader, { passive: true });
     syncHeader();
 
+    const menuOpen = () => Boolean(header?.classList.contains('is-open'));
     const setMenu = (open) => {
-        header?.classList.toggle('is-open', open);
-        toggle?.setAttribute('aria-expanded', String(open));
+        if (!header || !toggle) return;
+        header.classList.toggle('is-open', open);
+        toggle.setAttribute('aria-expanded', String(open));
+        if (toggleLabel) toggleLabel.textContent = open ? 'Close' : 'Menu';
+        setLock('menu', open);
+        // The links start hidden; one frame later they are told to arrive, so the change is animated.
+        if (open) window.requestAnimationFrame(() => window.requestAnimationFrame(() => header.classList.toggle('is-entered', menuOpen())));
+        else header.classList.remove('is-entered');
     };
-    toggle?.addEventListener('click', () => setMenu(!header.classList.contains('is-open')));
+    toggle?.addEventListener('click', () => setMenu(!menuOpen()));
     nav?.addEventListener('click', (event) => {
         if (event.target instanceof Element && event.target.closest('a')) setMenu(false);
     });
     document.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape' && header?.classList.contains('is-open')) {
+        if (event.key === 'Escape' && menuOpen()) {
             setMenu(false);
             toggle?.focus();
         }
     });
+    window.matchMedia('(min-width: 861px)').addEventListener('change', (event) => {
+        if (event.matches && menuOpen()) setMenu(false);
+    });
 
-    /* ---- Reveal sections and mark the current one in the menu ------------- */
-    const reveals = document.querySelectorAll('.reveal');
-    if ('IntersectionObserver' in window && !reducedMotion) {
-        const revealObserver = new IntersectionObserver((entries) => {
+    /* ---- Entrances, split headings and reveals --------------------------- */
+    document.querySelectorAll('[data-enter]').forEach((element) => {
+        element.style.transitionDelay = `${Number(element.dataset.enter) || 0}ms`;
+    });
+    document.querySelectorAll('.reveal[data-delay]').forEach((element) => {
+        element.style.transitionDelay = `${Number(element.dataset.delay) || 0}ms`;
+    });
+
+    // Wraps every word of a heading in two spans: an outer box that clips and an inner one that moves.
+    const wrapWords = (element) => {
+        const inners = [];
+        const walk = (node) => {
+            [...node.childNodes].forEach((child) => {
+                if (child.nodeType === Node.TEXT_NODE) {
+                    const pieces = document.createDocumentFragment();
+                    child.textContent.split(/(\s+)/).forEach((piece) => {
+                        if (piece === '') return;
+                        if (/^\s+$/.test(piece)) {
+                            pieces.append(' ');
+                            return;
+                        }
+                        const outer = document.createElement('span');
+                        const inner = document.createElement('span');
+                        outer.className = 'w';
+                        inner.className = 'w-in';
+                        inner.textContent = piece;
+                        outer.append(inner);
+                        pieces.append(outer);
+                        inners.push(inner);
+                    });
+                    child.replaceWith(pieces);
+                } else if (child.nodeType === Node.ELEMENT_NODE && child.tagName !== 'BR') {
+                    walk(child);
+                }
+            });
+        };
+        walk(element);
+        return inners;
+    };
+
+    const splits = [...document.querySelectorAll('[data-split]')];
+    splits.forEach((element) => {
+        if (reducedMotion) {
+            element.classList.add('is-split', 'is-revealed');
+            return;
+        }
+        const byWord = element.dataset.split === 'words';
+        const delay = Number(element.dataset.splitDelay) || (byWord ? 0 : 120);
+        const stagger = Number(element.dataset.splitStagger) || (byWord ? 35 : 90);
+        const inners = wrapWords(element);
+        let line = -1;
+        let lineTop = null;
+        inners.forEach((inner, index) => {
+            // Words that share a top edge are on the same line and move together.
+            const top = inner.parentElement.offsetTop;
+            if (lineTop === null || Math.abs(top - lineTop) > 4) {
+                line += 1;
+                lineTop = top;
+            }
+            inner.style.transitionDelay = `${delay + (byWord ? index : line) * stagger}ms`;
+        });
+        element.classList.add('is-split');
+    });
+
+    const reveals = [...document.querySelectorAll('.reveal')];
+    const watchReveals = () => {
+        if (!('IntersectionObserver' in window) || reducedMotion) {
+            reveals.forEach((element) => element.classList.add('is-visible'));
+            splits.forEach((element) => element.classList.add('is-revealed'));
+            return;
+        }
+        const observer = new IntersectionObserver((entries) => {
             entries.forEach((entry) => {
                 if (!entry.isIntersecting) return;
-                entry.target.classList.add('is-visible');
-                revealObserver.unobserve(entry.target);
+                entry.target.classList.add(entry.target.hasAttribute('data-split') ? 'is-revealed' : 'is-visible');
+                observer.unobserve(entry.target);
             });
         }, { rootMargin: '0px 0px -8% 0px', threshold: .08 });
-        reveals.forEach((element) => revealObserver.observe(element));
+        [...reveals, ...splits].forEach((element) => {
+            // What is already on screen appears at once; the rest waits to be scrolled to.
+            const box = element.getBoundingClientRect();
+            if (box.top < window.innerHeight * .92 && box.bottom > 0) element.classList.add(element.hasAttribute('data-split') ? 'is-revealed' : 'is-visible');
+            else observer.observe(element);
+        });
+    };
+
+    /* ---- Loading screen ---------------------------------------------------
+     * Counts 000 to 100, then lifts away. The page's entrances wait for it (is-ready). */
+    const loader = document.querySelector('[data-loader]');
+    const ready = () => {
+        if (root.classList.contains('is-ready')) return;
+        root.classList.add('is-ready');
+        watchReveals();
+    };
+    if (loader && root.classList.contains('intro')) {
+        const FILL_MS = 1300;
+        const fill = loader.querySelector('[data-loader-fill]');
+        const count = loader.querySelector('[data-loader-count]');
+        const easeInOutCubic = (t) => (t < .5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2);
+        if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual';
+        window.scrollTo({ top: 0, behavior: 'instant' });
+        setLock('intro', true);
+
+        const leave = () => {
+            let gone = false;
+            const finish = () => {
+                if (gone) return;
+                gone = true;
+                ready();
+                loader.remove();
+                root.classList.remove('intro');
+            };
+            loader.classList.add('is-leaving');
+            setLock('intro', false);
+            loader.addEventListener('transitionend', (event) => {
+                if (event.target === loader && event.propertyName === 'transform') finish();
+            });
+            // The page starts arriving while the screen is still lifting.
+            window.setTimeout(ready, 420);
+            window.setTimeout(finish, 1300);
+        };
+        let startedAt = 0;
+        const fillUp = (now) => {
+            startedAt = startedAt || now;
+            const t = Math.min(1, (now - startedAt) / FILL_MS);
+            const progress = Math.round(easeInOutCubic(t) * 100);
+            if (fill) fill.style.transform = `scaleX(${progress / 100})`;
+            if (count) count.textContent = String(progress).padStart(3, '0');
+            if (t < 1) window.requestAnimationFrame(fillUp);
+            else leave();
+        };
+        window.requestAnimationFrame(fillUp);
     } else {
-        reveals.forEach((element) => element.classList.add('is-visible'));
+        root.classList.remove('intro');
+        ready();
     }
 
+    /* ---- Numbers that count up with the scroll --------------------------- */
+    const counters = [...document.querySelectorAll('[data-count]')];
+    if (counters.length && !reducedMotion) {
+        let queued = false;
+        const count = () => {
+            queued = false;
+            const height = window.innerHeight;
+            counters.forEach((element) => {
+                const box = element.getBoundingClientRect();
+                // 0 when the number's top edge reaches the bottom of the screen, 1 when its middle reaches the middle.
+                const end = height / 2 - box.height / 2;
+                const progress = Math.min(1, Math.max(0, (height - box.top) / (height - end)));
+                element.textContent = String(Math.round(progress * Number(element.dataset.count)));
+            });
+        };
+        const queue = () => {
+            if (queued) return;
+            queued = true;
+            window.requestAnimationFrame(count);
+        };
+        window.addEventListener('scroll', queue, { passive: true });
+        window.addEventListener('resize', queue);
+        count();
+    }
+
+    /* ---- Office clock in the hero ----------------------------------------- */
+    const clock = document.querySelector('[data-clock]');
+    const openHour = Number(clock?.dataset.openHour);
+    const closeHour = Number(clock?.dataset.closeHour);
+    if (clock && closeHour > openHour) {
+        const manila = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit', hour12: true });
+        const hourName = (hour) => `${hour % 12 || 12} ${hour % 24 < 12 ? 'AM' : 'PM'}`;
+        const showTime = () => {
+            const part = Object.fromEntries(manila.formatToParts(new Date()).map((item) => [item.type, item.value]));
+            const period = String(part.dayPeriod || '').toLowerCase();
+            const hour = (Number(part.hour) % 12) + (period === 'pm' ? 12 : 0);
+            const open = hour >= openHour && hour < closeHour;
+            clock.textContent = `${part.hour}:${part.minute} ${period} in Gensan · ${open ? `Open until ${hourName(closeHour)}` : `Opens ${hourName(openHour)}`}`;
+            clock.classList.toggle('is-open', open);
+        };
+        showTime();
+        window.setInterval(showTime, 1000);
+    }
+
+    /* ---- Mark the current section in the menu ---------------------------- */
     const links = [...document.querySelectorAll('.site-nav li a[href^="#"]')];
     const sections = links.map((link) => document.querySelector(link.getAttribute('href'))).filter(Boolean);
     if ('IntersectionObserver' in window && sections.length) {
@@ -78,8 +311,6 @@
         renderer.outputColorSpace = THREE.SRGBColorSpace;
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
         renderer.toneMappingExposure = 2.2;
-        renderer.shadowMap.enabled = !isCompact();
-        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
         const scene = new THREE.Scene();
         scene.background = new THREE.Color('#0d1b1e');
@@ -89,7 +320,7 @@
         scene.add(camera);
         const clock = new THREE.Clock();
 
-        // Slow-moving light field behind the wheel, in the brand's ink and amber.
+        // Slow-moving light field, in the brand's ink and amber.
         const uniforms = {
             uTime: { value: 0 },
             uResolution: { value: new THREE.Vector2(1, 1) },
@@ -145,70 +376,6 @@
         background.renderOrder = -10;
         camera.add(background);
 
-        scene.add(new THREE.AmbientLight('#ffffff', .1));
-        const keyLight = new THREE.SpotLight('#ffffff', 18);
-        keyLight.position.set(4, 6, 3);
-        keyLight.angle = Math.PI / 4;
-        keyLight.penumbra = .9;
-        keyLight.castShadow = renderer.shadowMap.enabled;
-        if (keyLight.castShadow) {
-            keyLight.shadow.mapSize.set(2048, 2048);
-            keyLight.shadow.camera.near = 1;
-            keyLight.shadow.camera.far = 15;
-            keyLight.shadow.bias = -.001;
-        }
-        scene.add(keyLight);
-        const rimLight = new THREE.DirectionalLight('#e3f2ff', 10);
-        rimLight.position.set(-5, 3, -4);
-        scene.add(rimLight);
-        const warmFill = new THREE.DirectionalLight('#ffe2bd', 1.2);
-        warmFill.position.set(-2, -4, 2);
-        scene.add(warmFill);
-
-        // The wheel.
-        const pivot = new THREE.Group();
-        scene.add(pivot);
-        const chrome = new THREE.MeshStandardMaterial({ color: 0xc4ccd0, metalness: .92, roughness: .42 });
-        const darkSteel = new THREE.MeshStandardMaterial({ color: 0x4d565d, metalness: .89, roughness: .36 });
-        const brightSteel = new THREE.MeshStandardMaterial({ color: 0xe3e8e8, metalness: .95, roughness: .24 });
-        const rubber = new THREE.MeshStandardMaterial({ color: 0x111416, metalness: .2, roughness: .72 });
-        const wheel = new THREE.Group();
-        pivot.add(wheel);
-        const spinner = new THREE.Group();
-        wheel.add(spinner);
-        spinner.add(new THREE.Mesh(new THREE.TorusGeometry(1.55, .21, 24, 112), rubber));
-        const outerRim = new THREE.Mesh(new THREE.TorusGeometry(1.24, .1, 18, 96), chrome);
-        outerRim.position.z = .09;
-        spinner.add(outerRim);
-        const innerRim = new THREE.Mesh(new THREE.TorusGeometry(.48, .07, 14, 64), brightSteel);
-        innerRim.position.z = .11;
-        spinner.add(innerRim);
-        const hub = new THREE.Mesh(new THREE.CylinderGeometry(.25, .25, .2, 32), darkSteel);
-        hub.rotation.x = Math.PI / 2;
-        hub.position.z = .13;
-        spinner.add(hub);
-        for (let i = 0; i < 12; i += 1) {
-            const angle = (i / 12) * Math.PI * 2;
-            const spoke = new THREE.Mesh(new THREE.CylinderGeometry(.035, .075, 1.33, 8), i % 2 ? chrome : brightSteel);
-            spoke.position.set(Math.cos(angle) * .84, Math.sin(angle) * .84, .13);
-            spoke.rotation.z = angle - Math.PI / 2;
-            spinner.add(spoke);
-        }
-        for (let i = 0; i < 10; i += 1) {
-            const angle = (i / 10) * Math.PI * 2;
-            const bolt = new THREE.Mesh(new THREE.SphereGeometry(.035, 10, 8), brightSteel);
-            bolt.position.set(Math.cos(angle) * .34, Math.sin(angle) * .34, .24);
-            spinner.add(bolt);
-        }
-        wheel.rotation.y = -.22;
-        wheel.rotation.x = .18;
-        wheel.traverse((object) => {
-            if (object.isMesh) {
-                object.castShadow = renderer.shadowMap.enabled;
-                object.receiveShadow = renderer.shadowMap.enabled;
-            }
-        });
-
         // Drifting points of light, like road lights passing.
         const particleCount = isCompact() ? 150 : 450;
         const positions = new Float32Array(particleCount * 3);
@@ -247,30 +414,14 @@
         particleGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
         scene.add(new THREE.Points(particleGeometry, new THREE.PointsMaterial({ size: .025, vertexColors: true, transparent: true, opacity: .85, depthWrite: false, blending: THREE.AdditiveBlending, map: new THREE.CanvasTexture(sprite) })));
 
-        // Where the wheel sits depends on the shape of the hero, so it never hides the copy.
-        // On landscape screens its left edge is pinned to 57% of the width; the copy stays in the left half.
-        const WHEEL_RADIUS = 1.76;
-        const VIEW_HEIGHT_AT_WHEEL = Math.tan((25 * Math.PI) / 180) * 4.2 * 2;
         const layout = () => {
             const width = hero.clientWidth;
             const height = hero.clientHeight;
-            const aspect = width / height;
-            camera.aspect = aspect;
+            camera.aspect = width / height;
             camera.updateProjectionMatrix();
             renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, width <= 767 ? 1.5 : 2));
             renderer.setSize(width, height, false);
             renderer.getDrawingBufferSize(uniforms.uResolution.value);
-            if (aspect < .8) {
-                // Portrait: wheel in the upper right, copy along the bottom.
-                pivot.position.set(.45, 1, 0);
-                wheel.scale.setScalar(.58);
-            } else {
-                const unitsPerPixel = VIEW_HEIGHT_AT_WHEEL / height;
-                const scale = Math.min(1.04, Math.max(.62, .55 + (aspect - .8) * .62));
-                const leftEdge = (.57 - .5) * width * unitsPerPixel;
-                pivot.position.set(leftEdge + WHEEL_RADIUS * scale, -.3, 0);
-                wheel.scale.setScalar(scale);
-            }
         };
 
         let pointerX = 0;
@@ -307,9 +458,6 @@
             easedX += (pointerX - easedX) * .05;
             easedY += (pointerY - easedY) * .05;
             const velocity = Math.abs(targetScroll - scroll);
-            pivot.rotation.y = easedX * .25;
-            pivot.rotation.x = easedY * .15;
-            spinner.rotation.z -= delta * (.12 + velocity * 6);
             for (let i = 0; i < particleCount; i += 1) {
                 const offset = i * 3;
                 const d = drift[i];

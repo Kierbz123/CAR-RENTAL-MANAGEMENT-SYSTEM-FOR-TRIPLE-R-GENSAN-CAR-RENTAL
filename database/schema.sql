@@ -13,7 +13,7 @@ CREATE TABLE users (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     email VARCHAR(191) NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
-    role ENUM('system_admin','fleet_manager','front_desk','driver_coordinator','mechanic','finance_staff','auditor','support_staff') NOT NULL DEFAULT 'fleet_manager',
+    role ENUM('system_admin','fleet_manager','front_desk','driver_coordinator','finance_staff') NOT NULL DEFAULT 'fleet_manager',
     is_active TINYINT(1) NOT NULL DEFAULT 1,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
@@ -607,6 +607,29 @@ CREATE TABLE payments (
     CONSTRAINT chk_payments_proof CHECK (proof_id IS NULL OR (channel = 'staff' AND method = 'gcash' AND purpose = 'downpayment'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+-- Where each rented vehicle is right now: ONE row per vehicle, its latest position, replaced by
+-- each newer one reported by the phone travelling with it. Not a history of where it has been.
+-- The link a phone reports through is a booking_access_tokens row with purpose 'vehicle_tracker'.
+CREATE TABLE vehicle_positions (
+    vehicle_id BIGINT UNSIGNED NOT NULL,
+    agreement_id BIGINT UNSIGNED NOT NULL,
+    latitude DECIMAL(9,6) NOT NULL,
+    longitude DECIMAL(9,6) NOT NULL,
+    accuracy_m SMALLINT UNSIGNED NULL,
+    speed_kph DECIMAL(5,1) NULL,
+    heading_degrees SMALLINT UNSIGNED NULL,
+    recorded_at DATETIME(6) NOT NULL,
+    stopped_since DATETIME(6) NULL,
+    PRIMARY KEY (vehicle_id),
+    KEY idx_vehicle_positions_agreement (agreement_id),
+    CONSTRAINT fk_vehicle_positions_vehicle FOREIGN KEY (vehicle_id) REFERENCES vehicles(vehicle_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_vehicle_positions_agreement FOREIGN KEY (agreement_id) REFERENCES rental_agreements(agreement_id) ON DELETE RESTRICT,
+    CONSTRAINT chk_vehicle_positions_place CHECK (latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180),
+    CONSTRAINT chk_vehicle_positions_speed CHECK (speed_kph IS NULL OR speed_kph >= 0),
+    CONSTRAINT chk_vehicle_positions_heading CHECK (heading_degrees IS NULL OR heading_degrees < 360),
+    CONSTRAINT chk_vehicle_positions_stopped CHECK (stopped_since IS NULL OR stopped_since <= recorded_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 CREATE TABLE booking_access_tokens (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     token_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
@@ -790,116 +813,19 @@ BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Telegram connections are append-
 DELIMITER ;
 
 -- ==========================================
+-- STATUS HISTORY AND PHOTOS (SHARED TABLES)
 -- ==========================================
--- MAINTENANCE (MIGRATION 011)
--- ==========================================
 
-CREATE TABLE maintenance_schedules (
-    schedule_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    vehicle_id BIGINT UNSIGNED NOT NULL,
-    schedule_name VARCHAR(100) NOT NULL,
-    interval_time_days INT UNSIGNED NULL,
-    interval_mileage INT UNSIGNED NULL,
-    next_due_date DATE NULL,
-    next_due_mileage INT UNSIGNED NULL,
-    due_soon_days_override SMALLINT UNSIGNED NULL,
-    due_soon_mileage_override INT UNSIGNED NULL,
-    is_active TINYINT(1) NOT NULL DEFAULT 1,
-    created_by BIGINT UNSIGNED NOT NULL,
-    updated_by BIGINT UNSIGNED NOT NULL,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-    PRIMARY KEY (schedule_id),
-    UNIQUE KEY uq_maintenance_vehicle_name (vehicle_id, schedule_name),
-    UNIQUE KEY uq_maintenance_vehicle_schedule (vehicle_id, schedule_id),
-    KEY idx_maintenance_due_date (is_active, next_due_date, vehicle_id),
-    KEY idx_maintenance_due_mileage (is_active, next_due_mileage, vehicle_id),
-    CONSTRAINT fk_maintenance_schedule_vehicle FOREIGN KEY (vehicle_id) REFERENCES vehicles(vehicle_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_maintenance_schedule_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT,
-    CONSTRAINT fk_maintenance_schedule_updated_by FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE RESTRICT,
-    CONSTRAINT chk_maintenance_schedule_intervals CHECK (
-        (interval_time_days IS NULL OR interval_time_days > 0)
-        AND (interval_mileage IS NULL OR interval_mileage > 0)
-        AND (interval_time_days IS NOT NULL OR interval_mileage IS NOT NULL)
-    ),
-    CONSTRAINT chk_maintenance_schedule_due_date CHECK (
-        (interval_time_days IS NULL AND next_due_date IS NULL)
-        OR (interval_time_days IS NOT NULL AND next_due_date IS NOT NULL)
-    ),
-    CONSTRAINT chk_maintenance_schedule_due_mileage CHECK (
-        (interval_mileage IS NULL AND next_due_mileage IS NULL)
-        OR (interval_mileage IS NOT NULL AND next_due_mileage IS NOT NULL)
-    ),
-    CONSTRAINT chk_maintenance_schedule_overrides CHECK (
-        (due_soon_days_override IS NULL OR due_soon_days_override > 0)
-        AND (due_soon_mileage_override IS NULL OR due_soon_mileage_override > 0)
-    )
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
-CREATE TABLE maintenance_services (
-    service_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    vehicle_id BIGINT UNSIGNED NOT NULL,
-    schedule_id BIGINT UNSIGNED NULL,
-    mechanic_id BIGINT UNSIGNED NOT NULL,
-    status ENUM('in_progress','completed','cancelled') NOT NULL DEFAULT 'in_progress',
-    active_vehicle_id BIGINT UNSIGNED GENERATED ALWAYS AS (CASE WHEN status='in_progress' THEN vehicle_id ELSE NULL END) STORED,
-    labor_cost DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-    parts_cost DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-    other_cost DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-    total_cost DECIMAL(11,2) GENERATED ALWAYS AS (labor_cost + parts_cost + other_cost) STORED,
-    vehicle_status_before ENUM('available','rented','maintenance','reserved','cleaning','out_of_service','retired') NOT NULL,
-    completion_mileage_log_id BIGINT UNSIGNED NULL,
-    title VARCHAR(160) NOT NULL,
-    notes VARCHAR(2000) NULL,
-    started_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    completed_at DATETIME(6) NULL,
-    cancelled_at DATETIME(6) NULL,
-    cancel_reason VARCHAR(500) NULL,
-    needs_review TINYINT(1) NOT NULL DEFAULT 0,
-    reviewed_by BIGINT UNSIGNED NULL,
-    reviewed_at DATETIME(6) NULL,
-    review_reason VARCHAR(500) NULL,
-    created_by BIGINT UNSIGNED NOT NULL,
-    updated_by BIGINT UNSIGNED NOT NULL,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-    PRIMARY KEY (service_id),
-    UNIQUE KEY uq_maintenance_one_active_service (active_vehicle_id),
-    UNIQUE KEY uq_maintenance_completion_mileage (completion_mileage_log_id),
-    KEY idx_maintenance_service_vehicle (vehicle_id, started_at, service_id),
-    KEY idx_maintenance_service_schedule (schedule_id, status, completed_at),
-    KEY idx_maintenance_needs_review (needs_review, vehicle_id),
-    CONSTRAINT fk_maintenance_service_vehicle FOREIGN KEY (vehicle_id) REFERENCES vehicles(vehicle_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_maintenance_service_schedule FOREIGN KEY (vehicle_id, schedule_id) REFERENCES maintenance_schedules(vehicle_id, schedule_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_maintenance_service_mechanic FOREIGN KEY (mechanic_id) REFERENCES users(id) ON DELETE RESTRICT,
-    CONSTRAINT fk_maintenance_service_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT,
-    CONSTRAINT fk_maintenance_service_updated_by FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE RESTRICT,
-    CONSTRAINT fk_maintenance_service_mileage FOREIGN KEY (vehicle_id, completion_mileage_log_id) REFERENCES vehicle_mileage_logs(vehicle_id, mileage_log_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_maintenance_service_reviewer FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE RESTRICT,
-    CONSTRAINT chk_maintenance_service_costs CHECK (labor_cost >= 0 AND parts_cost >= 0 AND other_cost >= 0),
-    CONSTRAINT chk_maintenance_service_status_dates CHECK (
-        (status='in_progress' AND completed_at IS NULL AND cancelled_at IS NULL AND completion_mileage_log_id IS NULL)
-        OR (status='completed' AND completed_at IS NOT NULL AND cancelled_at IS NULL AND completion_mileage_log_id IS NOT NULL)
-        OR (status='cancelled' AND cancelled_at IS NOT NULL AND cancel_reason IS NOT NULL AND CHAR_LENGTH(TRIM(cancel_reason))>0 AND completed_at IS NULL AND completion_mileage_log_id IS NULL)
-    ),
-    CONSTRAINT chk_maintenance_service_review CHECK (
-        (needs_review=0 AND reviewed_by IS NULL AND reviewed_at IS NULL AND review_reason IS NULL)
-        OR (needs_review=1 AND reviewed_by IS NULL AND reviewed_at IS NULL AND review_reason IS NULL)
-        OR (needs_review=0 AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL AND review_reason IS NOT NULL AND CHAR_LENGTH(TRIM(review_reason))>0)
-    )
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
--- Every status change of a vehicle, a driver, a rental, a rental's deposit or a maintenance
--- service. subject says which, each kind of record has its own column with a foreign key, and
--- the CHECK rules hold each kind to its own statuses and mandatory facts. It is defined here
--- because it needs every one of those tables to exist.
+-- Every status change of a vehicle, a driver, a rental or a rental's deposit. subject says
+-- which, each kind of record has its own column with a foreign key, and the CHECK rules hold
+-- each kind to its own statuses and mandatory facts. It is defined here because it needs
+-- every one of those tables to exist.
 CREATE TABLE status_logs (
     status_log_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    subject ENUM('vehicle','driver','rental','deposit','maintenance_service') NOT NULL,
+    subject ENUM('vehicle','driver','rental','deposit') NOT NULL,
     vehicle_id BIGINT UNSIGNED NULL,
     driver_id BIGINT UNSIGNED NULL,
     agreement_id BIGINT UNSIGNED NULL,
-    maintenance_service_id BIGINT UNSIGNED NULL,
     old_status VARCHAR(20) NULL,
     new_status VARCHAR(20) NOT NULL,
     reason VARCHAR(500) NULL,
@@ -913,18 +839,15 @@ CREATE TABLE status_logs (
     KEY idx_status_logs_vehicle (vehicle_id, created_at, status_log_id),
     KEY idx_status_logs_driver (driver_id, created_at, status_log_id),
     KEY idx_status_logs_agreement (agreement_id, subject, created_at, status_log_id),
-    KEY idx_status_logs_maintenance_service (maintenance_service_id, created_at, status_log_id),
     CONSTRAINT fk_status_logs_vehicle FOREIGN KEY (vehicle_id) REFERENCES vehicles(vehicle_id) ON DELETE RESTRICT,
     CONSTRAINT fk_status_logs_driver FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE RESTRICT,
     CONSTRAINT fk_status_logs_agreement FOREIGN KEY (agreement_id) REFERENCES rental_agreements(agreement_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_status_logs_maintenance_service FOREIGN KEY (maintenance_service_id) REFERENCES maintenance_services(service_id) ON DELETE RESTRICT,
     CONSTRAINT fk_status_logs_location FOREIGN KEY (location_id) REFERENCES vehicle_locations(location_id) ON DELETE RESTRICT,
     CONSTRAINT fk_status_logs_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE RESTRICT,
     CONSTRAINT chk_status_logs_owner CHECK (
-        (subject = 'vehicle' AND vehicle_id IS NOT NULL AND driver_id IS NULL AND agreement_id IS NULL AND maintenance_service_id IS NULL)
-        OR (subject = 'driver' AND driver_id IS NOT NULL AND vehicle_id IS NULL AND agreement_id IS NULL AND maintenance_service_id IS NULL)
-        OR (subject IN ('rental','deposit') AND agreement_id IS NOT NULL AND vehicle_id IS NULL AND driver_id IS NULL AND maintenance_service_id IS NULL)
-        OR (subject = 'maintenance_service' AND maintenance_service_id IS NOT NULL AND vehicle_id IS NULL AND driver_id IS NULL AND agreement_id IS NULL)
+        (subject = 'vehicle' AND vehicle_id IS NOT NULL AND driver_id IS NULL AND agreement_id IS NULL)
+        OR (subject = 'driver' AND driver_id IS NOT NULL AND vehicle_id IS NULL AND agreement_id IS NULL)
+        OR (subject IN ('rental','deposit') AND agreement_id IS NOT NULL AND vehicle_id IS NULL AND driver_id IS NULL)
     ),
     CONSTRAINT chk_status_logs_statuses CHECK (
         (subject = 'vehicle' AND new_status IN ('available','rented','maintenance','reserved','cleaning','out_of_service','retired')
@@ -935,14 +858,11 @@ CREATE TABLE status_logs (
             AND (old_status IS NULL OR old_status IN ('reserved','confirmed','active','returned','completed','cancelled','no_show')))
         OR (subject = 'deposit' AND new_status IN ('not_required','due','held','released','refunded','forfeited')
             AND (old_status IS NULL OR old_status IN ('not_required','due','held','released','refunded','forfeited')))
-        OR (subject = 'maintenance_service' AND new_status IN ('in_progress','completed','cancelled')
-            AND (old_status IS NULL OR old_status IN ('in_progress','completed','cancelled')))
     ),
     CONSTRAINT chk_status_logs_reason CHECK (
         (subject IN ('vehicle','driver') AND reason IS NULL)
         OR (subject = 'rental' AND (new_status NOT IN ('cancelled','no_show') OR (reason IS NOT NULL AND CHAR_LENGTH(TRIM(reason)) > 0)))
         OR (subject = 'deposit' AND reason IS NOT NULL AND CHAR_LENGTH(TRIM(reason)) > 0)
-        OR (subject = 'maintenance_service' AND (new_status <> 'cancelled' OR (reason IS NOT NULL AND CHAR_LENGTH(TRIM(reason)) > 0)))
     ),
     CONSTRAINT chk_status_logs_amounts CHECK (
         (subject = 'deposit' AND new_amount IS NOT NULL AND new_amount >= 0)
@@ -951,15 +871,13 @@ CREATE TABLE status_logs (
     CONSTRAINT chk_status_logs_vehicle_facts CHECK (subject = 'vehicle' OR (location_id IS NULL AND mileage IS NULL))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- Every stored photo: of a vehicle, of a damage report, or of a maintenance service. Each kind
--- of owner has its own column with a foreign key, and exactly one of them is set. It is
--- defined here because it needs all three owner tables to exist.
+-- Every stored photo: of a vehicle or of a damage report. Each kind of owner has its own
+-- column with a foreign key, and exactly one of them is set. It is defined here because it
+-- needs both owner tables to exist.
 CREATE TABLE photos (
     photo_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     vehicle_id BIGINT UNSIGNED NULL,
     damage_report_id BIGINT UNSIGNED NULL,
-    maintenance_service_id BIGINT UNSIGNED NULL,
-    phase ENUM('before','after') NULL,
     sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 0,
     storage_path VARCHAR(500) NOT NULL,
     original_filename VARCHAR(255) NOT NULL,
@@ -971,62 +889,11 @@ CREATE TABLE photos (
     UNIQUE KEY uq_photos_storage_path (storage_path),
     KEY idx_photos_vehicle (vehicle_id, sort_order, photo_id),
     KEY idx_photos_damage_report (damage_report_id, photo_id),
-    KEY idx_photos_maintenance_service (maintenance_service_id, phase, photo_id),
     CONSTRAINT fk_photos_vehicle FOREIGN KEY (vehicle_id) REFERENCES vehicles(vehicle_id) ON DELETE RESTRICT,
     CONSTRAINT fk_photos_damage_report FOREIGN KEY (damage_report_id) REFERENCES damage_reports(report_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_photos_maintenance_service FOREIGN KEY (maintenance_service_id) REFERENCES maintenance_services(service_id) ON DELETE RESTRICT,
     CONSTRAINT fk_photos_uploader FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE RESTRICT,
-    CONSTRAINT chk_photos_one_owner CHECK ((vehicle_id IS NOT NULL) + (damage_report_id IS NOT NULL) + (maintenance_service_id IS NOT NULL) = 1),
-    CONSTRAINT chk_photos_phase CHECK ((maintenance_service_id IS NOT NULL) = (phase IS NOT NULL)),
+    CONSTRAINT chk_photos_one_owner CHECK ((vehicle_id IS NOT NULL) + (damage_report_id IS NOT NULL) = 1),
     CONSTRAINT chk_photos_size CHECK (size_bytes > 0)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
-CREATE TABLE maintenance_schedule_logs (
-    schedule_log_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    schedule_id BIGINT UNSIGNED NOT NULL,
-    actor_user_id BIGINT UNSIGNED NOT NULL,
-    reason VARCHAR(500) NOT NULL,
-    old_schedule_name VARCHAR(100) NULL,
-    new_schedule_name VARCHAR(100) NULL,
-    old_interval_time_days INT UNSIGNED NULL,
-    new_interval_time_days INT UNSIGNED NULL,
-    old_interval_mileage INT UNSIGNED NULL,
-    new_interval_mileage INT UNSIGNED NULL,
-    old_next_due_date DATE NULL,
-    new_next_due_date DATE NULL,
-    old_next_due_mileage INT UNSIGNED NULL,
-    new_next_due_mileage INT UNSIGNED NULL,
-    old_due_soon_days_override SMALLINT UNSIGNED NULL,
-    new_due_soon_days_override SMALLINT UNSIGNED NULL,
-    old_due_soon_mileage_override INT UNSIGNED NULL,
-    new_due_soon_mileage_override INT UNSIGNED NULL,
-    old_is_active TINYINT(1) NULL,
-    new_is_active TINYINT(1) NULL,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    PRIMARY KEY (schedule_log_id),
-    KEY idx_maintenance_schedule_log (schedule_id, created_at, schedule_log_id),
-    CONSTRAINT fk_maintenance_schedule_log_schedule FOREIGN KEY (schedule_id) REFERENCES maintenance_schedules(schedule_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_maintenance_schedule_log_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE RESTRICT,
-    CONSTRAINT chk_maintenance_schedule_log_reason CHECK (CHAR_LENGTH(TRIM(reason))>0)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
-CREATE TABLE maintenance_cost_audit_logs (
-    cost_audit_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    service_id BIGINT UNSIGNED NOT NULL,
-    old_labor_cost DECIMAL(10,2) NOT NULL,
-    new_labor_cost DECIMAL(10,2) NOT NULL,
-    old_parts_cost DECIMAL(10,2) NOT NULL,
-    new_parts_cost DECIMAL(10,2) NOT NULL,
-    old_other_cost DECIMAL(10,2) NOT NULL,
-    new_other_cost DECIMAL(10,2) NOT NULL,
-    reason VARCHAR(500) NOT NULL,
-    actor_user_id BIGINT UNSIGNED NOT NULL,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    PRIMARY KEY (cost_audit_id),
-    KEY idx_maintenance_cost_audit (service_id, created_at, cost_audit_id),
-    CONSTRAINT fk_maintenance_cost_audit_service FOREIGN KEY (service_id) REFERENCES maintenance_services(service_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_maintenance_cost_audit_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE RESTRICT,
-    CONSTRAINT chk_maintenance_cost_audit_reason CHECK (CHAR_LENGTH(TRIM(reason))>0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DELIMITER $$
@@ -1035,7 +902,7 @@ CREATE TRIGGER status_logs_no_delete BEFORE DELETE ON status_logs FOR EACH ROW B
 CREATE TRIGGER photos_guard_update BEFORE UPDATE ON photos FOR EACH ROW
 BEGIN
     IF OLD.vehicle_id IS NULL THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Damage and maintenance photos are append-only';
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Damage photos are append-only';
     END IF;
     IF NOT (NEW.vehicle_id <=> OLD.vehicle_id) THEN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='A photo cannot be moved to another record';
@@ -1044,17 +911,9 @@ END$$
 CREATE TRIGGER photos_guard_delete BEFORE DELETE ON photos FOR EACH ROW
 BEGIN
     IF OLD.vehicle_id IS NULL THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Damage and maintenance photos are append-only';
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Damage photos are append-only';
     END IF;
 END$$
-CREATE TRIGGER maintenance_schedule_logs_no_update BEFORE UPDATE ON maintenance_schedule_logs FOR EACH ROW
-BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Maintenance schedule logs are append-only'; END$$
-CREATE TRIGGER maintenance_schedule_logs_no_delete BEFORE DELETE ON maintenance_schedule_logs FOR EACH ROW
-BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Maintenance schedule logs are append-only'; END$$
-CREATE TRIGGER maintenance_cost_audit_no_update BEFORE UPDATE ON maintenance_cost_audit_logs FOR EACH ROW
-BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Maintenance cost audit logs are append-only'; END$$
-CREATE TRIGGER maintenance_cost_audit_no_delete BEFORE DELETE ON maintenance_cost_audit_logs FOR EACH ROW
-BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Maintenance cost audit logs are append-only'; END$$
 DELIMITER ;
 
 
@@ -1089,4 +948,6 @@ INSERT INTO schema_migrations (migration,checksum) VALUES
 ('017_status_logs.sql','babe36b0e5155084f28bfac46179cc6aaedab4f7f5ef4f395a0b1dadc4d2ee22'),
 ('018_downpayment.sql','f6588e45156e677d35409a1b51b5ba3404520b90d6dc8a0fb4c1cf6e20d27fba'),
 ('019_online_booking.sql','b0f596c6bb57ead3d1c1896085404b651cfeda862b2111166a3cc2aff49a9ff7'),
-('020_payments.sql','98c3b62a03c0554643faf1d5fd4e716a774b74b9136fafe0f93d3b9225724ba3');
+('020_payments.sql','98c3b62a03c0554643faf1d5fd4e716a774b74b9136fafe0f93d3b9225724ba3'),
+('021_vehicle_tracking.sql','340bad79ccf96c905708c423aa4300c2bd4263801f7142f44346b6617e4ebf12'),
+('022_remove_maintenance_and_roles.sql','15a6c63e07256e5a41fc1a3b21baeefadb43cccc4afe9518b03320f32d0b1777');

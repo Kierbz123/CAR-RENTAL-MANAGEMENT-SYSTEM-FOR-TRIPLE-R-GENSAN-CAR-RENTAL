@@ -23,12 +23,11 @@ View::begin('staff', ['title' => (string) $vehicle['plate_number'], 'crumbs' => 
             <span><?= $e($vehicle['location_name'] ?? 'Location not recorded') ?></span>
         </div>
     </div>
-    <div class="page-header-actions">
-        <a class="button button-secondary" href="/maintenance/history?vehicle_id=<?= (int) $vehicle['vehicle_id'] ?>">Maintenance history</a>
 <?php if (!$retired): ?>
+    <div class="page-header-actions">
         <a class="button button-primary" href="/fleet/vehicles/edit?vehicle_id=<?= (int) $vehicle['vehicle_id'] ?>">Edit vehicle</a>
-<?php endif; ?>
     </div>
+<?php endif; ?>
 </header>
 <?php if ($notice): ?>
 <p class="notice" role="status"><?= $e($notice) ?></p>

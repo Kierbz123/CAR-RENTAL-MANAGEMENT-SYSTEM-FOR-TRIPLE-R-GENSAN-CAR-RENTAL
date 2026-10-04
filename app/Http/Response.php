@@ -46,16 +46,31 @@ final class Response
         return new self('', $status, ['Location' => $location, 'Cache-Control' => 'no-store']);
     }
 
+    /**
+     * The same response, with pictures also allowed from one named outside server. Used by the
+     * live map for its map tiles, on that page only; scripts and styles stay "this site only".
+     */
+    public function withImagesFrom(string $origin): self
+    {
+        if (preg_match('#^https://[a-z0-9.-]+$#', $origin) !== 1) {
+            throw new \InvalidArgumentException('Images can only be allowed from a plain https origin.');
+        }
+        return new self($this->body, $this->status, $this->headers + ['X-Image-Origin' => $origin]);
+    }
+
     public function send(): never
     {
         http_response_code($this->status);
+        $imageOrigin = $this->headers['X-Image-Origin'] ?? null;
         foreach ($this->headers as $name => $value) {
-            header($name . ': ' . $value);
+            if ($name !== 'X-Image-Origin') {
+                header($name . ': ' . $value);
+            }
         }
         header('X-Content-Type-Options: nosniff');
         header('Referrer-Policy: same-origin');
         // No page uses inline scripts or inline style attributes, so neither is allowed.
-        header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
+        header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; " . ($imageOrigin === null ? '' : "img-src 'self' " . $imageOrigin . '; ') . "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
         echo $this->body;
         exit;
     }

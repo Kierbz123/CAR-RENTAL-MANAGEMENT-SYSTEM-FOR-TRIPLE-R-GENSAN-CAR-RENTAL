@@ -45,6 +45,17 @@ final class View
         return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
     }
 
+    /**
+     * A heading whose words rise into place one after another (.rise in app.css).
+     * Returns escaped HTML: each word in its own pair of spans, with plain spaces between.
+     */
+    public static function rise(string $text): string
+    {
+        $words = preg_split('/\s+/u', trim($text), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        $spans = array_map(static fn (string $word): string => '<span class="w"><span class="w-in">' . self::e($word) . '</span></span>', $words);
+        return '<span class="rise">' . implode(' ', $spans) . '</span>';
+    }
+
     public static function partial(string $name, array $data = []): void
     {
         extract($data, EXTR_SKIP);

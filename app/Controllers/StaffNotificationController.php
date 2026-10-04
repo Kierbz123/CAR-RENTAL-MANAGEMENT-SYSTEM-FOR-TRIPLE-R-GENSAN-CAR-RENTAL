@@ -21,7 +21,7 @@ final class StaffNotificationController
 
     public function index(): Response
     {
-        $user = $this->guard->requireRoles(['system_admin', 'fleet_manager', 'support_staff']);
+        $user = $this->guard->requireRoles(['system_admin', 'fleet_manager']);
         if ($user instanceof Response) {
             return $user;
         }
@@ -32,7 +32,7 @@ final class StaffNotificationController
 
     public function history(Request $request): Response
     {
-        $user = $this->guard->requireRoles(['system_admin', 'fleet_manager', 'support_staff'], true);
+        $user = $this->guard->requireRoles(['system_admin', 'fleet_manager'], true);
         if ($user instanceof Response) {
             return $user;
         }

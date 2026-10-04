@@ -20,6 +20,8 @@ final class Icon
         'close' => '<path d="m6 6 12 12M18 6 6 18"/>',
         'plus' => '<path d="M12 5v14M5 12h14"/>',
         'arrow-right' => '<path d="M5 12h14M13 6l6 6-6 6"/>',
+        'arrow-up-right' => '<path d="M7 17 17 7M8 7h9v9"/>',
+        'arrow-down' => '<path d="M12 5v14M6 13l6 6 6-6"/>',
         'logout' => '<path d="M14 4.5h4.5v15H14"/><path d="M4.5 12H15M11 8l4 4-4 4"/>',
         'search' => '<circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/>',
         'clock' => '<circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 2"/>',
