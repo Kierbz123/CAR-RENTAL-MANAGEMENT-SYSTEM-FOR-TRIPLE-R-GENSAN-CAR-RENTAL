@@ -31,9 +31,9 @@ final class PublicBookingController
     public function submit(Request $request): Response
     {
         if (!Csrf::valid($request)) {
-            return $this->render($request->form, 'This page was open for a long time. Please check your details and send the booking again.', 403);
+            return $this->render(self::fields($request), 'This page was open for a long time. Please check your details and send the booking again.', 403);
         }
-        return $this->complete($request->form, $request);
+        return $this->complete(self::fields($request), $request);
     }
 
     /** The code texted to the visitor's mobile number: confirm it and finish the booking, or send a new one. */
@@ -46,7 +46,7 @@ final class PublicBookingController
         if (!Csrf::valid($request)) {
             return $this->renderVerify(null, 'This page was open for a long time. Please enter the code again.', 403);
         }
-        if (($request->form['resend'] ?? '') === '1') {
+        if ((self::fields($request)['resend'] ?? '') === '1') {
             try {
                 $this->bookings->sendPhoneCode((string) ($form['phone'] ?? ''), $request->ip);
             } catch (RuntimeException $error) {
@@ -54,7 +54,7 @@ final class PublicBookingController
             }
             return $this->renderVerify('A new code is on its way.', null);
         }
-        if (!BookingPhoneVerification::confirm((string) ($request->form['code'] ?? ''))) {
+        if (!BookingPhoneVerification::confirm((string) (self::fields($request)['code'] ?? ''))) {
             return $this->renderVerify(null, BookingPhoneVerification::pendingPhone() === null
                 ? 'That code has expired or was entered wrong too many times. Ask for a new code.'
                 : 'That code is not right. Check the text message and try again.', 422);
@@ -100,19 +100,25 @@ final class PublicBookingController
     public function find(Request $request): Response
     {
         if (!Csrf::valid($request)) {
-            return $this->renderFind($request->form, 'This page was open for a long time. Please try again.', 403);
+            return $this->renderFind(self::fields($request), 'This page was open for a long time. Please try again.', 403);
         }
         try {
-            $agreementId = $this->bookings->findBooking((string) ($request->form['reference'] ?? ''), (string) ($request->form['phone'] ?? ''), $request->ip);
+            $agreementId = $this->bookings->findBooking((string) (self::fields($request)['reference'] ?? ''), (string) (self::fields($request)['phone'] ?? ''), $request->ip);
         } catch (RuntimeException $error) {
-            return $this->renderFind($request->form, $error->getMessage(), 429);
+            return $this->renderFind(self::fields($request), $error->getMessage(), 429);
         }
         if ($agreementId === null) {
             // One message whatever was wrong, so the page never confirms that a reference exists.
-            return $this->renderFind($request->form, 'We couldn’t find a booking with that reference and mobile number. Check both and try again.', 422);
+            return $this->renderFind(self::fields($request), 'We couldn’t find a booking with that reference and mobile number. Check both and try again.', 422);
         }
         CustomerBookingAccess::grant($agreementId);
         return Response::redirect('/customer/booking');
+    }
+
+    /** The posted fields as text: a field sent as a list (name[]=...) counts as empty. */
+    private static function fields(Request $request): array
+    {
+        return array_map(static fn (mixed $value): string => is_string($value) ? $value : '', $request->form);
     }
 
     private function render(array $values, ?string $error, int $status = 200): Response

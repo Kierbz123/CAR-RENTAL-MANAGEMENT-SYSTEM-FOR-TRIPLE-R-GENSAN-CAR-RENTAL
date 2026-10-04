@@ -84,6 +84,9 @@ final class UserController
             return $actor;
         }
         $userId = filter_var($request->query['user_id'] ?? null, FILTER_VALIDATE_INT);
+        if ($userId && $this->users->isSystemAccount((int) $userId)) {
+            return Response::html('The system account records automated actions and cannot be changed.', 422);
+        }
         $user = $userId ? $this->users->findForAdmin((int) $userId) : null;
         if ($user === null) {
             return Response::html('User not found.', 404);
@@ -104,6 +107,9 @@ final class UserController
             return Response::html('Invalid request token.', 403);
         }
         $userId = filter_var($request->form['user_id'] ?? null, FILTER_VALIDATE_INT);
+        if ($userId && $this->users->isSystemAccount((int) $userId)) {
+            return Response::html('The system account records automated actions and cannot be changed.', 422);
+        }
         $email = mb_strtolower(trim((string) ($request->form['email'] ?? '')));
         $role = (string) ($request->form['role'] ?? '');
         if (!$userId || filter_var($email, FILTER_VALIDATE_EMAIL) === false || mb_strlen($email) > 191 || !in_array($role, self::ROLES, true)
@@ -146,6 +152,9 @@ final class UserController
             return Response::html('Invalid request token.', 403);
         }
         $userId = filter_var($request->form['user_id'] ?? null, FILTER_VALIDATE_INT);
+        if ($userId && $this->users->isSystemAccount((int) $userId)) {
+            return Response::html('The system account records automated actions and cannot be changed.', 422);
+        }
         $role = (string) ($request->form['role'] ?? '');
         if (!$userId || !in_array($role, self::ROLES, true) || ((int) $userId === (int) $actor['id'] && $role !== 'system_admin')) {
             return $this->render(['csrfToken' => Csrf::token(), 'oneTimePassword' => null, 'notice' => 'The role change is invalid.'], 422);
@@ -177,6 +186,9 @@ final class UserController
             return Response::html('Invalid request token.', 403);
         }
         $userId = filter_var($request->form['user_id'] ?? null, FILTER_VALIDATE_INT);
+        if ($userId && $this->users->isSystemAccount((int) $userId)) {
+            return Response::html('The system account records automated actions and cannot be changed.', 422);
+        }
         if (!$userId || (int) $userId === (int) $actor['id']) {
             return $this->render(['csrfToken' => Csrf::token(), 'oneTimePassword' => null, 'notice' => 'You cannot deactivate the current account.'], 422);
         }
@@ -206,6 +218,9 @@ final class UserController
             return Response::html('Invalid request token.', 403);
         }
         $userId = filter_var($request->form['user_id'] ?? null, FILTER_VALIDATE_INT);
+        if ($userId && $this->users->isSystemAccount((int) $userId)) {
+            return Response::html('The system account records automated actions and cannot be changed.', 422);
+        }
         if ($userId) {
             $this->db->beginTransaction();
             try {
@@ -233,6 +248,9 @@ final class UserController
             return Response::html('Invalid request token.', 403);
         }
         $userId = filter_var($request->form['user_id'] ?? null, FILTER_VALIDATE_INT);
+        if ($userId && $this->users->isSystemAccount((int) $userId)) {
+            return Response::html('The system account records automated actions and cannot be changed.', 422);
+        }
         if ($userId) {
             $this->db->beginTransaction();
             try {
@@ -260,6 +278,9 @@ final class UserController
             return Response::html('Invalid request token.', 403);
         }
         $userId = filter_var($request->form['user_id'] ?? null, FILTER_VALIDATE_INT);
+        if ($userId && $this->users->isSystemAccount((int) $userId)) {
+            return Response::html('The system account records automated actions and cannot be changed.', 422);
+        }
         if (!$userId) {
             return $this->index();
         }

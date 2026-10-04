@@ -67,9 +67,7 @@ final class AgreementController
         $user=$this->guard->requireRoles(self::VIEW);if($user instanceof Response)return $user;$id=$this->id($request->query['agreement_id']??null);$row=$id?$this->rentals->find($id):null;if(!$row)return Response::html('Rental agreement not found.',404);
         if ($row['rental_type'] === 'chauffeur') {
             if ($row['driver_id'] !== null) {
-                // Fetch full name for the assigned driver
-                $d = (new \TripleR\Repositories\DriverRepository((new \TripleR\Database())->connection()))->find((int)$row['driver_id'], false, true);
-                $row['driver_name'] = $d ? $d['full_name'] : 'Unknown Driver';
+                $row['driver_name'] = $this->driverService->nameOf((int)$row['driver_id']) ?? 'Unknown Driver';
             }
         }
         $drivers = $this->driverService->selectableForAssignment((string)$row['end_date']);

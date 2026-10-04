@@ -104,9 +104,9 @@ final class NotificationRepository
         $limit = max(1, min(100, $limit));
         $this->db->beginTransaction();
         try {
-            $select = $this->db->query("SELECT id, recipient_phone, recipient_ciphertext, channel, telegram_link_id, template_key, rendered_message, message_class, provider, priority, attempt_count, max_attempts FROM notifications WHERE status = 'queued' AND next_attempt_at <= UTC_TIMESTAMP() ORDER BY CASE priority WHEN 'high' THEN 0 ELSE 1 END, created_at ASC LIMIT {$limit} FOR UPDATE SKIP LOCKED");
+            $select = $this->db->query("SELECT id, recipient_phone, recipient_ciphertext, channel, telegram_link_id, template_key, rendered_message, message_class, provider, priority, attempt_count, max_attempts FROM notifications WHERE status = 'queued' AND next_attempt_at <= UTC_TIMESTAMP(6) ORDER BY CASE priority WHEN 'high' THEN 0 ELSE 1 END, created_at ASC LIMIT {$limit} FOR UPDATE SKIP LOCKED");
             $rows = $select->fetchAll();
-            $claim = $this->db->prepare("UPDATE notifications SET status = 'sending', claim_token = :token, claimed_at = UTC_TIMESTAMP(), attempt_count = attempt_count + 1 WHERE id = :id AND status = 'queued'");
+            $claim = $this->db->prepare("UPDATE notifications SET status = 'sending', claim_token = :token, claimed_at = UTC_TIMESTAMP(6), attempt_count = attempt_count + 1 WHERE id = :id AND status = 'queued'");
             $claimed = [];
             foreach ($rows as $row) {
                 $token = bin2hex(random_bytes(18));
@@ -130,13 +130,13 @@ final class NotificationRepository
 
     public function hasDueEncryptedQueued(): bool
     {
-        $statement = $this->db->query("SELECT 1 FROM notifications WHERE status = 'queued' AND next_attempt_at <= UTC_TIMESTAMP() AND rendered_message LIKE 'smsenc:v1:%' LIMIT 1");
+        $statement = $this->db->query("SELECT 1 FROM notifications WHERE status = 'queued' AND next_attempt_at <= UTC_TIMESTAMP(6) AND rendered_message LIKE 'smsenc:v1:%' LIMIT 1");
         return $statement->fetchColumn() !== false;
     }
 
     public function hasDueQueuedOnChannel(string $channel): bool
     {
-        $statement = $this->db->prepare("SELECT 1 FROM notifications WHERE status = 'queued' AND next_attempt_at <= UTC_TIMESTAMP() AND channel = :channel LIMIT 1");
+        $statement = $this->db->prepare("SELECT 1 FROM notifications WHERE status = 'queued' AND next_attempt_at <= UTC_TIMESTAMP(6) AND channel = :channel LIMIT 1");
         $statement->execute(['channel' => $channel]);
         return $statement->fetchColumn() !== false;
     }
@@ -148,14 +148,14 @@ final class NotificationRepository
      */
     public function rerouteToSms(int $id, string $claimToken, string $smsProvider, string $note): bool
     {
-        $statement = $this->db->prepare("UPDATE notifications SET channel = 'sms', provider = :provider, status = 'queued', attempt_count = attempt_count - 1, next_attempt_at = UTC_TIMESTAMP(), last_error = :note, claim_token = NULL, claimed_at = NULL WHERE id = :id AND status = 'sending' AND claim_token = :token AND channel = 'telegram' AND attempt_count > 0");
+        $statement = $this->db->prepare("UPDATE notifications SET channel = 'sms', provider = :provider, status = 'queued', attempt_count = attempt_count - 1, next_attempt_at = UTC_TIMESTAMP(6), last_error = :note, claim_token = NULL, claimed_at = NULL WHERE id = :id AND status = 'sending' AND claim_token = :token AND channel = 'telegram' AND attempt_count > 0");
         $statement->execute(['provider' => $smsProvider, 'note' => substr($note, 0, 512), 'id' => $id, 'token' => $claimToken]);
         return $statement->rowCount() === 1;
     }
 
     public function markSent(int $id, string $claimToken, string $providerMessageId, string $providerStatus): bool
     {
-        $statement = $this->db->prepare("UPDATE notifications SET status = 'sent', provider_message_id = :message_id, provider_status = :provider_status, rendered_message = IF((LEFT(template_key,11)='magic_link.' OR template_key='booking.verify_code'), '', rendered_message), sent_at = UTC_TIMESTAMP(), claim_token = NULL, claimed_at = NULL, last_error = NULL WHERE id = :id AND status = 'sending' AND claim_token = :token");
+        $statement = $this->db->prepare("UPDATE notifications SET status = 'sent', provider_message_id = :message_id, provider_status = :provider_status, rendered_message = IF((LEFT(template_key,11)='magic_link.' OR template_key='booking.verify_code'), '', rendered_message), sent_at = UTC_TIMESTAMP(6), claim_token = NULL, claimed_at = NULL, last_error = NULL WHERE id = :id AND status = 'sending' AND claim_token = :token");
         $statement->execute(['id' => $id, 'token' => $claimToken, 'message_id' => substr($providerMessageId, 0, 191), 'provider_status' => substr($providerStatus, 0, 80)]);
         return $statement->rowCount() === 1;
     }
@@ -188,7 +188,9 @@ final class NotificationRepository
     {
         $normalized = strtolower(trim($status));
         $terminalFailure = in_array($normalized, ['failed', 'undelivered', 'rejected', 'error'], true);
-        $statement = $this->db->prepare("UPDATE notifications SET provider_status = :status, status = IF(:failed = 1 AND status = 'sent', 'failed', status), last_error = IF(:failed_error = 1, :error, last_error) WHERE provider_message_id = :message_id");
+        // A final report (delivered or failed) is never replaced, so a replayed or late report
+        // cannot move a message backwards, for example from delivered to failed.
+        $statement = $this->db->prepare("UPDATE notifications SET provider_status = :status, status = IF(:failed = 1 AND status = 'sent', 'failed', status), last_error = IF(:failed_error = 1, :error, last_error) WHERE provider_message_id = :message_id AND (provider_status IS NULL OR provider_status NOT IN ('delivered', 'failed', 'undelivered', 'rejected', 'error'))");
         $statement->execute([
             'status' => substr($normalized, 0, 80),
             'failed' => $terminalFailure ? 1 : 0,
@@ -208,7 +210,7 @@ final class NotificationRepository
 
     public function monthlySentCount(): int
     {
-        $statement = $this->db->query("SELECT COUNT(*) FROM notifications WHERE sent_at >= DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-01 00:00:00')");
+        $statement = $this->db->query("SELECT COUNT(*) FROM notifications WHERE sent_at >= DATE_FORMAT(UTC_TIMESTAMP(6), '%Y-%m-01 00:00:00')");
         return (int) $statement->fetchColumn();
     }
 }

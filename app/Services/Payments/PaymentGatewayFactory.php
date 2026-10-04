@@ -18,6 +18,12 @@ final class PaymentGatewayFactory
         if ($name === '' || $name === 'none') {
             return null;
         }
+        // The simulated checkout takes no money, so it never runs on the live site: a customer could
+        // otherwise mark their own downpayment paid. config/site.php 'is_demo' => false is the live site.
+        if ($name === 'simulated' && \TripleR\Support\SiteProfile::get('is_demo', true) !== true) {
+            error_log('Online payment is off: the simulated checkout is only for the demonstration site.');
+            return null;
+        }
         try {
             return match ($name) {
                 'simulated' => new SimulatedGateway(Config::get('PAYMENT_WEBHOOK_SECRET', '') ?? ''),

@@ -236,6 +236,17 @@ check($lockedShown, 'the staff list shows the account as locked');
 $unlock = request($as('system_admin'), 'POST', '/admin/users/unlock', ['_csrf' => csrfFrom($usersPage['body']), 'user_id' => (string) $lockId]);
 check($unlock['status'] === 303 || $unlock['status'] === 200, 'admin unlocks the account', 'HTTP ' . $unlock['status']);
 check((int) $db->query('SELECT locked_at IS NOT NULL FROM users WHERE id=' . $lockId)->fetchColumn() === 0, 'the lock is cleared in the database');
+$systemId = (int) $db->query("SELECT id FROM users WHERE email = 'system@triple-r.invalid'")->fetchColumn();
+if ($systemId > 0) {
+    // The system account has no buttons; a hand-made request is refused too and changes nothing.
+    $before = $db->query('SELECT role, is_active, locked_at, password_hash FROM users WHERE id=' . $systemId)->fetch();
+    $refusals = 0;
+    foreach (['/admin/users/reactivate' => [], '/admin/users/unlock' => [], '/admin/users/reset-password' => [], '/admin/users/role' => ['role' => 'system_admin']] as $action => $extra) {
+        $attempt = request($as('system_admin'), 'POST', $action, ['_csrf' => csrfFrom($usersPage['body']), 'user_id' => (string) $systemId] + $extra);
+        $refusals += $attempt['status'] === 422 ? 1 : 0;
+    }
+    check($refusals === 4 && $db->query('SELECT role, is_active, locked_at, password_hash FROM users WHERE id=' . $systemId)->fetch() == $before, 'the system account cannot be reactivated, unlocked, given a password or a new role', "{$refusals} of 4 refused");
+}
 
 /* ---------------------------------------------------------------------- */
 section('M2 Fleet (fleet manager)');

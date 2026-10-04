@@ -79,7 +79,21 @@ final class SmsWebhookController
         if ($secret === null || strlen($secret) < 32 || str_starts_with($secret, 'replace-') || $provided === null || preg_match('/^sha256=([a-f0-9]{64})$/i', $provided, $matches) !== 1) {
             return false;
         }
-        $expected = hash_hmac('sha256', $request->rawBody, $secret);
+        // With X-Webhook-Timestamp (Unix seconds) the signature covers "<timestamp>.<body>" and is
+        // accepted for 5 minutes, so a captured callback cannot be replayed later.
+        // SMS_WEBHOOK_REQUIRE_TIMESTAMP=true refuses callbacks without one.
+        $timestamp = $request->header('X-Webhook-Timestamp');
+        if ($timestamp === null) {
+            if (strtolower((string) Config::get('SMS_WEBHOOK_REQUIRE_TIMESTAMP', 'false')) === 'true') {
+                return false;
+            }
+            $expected = hash_hmac('sha256', $request->rawBody, $secret);
+        } else {
+            if (preg_match('/^\d{1,12}$/', $timestamp) !== 1 || abs(time() - (int) $timestamp) > 300) {
+                return false;
+            }
+            $expected = hash_hmac('sha256', $timestamp . '.' . $request->rawBody, $secret);
+        }
         return hash_equals($expected, strtolower($matches[1]));
     }
 }

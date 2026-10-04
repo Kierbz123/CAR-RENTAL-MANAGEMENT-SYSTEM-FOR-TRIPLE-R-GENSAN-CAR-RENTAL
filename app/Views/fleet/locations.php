@@ -33,6 +33,7 @@ View::begin('staff', ['title' => 'Locations and live map', 'crumbs' => [['Fleet'
 
 <section class="panel" id="live-map" aria-labelledby="live-map-title">
     <div class="panel-heading"><div><h2 id="live-map-title">Vehicles out on rental</h2><p>Each position is the GPS position of a phone travelling with the vehicle. A vehicle is on the map while its phone is sharing; without one it is listed but not shown.</p></div><span class="badge <?= $vehiclesOut ? 'badge-info' : 'badge-neutral' ?>" data-map-count><?= count($vehiclesOut) ?> out · <?= $onMap ?> on the map</span></div>
+    <p class="callout" data-map-tiles-failed role="status" hidden>The map pictures could not be loaded, so the background is blank. Vehicle positions are still drawn on it and listed beside it.</p>
     <div class="fleet-map-layout">
         <div class="fleet-map" data-fleet-map="<?= $e(json_encode($mapSettings, JSON_UNESCAPED_SLASHES)) ?>" tabindex="0" role="application" aria-label="Map of rented vehicles. Drag to move, scroll or use plus and minus to zoom.">
             <div class="fleet-map-tiles" data-map-tiles></div>

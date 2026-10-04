@@ -14,6 +14,7 @@ use TripleR\Repositories\VehicleRepository;
 use TripleR\Security\BookingPhoneVerification;
 use TripleR\Support\PhoneNumber;
 use TripleR\Support\SiteProfile;
+use TripleR\Support\Money;
 
 /**
  * Booking by the customer, from the public site, with no account.
@@ -191,7 +192,7 @@ final class OnlineBookingService
             if ($this->overlaps->vehicleConflicts((int) $vehicle['vehicle_id'], $start, $end)) {
                 continue;
             }
-            $totalCents = $period['days'] * self::cents((string) $vehicle['daily_rate']);
+            $totalCents = $period['days'] * Money::cents((string) $vehicle['daily_rate']);
             if ($totalCents <= 0) {
                 continue;
             }
@@ -202,9 +203,9 @@ final class OnlineBookingService
                 'body_type' => (string) $vehicle['body_type'],
                 'details' => ucfirst((string) $vehicle['body_type']) . ' · ' . ucfirst((string) $vehicle['transmission']) . ' · ' . (int) $vehicle['seating_capacity'] . ' seats · ' . ucfirst((string) $vehicle['fuel_type']),
                 'daily_rate' => (string) $vehicle['daily_rate'],
-                'total' => self::amount($totalCents),
-                'downpayment' => self::amount($downpaymentCents),
-                'balance' => self::amount($totalCents - $downpaymentCents),
+                'total' => Money::amount($totalCents),
+                'downpayment' => Money::amount($downpaymentCents),
+                'balance' => Money::amount($totalCents - $downpaymentCents),
             ];
         }
         usort($available, static fn (array $a, array $b): int => [(float) $a['daily_rate'], $a['name']] <=> [(float) $b['daily_rate'], $b['name']]);
@@ -329,24 +330,13 @@ final class OnlineBookingService
         return $statement->fetchColumn() !== false;
     }
 
-    /** Records made by the system on a customer's behalf are attributed to the first active administrator. */
+    /** Records made on a customer's behalf are attributed to the system account (migration 028). */
     private function systemActor(): int
     {
-        $actor = $this->db->query("SELECT id FROM users WHERE role = 'system_admin' AND is_active = 1 AND deleted_at IS NULL ORDER BY id LIMIT 1")->fetchColumn();
+        $actor = (new \TripleR\Repositories\StaffUserRepository($this->db))->systemActorId() ?? false;
         if ($actor === false) {
             throw new RuntimeException('Online booking is not available right now. Please call the rental office.');
         }
         return (int) $actor;
-    }
-
-    private static function cents(string $amount): int
-    {
-        [$whole, $fraction] = array_pad(explode('.', $amount, 2), 2, '0');
-        return ((int) $whole * 100) + (int) str_pad(substr($fraction, 0, 2), 2, '0');
-    }
-
-    private static function amount(int $cents): string
-    {
-        return intdiv($cents, 100) . '.' . str_pad((string) ($cents % 100), 2, '0', STR_PAD_LEFT);
     }
 }

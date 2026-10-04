@@ -19,6 +19,14 @@
     const list = document.querySelector('[data-map-list]');
     const countBadge = document.querySelector('[data-map-count]');
     const updatedNote = document.querySelector('[data-map-updated]');
+    const tilesFailedNote = document.querySelector('[data-map-tiles-failed]');
+    // Tiles come from an outside server; when none of them load, say so instead of showing a blank grey box.
+    let tilesLoaded = 0;
+    let tilesFailed = 0;
+    const tileSettled = (ok) => {
+        ok ? tilesLoaded++ : tilesFailed++;
+        if (tilesFailedNote) tilesFailedNote.hidden = !(tilesFailed > 0 && tilesLoaded === 0);
+    };
 
     const TILE = 256;
     const MIN_ZOOM = 5;
@@ -98,7 +106,8 @@
                     image.decoding = 'async';
                     // The tile server asks to be told which site is using it; only the origin is sent.
                     image.referrerPolicy = 'strict-origin-when-cross-origin';
-                    image.addEventListener('error', () => image.classList.add('is-missing'));
+                    image.addEventListener('load', () => tileSettled(true));
+                    image.addEventListener('error', () => { image.classList.add('is-missing'); tileSettled(false); });
                     image.src = config.tiles.replace('{z}', zoom).replace('{x}', x).replace('{y}', row);
                     tiles.set(key, image);
                     tilesLayer.append(image);

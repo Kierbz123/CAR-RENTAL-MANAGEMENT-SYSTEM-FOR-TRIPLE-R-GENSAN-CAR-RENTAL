@@ -9,6 +9,7 @@ use TripleR\Repositories\DamageReportRepository;
 use TripleR\Repositories\RentalRepository;
 use TripleR\Repositories\VehicleRepository;
 use TripleR\Repositories\VehicleStatusLogRepository;
+use TripleR\Support\Money;
 
 final class DamageService
 {
@@ -66,8 +67,8 @@ final class DamageService
             $this->lockAgreementChain((int)$agreementId);$report=$this->reports->lockReport($reportId);if(!$report||!(bool)$report['has_damage'])throw new RuntimeException('Liability can only be determined for a damage report.');
             $current=$this->reports->currentDecision($reportId,true);
             if(($current===null&&$supersedes!==null)||($current!==null&&(int)$current['decision_id']!==$supersedes))throw new RuntimeException('The liability decision changed. Reload before correcting it.');
-            if($liable&&$this->cents($amount)<=0)throw new RuntimeException('A liable decision requires a positive amount.');
-            if($report['repair_cost_suggestion']!==null&&$this->cents($amount)>(int)$this->cents((string)$report['repair_cost_suggestion']))throw new RuntimeException('The liability amount cannot exceed the recorded repair cost suggestion.');
+            if($liable&&Money::cents($amount)<=0)throw new RuntimeException('A liable decision requires a positive amount.');
+            if($report['repair_cost_suggestion']!==null&&Money::cents($amount)>(int)Money::cents((string)$report['repair_cost_suggestion']))throw new RuntimeException('The liability amount cannot exceed the recorded repair cost suggestion.');
             $id=$this->reports->appendDecision($reportId,$liable,$amount,$reason,$supersedes,$actor);$this->db->commit();return $id;
         }catch(\Throwable $e){if($this->db->inTransaction())$this->db->rollBack();throw $e;}
     }
@@ -75,12 +76,12 @@ final class DamageService
     /** The RentalService owns the sole charge insertion path; the charge row itself records the decision and any adjustment reason. */
     public function postCharge(int $decisionId,string $amount,string $adjustmentReason,int $actor): int
     {
-        $amount=$this->money($amount);$reason=trim($adjustmentReason);if($this->cents($amount)<=0)throw new RuntimeException('Charge amount must be positive.');if(mb_strlen($reason)>500)throw new RuntimeException('Adjustment reason must be 500 characters or fewer.');
+        $amount=$this->money($amount);$reason=trim($adjustmentReason);if(Money::cents($amount)<=0)throw new RuntimeException('Charge amount must be positive.');if(mb_strlen($reason)>500)throw new RuntimeException('Adjustment reason must be 500 characters or fewer.');
         $q=$this->db->prepare('SELECT d.*,r.agreement_id,r.repair_cost_suggestion FROM damage_liability_decisions d JOIN damage_reports r ON r.report_id=d.report_id WHERE d.decision_id=:id');$q->execute(['id'=>$decisionId]);$decision=$q->fetch();
         if(!$decision||!(bool)$decision['customer_liable'])throw new RuntimeException('A current customer-liable decision is required before posting a damage charge.');
         if($this->reports->hasPosting($decisionId))throw new RuntimeException('A damage charge has already been posted for this liability decision.');
-        if($this->cents($amount)>(int)$this->cents((string)$decision['liable_amount']))throw new RuntimeException('The charge cannot exceed the approved liability amount.');
-        $adjusted=$this->cents($amount)!==$this->cents((string)$decision['liable_amount']);if($adjusted&&$reason==='')throw new RuntimeException('A reason is required when finance adjusts the approved amount.');
+        if(Money::cents($amount)>(int)Money::cents((string)$decision['liable_amount']))throw new RuntimeException('The charge cannot exceed the approved liability amount.');
+        $adjusted=Money::cents($amount)!==Money::cents((string)$decision['liable_amount']);if($adjusted&&$reason==='')throw new RuntimeException('A reason is required when finance adjusts the approved amount.');
         try{return $this->rentalService->addCharge((int)$decision['agreement_id'],'damage',$amount,'Damage report #'.$decision['report_id'].' liability decision #'.$decisionId,$actor,function()use($decisionId):void{
             $current=$this->reports->currentDecisionForPosting($decisionId);
             if(!$current)throw new RuntimeException('A superseded liability decision cannot be charged.');
@@ -101,5 +102,4 @@ final class DamageService
         $agreement=$this->rentals->lockAgreement($id);if(!$agreement)throw new RuntimeException('Rental agreement not found.');return $agreement;
     }
     private function money(string $v): string { $v=trim($v);if(!preg_match('/^\d{1,8}(?:\.\d{1,2})?$/',$v))throw new RuntimeException('Enter a valid amount.');[$a,$b]=array_pad(explode('.',$v,2),2,'');return $a.'.'.str_pad($b,2,'0'); }
-    private function cents(string $v): int { [$a,$b]=array_pad(explode('.',$v,2),2,'0');return (int)$a*100+(int)str_pad(substr($b,0,2),2,'0'); }
 }

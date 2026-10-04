@@ -47,7 +47,7 @@ $check($limiter->allow('test-scope', 'someone-else-' . $run, 3, 60) === true, 'a
 $check($limiter->allow('other-scope', $identity, 3, 60) === true, 'the same identity under another limiter has its own count');
 $key = hash('sha256', 'test-scope:' . $identity);
 $check($counter('throttle', $key) === 4, 'the count is one rate_counters row in the throttle scope');
-$db->prepare("UPDATE rate_counters SET window_started_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 61 SECOND) WHERE scope = 'throttle' AND counter_key = :key")->execute(['key' => $key]);
+$db->prepare("UPDATE rate_counters SET window_started_at = DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 61 SECOND) WHERE scope = 'throttle' AND counter_key = :key")->execute(['key' => $key]);
 $check($limiter->allow('test-scope', $identity, 3, 60) === true && $counter('throttle', $key) === 1, 'once the window has passed, the same row starts again from one');
 
 echo "\n== Daily message limit\n";
@@ -98,7 +98,7 @@ if ($agreementId === 0) {
 
 echo "\n== The database's own rule\n";
 try {
-    $db->exec("INSERT INTO rate_counters (scope, counter_key, window_started_at, hits) VALUES ('made_up', 'x-{$run}', UTC_TIMESTAMP(), 1)");
+    $db->exec("INSERT INTO rate_counters (scope, counter_key, window_started_at, hits) VALUES ('made_up', 'x-{$run}', UTC_TIMESTAMP(6), 1)");
     $check(false, 'an unknown scope is refused');
 } catch (PDOException $error) {
     $check(str_contains($error->getMessage(), 'chk_rate_counters_scope'), 'an unknown scope is refused');

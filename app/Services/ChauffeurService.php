@@ -10,6 +10,7 @@ use DateTimeZone;
 use TripleR\Repositories\RentalRepository;
 use TripleR\Repositories\ChargeRepository;
 use TripleR\Repositories\VehicleRepository;
+use TripleR\Support\Money;
 
 final class ChauffeurService
 {
@@ -49,8 +50,8 @@ final class ChauffeurService
                 $this->reverseChauffeurFee($agreementId, $actor);
                 
                 // Add new fee
-                $fee = (int)$r['rental_days'] * $this->toCents((string)$chauffeurRate);
-                $formattedFee = $this->centsToMoney($fee);
+                $fee = (int)$r['rental_days'] * Money::cents((string)$chauffeurRate);
+                $formattedFee = Money::amount($fee);
                 $this->charges->appendCharge($agreementId, 'chauffeur_fee', $formattedFee, 'Chauffeur fee (' . $r['rental_days'] . ' days at ₱' . $chauffeurRate . '/day)', $actor);
                 
                 // Update agreement
@@ -137,6 +138,4 @@ final class ChauffeurService
         }
     }
 
-    private function toCents(string $amount): int { [$whole,$fraction]=array_pad(explode('.', $amount,2),2,'0');return ((int)$whole*100)+(int)str_pad(substr($fraction,0,2),2,'0'); }
-    private function centsToMoney(int $cents): string { return intdiv($cents,100).'.'.str_pad((string)($cents%100),2,'0',STR_PAD_LEFT); }
 }

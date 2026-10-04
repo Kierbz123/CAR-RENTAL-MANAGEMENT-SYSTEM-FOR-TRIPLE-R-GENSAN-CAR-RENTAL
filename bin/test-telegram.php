@@ -260,7 +260,7 @@ $batch = $notifications->processBatch(50);
 $retry = $row($retryId);
 check($batch['retrying'] === 1 && $retry['status'] === 'queued' && (int) $retry['retry_count'] === 1, 'the message goes back in the queue to be retried');
 check(str_contains((string) $retry['last_error'], 'slow down'), 'the history says why in plain words');
-$db->prepare('UPDATE notifications SET next_attempt_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 SECOND) WHERE id = :id')->execute(['id' => $retryId]);
+$db->prepare('UPDATE notifications SET next_attempt_at = DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 1 SECOND) WHERE id = :id')->execute(['id' => $retryId]);
 $notifications->processBatch(50);
 check($row($retryId)['status'] === 'sent', 'the retry is delivered');
 
@@ -314,7 +314,7 @@ check(str_contains((string) $blocked['last_error'], 'Telegram connection has end
 check($connect($customerA, $chat(12)) === 'connected', 'the customer connects again');
 $fallbackId = $notifications->enqueue($phoneA, 'rental.pickup_reminder', 'Reminder: pickup within 24 hours.', 'transactional', 'normal', "tg-{$run}-fallback", false, $customerA);
 stubSet('blocked', [(string) $chat(12)]);
-$dueSms = (int) $db->query("SELECT COUNT(*) FROM notifications WHERE status = 'queued' AND channel = 'sms' AND next_attempt_at <= UTC_TIMESTAMP()")->fetchColumn();
+$dueSms = (int) $db->query("SELECT COUNT(*) FROM notifications WHERE status = 'queued' AND channel = 'sms' AND next_attempt_at <= UTC_TIMESTAMP(6)")->fetchColumn();
 if ($dueSms === 0) {
     putenv('SMS_SEMAPHORE_API_KEY=not-a-real-key'); // Present only while this one Telegram row is claimed.
     Config::load(APP_ROOT);

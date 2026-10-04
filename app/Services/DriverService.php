@@ -164,6 +164,13 @@ final class DriverService
     }
 
     /** Active drivers whose license is valid today and, given a rental's last day, through that day. */
+    /** The name shown on a rental for its driver, including a driver removed since. */
+    public function nameOf(int $driverId): ?string
+    {
+        $driver = $this->drivers->find($driverId, false, true);
+        return $driver === null ? null : (string) $driver['full_name'];
+    }
+
     public function selectableForAssignment(?string $through = null): array
     {
         $today = (new DateTimeImmutable('now', new DateTimeZone('Asia/Manila')))->format('Y-m-d');

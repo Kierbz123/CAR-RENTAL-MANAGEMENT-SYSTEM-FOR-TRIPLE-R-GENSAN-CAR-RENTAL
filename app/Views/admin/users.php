@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 use TripleR\Config;
+use TripleR\Repositories\StaffUserRepository;
 use TripleR\Support\Format;
 use TripleR\Support\Pager;
 use TripleR\Support\StatusPresenter as Status;
@@ -71,10 +72,14 @@ View::begin('staff', ['title' => 'Staff accounts', 'crumbs' => [['Administration
 <?php foreach ($pager->rows as $staffUser):
     $active = $staffUser['is_active'] && $staffUser['deleted_at'] === null;
     $email = (string) $staffUser['email'];
+    $system = $email === StaffUserRepository::SYSTEM_EMAIL; // Shown, never changed.
 ?>
                 <tr>
-                    <td class="cell-strong"><?= $e($email) ?></td>
+                    <td class="cell-strong"><?= $e($email) ?><?php if ($system): ?> <span class="badge badge-info">System account</span><small class="field-hint">Online bookings and expired holds are recorded under it. It cannot sign in or be changed.</small><?php endif; ?></td>
                     <td>
+<?php if ($system): ?>
+                        —
+<?php else: ?>
                         <form method="post" action="/admin/users/role" class="inline-form">
                             <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
                             <input type="hidden" name="user_id" value="<?= (int) $staffUser['id'] ?>">
@@ -85,14 +90,22 @@ View::begin('staff', ['title' => 'Staff accounts', 'crumbs' => [['Administration
                             </select>
                             <button class="button button-secondary button-small" type="submit">Save role</button>
                         </form>
+<?php endif; ?>
                     </td>
                     <td>
+<?php if ($system): ?>
+                        <span class="badge badge-neutral">Cannot sign in</span>
+<?php else: ?>
                         <span class="badge <?= $active ? 'badge-success' : 'badge-neutral' ?>"><?= $active ? 'Active' : 'Deactivated' ?></span>
 <?php if ($staffUser['locked_at'] !== null && ($label = $lockLabel((string) $staffUser['locked_at'])) !== null): ?> <span class="badge badge-danger"><?= $e($label) ?></span><?php endif; ?>
 <?php if ($staffUser['must_change_password']): ?> <span class="badge badge-warning">Must change password</span><?php endif; ?>
+<?php endif; ?>
                     </td>
                     <td class="num"><?= (int) $staffUser['failed_login_count'] ?></td>
                     <td class="actions">
+<?php if ($system): ?>
+                        <span class="field-hint">No actions</span>
+<?php else: ?>
                         <div class="cell-actions">
                             <a class="button button-secondary button-small" href="/admin/users/edit?user_id=<?= (int) $staffUser['id'] ?>">Edit</a>
                             <a class="button button-secondary button-small" href="/admin/sessions?user_id=<?= (int) $staffUser['id'] ?>">Sessions</a>
@@ -122,6 +135,7 @@ View::begin('staff', ['title' => 'Staff accounts', 'crumbs' => [['Administration
                             </form>
 <?php endif; ?>
                         </div>
+<?php endif; ?>
                     </td>
                 </tr>
 <?php endforeach; ?>

@@ -14,7 +14,7 @@ try {
     }
 
     $db = Database::migrationConnection();
-    $db->exec('CREATE TABLE IF NOT EXISTS schema_migrations (migration VARCHAR(191) NOT NULL PRIMARY KEY, checksum CHAR(64) CHARACTER SET ascii NULL, applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+    $db->exec('CREATE TABLE IF NOT EXISTS schema_migrations (migration VARCHAR(191) NOT NULL PRIMARY KEY, checksum CHAR(64) CHARACTER SET ascii NULL, applied_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
     $migrationColumns = $db->query('SHOW COLUMNS FROM schema_migrations')->fetchAll(\PDO::FETCH_COLUMN, 0);
     if (!in_array('checksum', $migrationColumns, true)) {
         // Existing installations predate checksum tracking. Their current files establish the baseline.

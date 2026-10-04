@@ -114,6 +114,12 @@ $message->execute(['key' => 'payment-received-' . $paid['payment_id']]);
 $queued = $message->fetch();
 $text = $queued ? (new SmsMessageCipher())->decrypt((string) $queued['rendered_message'], SmsMessageCipher::context((new \TripleR\Services\PhoneVault())->numberOf($queued['recipient_ciphertext'] ?? null, (string) $queued['recipient_phone']), (string) $queued['template_key'])) : '';
 $check(str_contains($text, 'received your downpayment of ₱3,000') && str_contains($text, $receipt) && str_contains($text, 'demonstration payment'), 'the customer is told it was received, with the receipt number, and that it was a demonstration', $text);
+// On the live site a demonstration payment does not count: no money moved.
+$siteProfile = new ReflectionProperty(\TripleR\Support\SiteProfile::class, 'data');
+$liveProfile = \TripleR\Support\SiteProfile::all();
+$siteProfile->setValue(null, ['is_demo' => false] + $liveProfile);
+$refused(fn () => $rentals->transition($a, 'confirm', $actor), 'demonstration checkout', 'on the live site, a downpayment paid only through the demonstration checkout does not confirm the reservation');
+$siteProfile->setValue(null, $liveProfile);
 $rentals->transition($a, 'confirm', $actor);
 $check($agreement($a)['status'] === 'confirmed', 'front desk can now confirm the reservation');
 

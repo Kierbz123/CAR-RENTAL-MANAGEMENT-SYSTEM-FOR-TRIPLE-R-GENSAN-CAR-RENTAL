@@ -7,6 +7,9 @@ use PDO;
 
 final class StaffUserRepository
 {
+    /** The account automated actions are recorded under (migration 028). It cannot sign in. */
+    public const SYSTEM_EMAIL = 'system@triple-r.invalid';
+
     public function __construct(private readonly PDO $db)
     {
     }
@@ -61,6 +64,29 @@ final class StaffUserRepository
     {
         $statement = $this->db->prepare('UPDATE users SET failed_login_count = 0 WHERE id = :id AND locked_at IS NULL');
         $statement->execute(['id' => $userId]);
+    }
+
+    /**
+     * The id automated actions are recorded under: the system account, or on a database from
+     * before migration 028 the first active administrator, as before.
+     */
+    public function systemActorId(): ?int
+    {
+        $statement = $this->db->prepare('SELECT id FROM users WHERE email = :email');
+        $statement->execute(['email' => self::SYSTEM_EMAIL]);
+        $id = $statement->fetchColumn();
+        if ($id === false) {
+            // Before migration 028 there is no system account; the first administrator stands in.
+            $id = $this->db->query("SELECT id FROM users WHERE role = 'system_admin' AND is_active = 1 AND deleted_at IS NULL ORDER BY id LIMIT 1")->fetchColumn();
+        }
+        return $id === false ? null : (int) $id;
+    }
+
+    public function isSystemAccount(int $userId): bool
+    {
+        $statement = $this->db->prepare('SELECT 1 FROM users WHERE id = :id AND email = :email');
+        $statement->execute(['id' => $userId, 'email' => self::SYSTEM_EMAIL]);
+        return $statement->fetchColumn() !== false;
     }
 
     public function list(int $limit = 200, int $offset = 0): array

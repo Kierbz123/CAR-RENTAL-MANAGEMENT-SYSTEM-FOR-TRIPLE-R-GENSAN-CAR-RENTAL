@@ -36,7 +36,7 @@ CREATE TABLE users (
 CREATE TABLE rate_counters (
     scope VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     counter_key VARCHAR(80) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    window_started_at DATETIME NOT NULL,
+    window_started_at DATETIME(6) NOT NULL,
     hits INT UNSIGNED NOT NULL DEFAULT 0,
     PRIMARY KEY (scope, counter_key),
     CONSTRAINT chk_rate_counters_scope CHECK (scope IN ('throttle','message_daily','magic_link_booking'))
@@ -458,13 +458,13 @@ CREATE TABLE notifications (
     attempt_count SMALLINT UNSIGNED NOT NULL DEFAULT 0,
     retry_count SMALLINT UNSIGNED NOT NULL DEFAULT 0,
     max_attempts SMALLINT UNSIGNED NOT NULL DEFAULT 5,
-    next_attempt_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    next_attempt_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     claim_token CHAR(36) NULL,
-    claimed_at DATETIME NULL,
-    sent_at DATETIME NULL,
+    claimed_at DATETIME(6) NULL,
+    sent_at DATETIME(6) NULL,
     last_error VARCHAR(512) NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
     PRIMARY KEY (id),
     UNIQUE KEY uq_notifications_idempotency (idempotency_key),
     UNIQUE KEY uq_notifications_provider_message_id (provider_message_id),
@@ -1001,6 +1001,31 @@ CREATE TRIGGER record_lifecycle_logs_no_delete BEFORE DELETE ON record_lifecycle
 DELIMITER ;
 
 
+-- ==========================================
+-- SYSTEM ACCOUNT AND AUDIT SEALS (028)
+-- ==========================================
+-- The system account is named on records the system makes by itself (online bookings, expired
+-- holds). It is inactive, removed and locked, and no password matches its hash.
+INSERT IGNORE INTO users (email, password_hash, role, is_active, must_change_password, locked_at, deleted_at)
+VALUES ('system@triple-r.invalid', '!', 'front_desk', 0, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6));
+
+CREATE TABLE audit_seals (
+    seal_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    table_name VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    last_row_id BIGINT UNSIGNED NOT NULL,
+    row_count BIGINT UNSIGNED NOT NULL,
+    chain_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    sealed_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (seal_id),
+    KEY idx_audit_seals_table (table_name, seal_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+DELIMITER $$
+CREATE TRIGGER audit_seals_no_update BEFORE UPDATE ON audit_seals FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='audit_seals is append-only'; END$$
+CREATE TRIGGER audit_seals_no_delete BEFORE DELETE ON audit_seals FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='audit_seals is append-only'; END$$
+DELIMITER ;
+
+
 -- MIGRATION CHECKSUM BASELINE
 -- ==========================================
 -- Required so existing bin/migrate.php installations verify and skip these migrations.
@@ -1008,7 +1033,7 @@ DELIMITER ;
 CREATE TABLE schema_migrations (
     migration VARCHAR(191) NOT NULL,
     checksum CHAR(64) CHARACTER SET ascii NULL,
-    applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    applied_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     PRIMARY KEY (migration)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -1039,4 +1064,5 @@ INSERT INTO schema_migrations (migration,checksum) VALUES
 ('024_chauffeur_rate_on_agreement.sql','e71900a8b17b8500f848668780ea2d4e7dfe764d5ba8391428663c7f96f3bbeb'),
 ('025_record_lifecycle_logs.sql','3cd877a9934c931eeae6ccfb3888f9a1f08d0fe7d541dc7998604e163e09ecab'),
 ('026_sealed_phone_numbers.sql','8f41d7f00365d3b6fae9b5e415529ce010fa40e3fdc4aca212e4afb0758608c5'),
-('027_rental_list_order.sql','85e615e20c964fdb96654c704ddfb445cd3f7f3bc9d9776e71db0f579a026899');
+('027_rental_list_order.sql','85e615e20c964fdb96654c704ddfb445cd3f7f3bc9d9776e71db0f579a026899'),
+('028_timestamps_system_actor_audit_seals.sql','8a6436ee9a1bfde4b8c906b6ffdb639d4a2283542b712f9e218efb1ce7615212');

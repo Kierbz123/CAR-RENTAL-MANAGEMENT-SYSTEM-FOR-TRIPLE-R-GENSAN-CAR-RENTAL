@@ -7,6 +7,7 @@ use PDO;
 use RuntimeException;
 use TripleR\Services\BookingOverlapService;
 use TripleR\Services\VehicleService;
+use TripleR\Support\Money;
 
 final class RentalRepository
 {
@@ -50,8 +51,7 @@ final class RentalRepository
     private static function downpaymentCents(string $dailyRate,string $start,string $end,int $percent,?string $chauffeurRate=null): int
     {
         $days=max(1,(int)(new \DateTimeImmutable($start))->diff(new \DateTimeImmutable($end))->days);
-        $cents=static function(string $amount): int{[$whole,$fraction]=array_pad(explode('.',$amount,2),2,'0');return ((int)$whole*100)+(int)str_pad(substr($fraction,0,2),2,'0');};
-        $costCents=$days*($cents($dailyRate)+($chauffeurRate===null?0:$cents($chauffeurRate)));
+        $costCents=$days*(Money::cents($dailyRate)+($chauffeurRate===null?0:Money::cents($chauffeurRate)));
         return intdiv($costCents*max(0,min(100,$percent))+50,100);
     }
 

@@ -15,6 +15,7 @@ use TripleR\Repositories\RulesAcceptanceRepository;
 use TripleR\Repositories\SecurityLogRepository;
 use TripleR\Services\Payments\PaymentGateway;
 use TripleR\Support\PaymentMethods;
+use TripleR\Support\Money;
 
 /**
  * Paying online, and the balance.
@@ -166,7 +167,7 @@ final class PaymentService
             return null;
         }
         $payment = $this->payments->findByReceipt($event['receipt']);
-        if ($payment === null || $payment['channel'] !== $this->gateway->channel() || $this->cents($event['amount']) !== $this->cents((string) $payment['amount'])) {
+        if ($payment === null || $payment['channel'] !== $this->gateway->channel() || Money::cents($event['amount']) !== Money::cents((string) $payment['amount'])) {
             $this->securityLogs->append('payment.result_mismatch', null, null, $ip, $userAgent);
             return null;
         }
@@ -209,7 +210,7 @@ final class PaymentService
             $this->rentals->notifyBooking(
                 $agreement,
                 'rental.payment_received',
-                'Triple R Gensan received your downpayment of ' . $this->pesos($this->cents((string) $payment['amount'])) . ' for booking ' . $agreement['booking_reference'] . ' (' . PaymentMethods::label($payment['method']) . ', receipt ' . $payment['receipt_number'] . '). The rental office will now confirm your reservation.'
+                'Triple R Gensan received your downpayment of ' . Money::pesos(Money::cents((string) $payment['amount'])) . ' for booking ' . $agreement['booking_reference'] . ' (' . PaymentMethods::label($payment['method']) . ', receipt ' . $payment['receipt_number'] . '). The rental office will now confirm your reservation.'
                     // Said plainly to the customer too: the simulated checkout takes no money.
                     . ($payment['channel'] === 'online_demo' ? ' This was a demonstration payment: no money was taken.' : ''),
                 'payment-received-' . $payment['payment_id'],
@@ -247,12 +248,12 @@ final class PaymentService
             if ($owed <= 0) {
                 throw new RuntimeException('Nothing is owed on this agreement.');
             }
-            $cents = $amount === '' ? $owed : $this->cents($amount);
+            $cents = $amount === '' ? $owed : Money::cents($amount);
             if ($cents <= 0) {
                 throw new RuntimeException('The amount received must be more than zero.');
             }
             if ($cents > $owed) {
-                throw new RuntimeException('That is more than the ' . $this->pesos($owed) . ' still owed on this agreement.');
+                throw new RuntimeException('That is more than the ' . Money::pesos($owed) . ' still owed on this agreement.');
             }
             $paymentId = $this->payments->insertStaffPayment(['agreement_id' => $agreementId, 'purpose' => 'balance', 'method' => $method, 'amount' => intdiv($cents, 100) . '.' . str_pad((string) ($cents % 100), 2, '0', STR_PAD_LEFT), 'external_reference' => $reference, 'recorded_by' => $actor]);
             $this->db->commit();
@@ -295,16 +296,5 @@ final class PaymentService
         $limit = (new DateTimeImmutable('now', $utc))->modify('+' . $minutes . ' minutes');
         $hold = new DateTimeImmutable($holdExpiresAt, $utc);
         return min($limit, $hold)->format('Y-m-d H:i:s.u');
-    }
-
-    private function cents(string $amount): int
-    {
-        [$whole, $fraction] = array_pad(explode('.', $amount, 2), 2, '0');
-        return ((int) $whole * 100) + (int) str_pad(substr($fraction, 0, 2), 2, '0');
-    }
-
-    private function pesos(int $cents): string
-    {
-        return '₱' . number_format($cents / 100, $cents % 100 === 0 ? 0 : 2);
     }
 }

@@ -130,7 +130,7 @@ final class MagicLinkRepository
     private function reserveBookingIssue(int $bookingId, int $limit): void
     {
         // The number of secure links issued for one booking is a rate_counters row keyed by the agreement id.
-        $insert = $this->db->prepare("INSERT IGNORE INTO rate_counters (scope, counter_key, window_started_at, hits) VALUES ('magic_link_booking', :booking_id, UTC_TIMESTAMP(), 0)");
+        $insert = $this->db->prepare("INSERT IGNORE INTO rate_counters (scope, counter_key, window_started_at, hits) VALUES ('magic_link_booking', :booking_id, UTC_TIMESTAMP(6), 0)");
         $insert->execute(['booking_id' => (string) $bookingId]);
         $update = $this->db->prepare("UPDATE rate_counters SET hits = hits + 1 WHERE scope = 'magic_link_booking' AND counter_key = :booking_id AND hits < :limit");
         $update->execute(['booking_id' => (string) $bookingId, 'limit' => max(1, min(255, $limit))]);

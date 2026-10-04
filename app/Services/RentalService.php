@@ -14,6 +14,7 @@ use TripleR\Repositories\PaymentRepository;
 use TripleR\Repositories\RentalRepository;
 use TripleR\Repositories\VehicleRepository;
 use TripleR\Support\PaymentMethods;
+use TripleR\Support\Money;
 
 final class RentalService
 {
@@ -76,7 +77,7 @@ final class RentalService
                     if($from!=='returned')throw new RuntimeException('Only a returned agreement can be completed.');
                     if(!in_array($r['deposit_status'],['not_required','released','refunded','forfeited'],true))throw new RuntimeException('Settle the security deposit before completing this agreement.');
                     // An agreement that took a downpayment is finished only when the rest has been received too.
-                    if($r['downpayment_status']==='received'&&($owed=$this->outstandingCents($id))>0)throw new RuntimeException('Record the balance of '.$this->pesos($owed).' before completing this agreement.');
+                    if($r['downpayment_status']==='received'&&($owed=$this->outstandingCents($id))>0)throw new RuntimeException('Record the balance of '.Money::pesos($owed).' before completing this agreement.');
                     $to='completed';break;
                 case 'cancel': if(!in_array($from,['reserved','confirmed'],true))throw new RuntimeException('Only a reserved or confirmed agreement can be cancelled.');$to='cancelled';break;
                 case 'no_show':
@@ -89,6 +90,9 @@ final class RentalService
             }
             if($action==='confirm') $this->chauffeurs->validateForConfirmation($r,$driver);
             if($action==='confirm'&&$r['downpayment_status']==='due')throw new RuntimeException('Record the '.self::DOWNPAYMENT_PERCENT.'% downpayment before confirming this reservation.');
+            // The simulated checkout takes no money. On the live site a downpayment marked paid only
+            // through it does not count, even if the checkout was left switched on by mistake.
+            if($action==='confirm'&&$r['downpayment_status']==='received'&&!$this->demoSite()&&!$this->realDownpaymentPaid($id))throw new RuntimeException('The downpayment was marked paid by the demonstration checkout, which takes no money. Record the real downpayment before confirming this reservation.');
             // A received downpayment stops the hold clock: the customer has paid, so the vehicle stays theirs.
             if($action==='confirm'&&$r['downpayment_status']!=='received'&&($r['hold_expires_at']===null||new DateTimeImmutable((string)$r['hold_expires_at'],new DateTimeZone('UTC'))<=new DateTimeImmutable('now',new DateTimeZone('UTC'))))throw new RuntimeException('The reservation hold has expired and cannot be confirmed.');
             if($to==='confirmed'&&!in_array($vehicle['current_status'],['available','reserved','rented'],true))throw new RuntimeException('The vehicle is no longer available for confirmation.');
@@ -121,7 +125,7 @@ final class RentalService
     {
         if(!in_array($type,self::CHARGE_TYPES,true)||$type==='chauffeur_fee')throw new RuntimeException('Choose a supported charge type.');
         $amount=$this->money($amount,'charge amount');$description=trim($description);if($description===''||mb_strlen($description)>500)throw new RuntimeException('Enter a charge description up to 500 characters.');
-        if($this->toCents($amount)<=0)throw new RuntimeException('Charge amount must be greater than zero.');
+        if(Money::cents($amount)<=0)throw new RuntimeException('Charge amount must be greater than zero.');
         $this->db->beginTransaction();try{$r=$this->rentals->find($id,true);if(!$r)throw new RuntimeException('Rental agreement not found.');if(in_array($r['status'],['completed','cancelled','no_show'],true))throw new RuntimeException('Charges are locked for terminal agreements.');if($beforeAppend!==null)$beforeAppend();$this->charges->appendCharge($id,$type,$amount,$description,$actor,$damageDecisionId,$damageAdjustmentReason);$chargeId=(int)$this->db->lastInsertId();if($this->totalCents($id)<0)throw new RuntimeException('Discounts cannot make the rental total negative.');$this->db->commit();return $chargeId;}catch(\Throwable $e){if($this->db->inTransaction())$this->db->rollBack();throw $e;}
     }
 
@@ -133,7 +137,7 @@ final class RentalService
 
     public function setDeposit(int $id,string $status,string $amount,string $reason,int $actor): void
     {
-        $allowed=['not_required','due','held','released','refunded','forfeited'];if(!in_array($status,$allowed,true))throw new RuntimeException('Choose a valid deposit status.');$amount=$this->money($amount,'deposit amount');$amountCents=$this->toCents($amount);if(($status==='not_required'&&$amountCents!==0)||($status!=='not_required'&&$amountCents<=0))throw new RuntimeException('Deposit amount must be zero only for not_required; all other deposit states require an amount.');$reason=trim($reason);if($reason===''||mb_strlen($reason)>500)throw new RuntimeException('A reason up to 500 characters is required.');
+        $allowed=['not_required','due','held','released','refunded','forfeited'];if(!in_array($status,$allowed,true))throw new RuntimeException('Choose a valid deposit status.');$amount=$this->money($amount,'deposit amount');$amountCents=Money::cents($amount);if(($status==='not_required'&&$amountCents!==0)||($status!=='not_required'&&$amountCents<=0))throw new RuntimeException('Deposit amount must be zero only for not_required; all other deposit states require an amount.');$reason=trim($reason);if($reason===''||mb_strlen($reason)>500)throw new RuntimeException('A reason up to 500 characters is required.');
         $this->db->beginTransaction();try{$r=$this->rentals->find((int)$id,true);if(!$r)throw new RuntimeException('Rental agreement not found.');if(in_array($r['status'],['completed','cancelled','no_show'],true))throw new RuntimeException('Deposit is locked for terminal agreements.');$legal=['not_required'=>['due','held'],'due'=>['held','released','refunded','forfeited'],'held'=>['released','refunded','forfeited'],'released'=>[],'refunded'=>[],'forfeited'=>[]];if($status!==$r['deposit_status']&&!in_array($status,$legal[$r['deposit_status']],true))throw new RuntimeException('That deposit transition is not allowed.');$q=$this->db->prepare('UPDATE rental_agreements SET deposit_status=:status,security_deposit_amount=:amount WHERE agreement_id=:id AND deposit_status=:old');$q->execute(['status'=>$status,'amount'=>$amount,'id'=>$id,'old'=>$r['deposit_status']]);if($q->rowCount()!==1)throw new RuntimeException('Deposit changed in another request. Reload and try again.');$this->rentals->appendDeposit($id,$r['deposit_status'],$status,(string)$r['security_deposit_amount'],$amount,$reason,$actor);$this->db->commit();}catch(\Throwable $e){if($this->db->inTransaction())$this->db->rollBack();throw $e;}
     }
 
@@ -210,7 +214,7 @@ final class RentalService
     public function bookingContext(int $id): array
     {
         $r=$this->rentals->find($id);if(!$r)throw new RuntimeException('Booking context unavailable.');
-        return ['agreement_id'=>(int)$r['agreement_id'],'booking_reference'=>$r['booking_reference'],'status'=>$r['status'],'start_date'=>$r['start_date'],'end_date'=>$r['end_date'],'pickup_at'=>$r['scheduled_pickup_at'],'return_at'=>$r['scheduled_return_at'],'vehicle'=>trim($r['plate_number'].' '.$r['make'].' '.$r['model']),'base_amount'=>$r['base_amount'],'rental_days'=>(int)$r['rental_days'],'total_amount'=>$this->total($id),'downpayment_amount'=>$r['downpayment_amount'],'downpayment_status'=>$r['downpayment_status'],'balance_at_pickup'=>$this->centsToAmount(max(0,$this->totalCents($id)-$this->toCents((string)$r['downpayment_amount'])-$this->payments->paidCents($id,'balance')))];
+        return ['agreement_id'=>(int)$r['agreement_id'],'booking_reference'=>$r['booking_reference'],'status'=>$r['status'],'start_date'=>$r['start_date'],'end_date'=>$r['end_date'],'pickup_at'=>$r['scheduled_pickup_at'],'return_at'=>$r['scheduled_return_at'],'vehicle'=>trim($r['plate_number'].' '.$r['make'].' '.$r['model']),'base_amount'=>$r['base_amount'],'rental_days'=>(int)$r['rental_days'],'total_amount'=>$this->total($id),'downpayment_amount'=>$r['downpayment_amount'],'downpayment_status'=>$r['downpayment_status'],'balance_at_pickup'=>Money::amount(max(0,$this->totalCents($id)-Money::cents((string)$r['downpayment_amount'])-$this->payments->paidCents($id,'balance')))];
     }
 
     public function issueManagementLink(int $id): void
@@ -244,17 +248,16 @@ final class RentalService
     private function downpaymentSentence(array $r): string
     {
         if(($r['downpayment_status']??'')!=='received')return '';
-        $paid=$this->toCents((string)$r['downpayment_amount']);$balance=max(0,$this->totalCents((int)$r['agreement_id'])-$paid);
-        return ' Downpayment received: '.$this->pesos($paid).'. Balance of '.$this->pesos($balance).' is due at pickup.';
+        $paid=Money::cents((string)$r['downpayment_amount']);$balance=max(0,$this->totalCents((int)$r['agreement_id'])-$paid);
+        return ' Downpayment received: '.Money::pesos($paid).'. Balance of '.Money::pesos($balance).' is due at pickup.';
     }
     /** A customer who has sent their proof, or is on the checkout right now, is not cancelled until that is settled. */
     private function hasProofAwaitingReview(int $id): bool
     { $q=$this->db->prepare("SELECT 1 FROM payment_proofs WHERE agreement_id=:id AND proof_status='submitted' LIMIT 1");$q->execute(['id'=>$id]);return $q->fetchColumn()!==false; }
-    private function pesos(int $cents): string { return '₱'.number_format($cents/100,$cents%100===0?0:2); }
-    private function centsToAmount(int $cents): string { return intdiv($cents,100).'.'.str_pad((string)($cents%100),2,'0',STR_PAD_LEFT); }
+    private function demoSite(): bool { return \TripleR\Support\SiteProfile::get('is_demo', true) === true; }
+    private function realDownpaymentPaid(int $id): bool { $q=$this->db->prepare("SELECT 1 FROM payments WHERE agreement_id=:id AND purpose='downpayment' AND payment_status='paid' AND channel<>'online_demo' LIMIT 1");$q->execute(['id'=>$id]);if($q->fetchColumn()!==false)return true;$demo=$this->db->prepare("SELECT 1 FROM payments WHERE agreement_id=:id AND purpose='downpayment' AND payment_status='paid' AND channel='online_demo' LIMIT 1");$demo->execute(['id'=>$id]);return $demo->fetchColumn()===false; }
     private function positiveId(mixed $v,string $name): int { $n=filter_var($v,FILTER_VALIDATE_INT);if($n===false||$n<1)throw new RuntimeException('Choose a valid '.$name.'.');return (int)$n; }
-    private function totalCents(int $id): int{$r=$this->rentals->find($id);if(!$r)throw new RuntimeException('Rental agreement not found.');$total=$this->toCents((string)$r['base_amount']);foreach($this->charges->forAgreement($id) as $charge)$total+=$this->toCents((string)$charge['amount'])*self::CHARGE_SIGN[$charge['charge_type']]*($charge['entry_kind']==='reversal'?-1:1);return $total;}
-    private function toCents(string $amount): int{[$whole,$fraction]=array_pad(explode('.', $amount,2),2,'0');return ((int)$whole*100)+(int)str_pad(substr($fraction,0,2),2,'0');}
+    private function totalCents(int $id): int{$r=$this->rentals->find($id);if(!$r)throw new RuntimeException('Rental agreement not found.');$total=Money::cents((string)$r['base_amount']);foreach($this->charges->forAgreement($id) as $charge)$total+=Money::cents((string)$charge['amount'])*self::CHARGE_SIGN[$charge['charge_type']]*($charge['entry_kind']==='reversal'?-1:1);return $total;}
     /**
      * At return: a late return is charged, and damage recorded during the rental keeps the vehicle
      * off the road. Late means more than LATE_RETURN_GRACE_MINUTES (60) after the scheduled return;
@@ -272,8 +275,8 @@ final class RentalService
             $late=(new DateTimeImmutable('now',$utc))->getTimestamp()-$due->getTimestamp();
             if($late>max(0,Config::int('LATE_RETURN_GRACE_MINUTES',60))*60){
                 $days=(int)ceil($late/86400);
-                $rateCents=$this->toCents((string)$r['daily_rate'])+($r['rental_type']==='chauffeur'&&($r['chauffeur_daily_rate']??$vehicle['chauffeur_daily_rate'])!==null?$this->toCents((string)($r['chauffeur_daily_rate']??$vehicle['chauffeur_daily_rate'])):0);
-                if($rateCents>0)$this->charges->appendCharge($id,'fee',$this->centsToAmount($days*$rateCents),'Late return: '.$days.' day'.($days===1?'':'s').' at '.$this->pesos($rateCents).'/day (due '.$due->setTimezone(new DateTimeZone('Asia/Manila'))->format('M j, g:i A').')',$actor);
+                $rateCents=Money::cents((string)$r['daily_rate'])+($r['rental_type']==='chauffeur'&&($r['chauffeur_daily_rate']??$vehicle['chauffeur_daily_rate'])!==null?Money::cents((string)($r['chauffeur_daily_rate']??$vehicle['chauffeur_daily_rate'])):0);
+                if($rateCents>0)$this->charges->appendCharge($id,'fee',Money::amount($days*$rateCents),'Late return: '.$days.' day'.($days===1?'':'s').' at '.Money::pesos($rateCents).'/day (due '.$due->setTimezone(new DateTimeZone('Asia/Manila'))->format('M j, g:i A').')',$actor);
             }
         }
         $worst=$this->db->prepare("SELECT severity FROM damage_reports WHERE agreement_id=:id AND phase='during' AND has_damage=1 ORDER BY FIELD(severity,'severe','moderate','minor') LIMIT 1");
