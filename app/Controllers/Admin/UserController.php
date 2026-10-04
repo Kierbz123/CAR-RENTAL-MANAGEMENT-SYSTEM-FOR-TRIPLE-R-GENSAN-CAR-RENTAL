@@ -12,6 +12,7 @@ use TripleR\Repositories\SecurityLogRepository;
 use TripleR\Repositories\SessionRepository;
 use TripleR\Repositories\StaffUserRepository;
 use TripleR\Security\Csrf;
+use TripleR\Support\Pager;
 
 final class UserController
 {
@@ -32,7 +33,7 @@ final class UserController
         if ($actor instanceof Response) {
             return $actor;
         }
-        return $this->render(['users' => $this->users->list(), 'csrfToken' => Csrf::token(), 'oneTimePassword' => null, 'notice' => null], 200);
+        return $this->render(['csrfToken' => Csrf::token(), 'oneTimePassword' => null, 'notice' => null], 200);
     }
 
     public function create(Request $request): Response
@@ -47,7 +48,7 @@ final class UserController
         $email = mb_strtolower(trim((string) ($request->form['email'] ?? '')));
         $role = (string) ($request->form['role'] ?? '');
         if (filter_var($email, FILTER_VALIDATE_EMAIL) === false || mb_strlen($email) > 191 || !in_array($role, self::ROLES, true)) {
-            return $this->render(['users' => $this->users->list(), 'csrfToken' => Csrf::token(), 'oneTimePassword' => null, 'notice' => 'Enter a valid email and one of the listed roles.'], 422);
+            return $this->render(['csrfToken' => Csrf::token(), 'oneTimePassword' => null, 'notice' => 'Enter a valid email and one of the listed roles.'], 422);
         }
         $temporaryPassword = self::temporaryPassword();
         $this->db->beginTransaction();
@@ -60,7 +61,7 @@ final class UserController
                 $this->db->rollBack();
             }
             if ((int) ($error->errorInfo[1] ?? 0) === 1062) {
-                return $this->render(['users' => $this->users->list(), 'csrfToken' => Csrf::token(), 'oneTimePassword' => null, 'notice' => 'A user with that email already exists.'], 409);
+                return $this->render(['csrfToken' => Csrf::token(), 'oneTimePassword' => null, 'notice' => 'A user with that email already exists.'], 409);
             }
             throw $error;
         } catch (\Throwable $error) {
@@ -70,7 +71,6 @@ final class UserController
             throw $error;
         }
         return $this->render([
-            'users' => $this->users->list(),
             'csrfToken' => Csrf::token(),
             'oneTimePassword' => $temporaryPassword,
             'notice' => 'User created. Copy this temporary password now and deliver it out of band; it will not be shown again.',
@@ -148,7 +148,7 @@ final class UserController
         $userId = filter_var($request->form['user_id'] ?? null, FILTER_VALIDATE_INT);
         $role = (string) ($request->form['role'] ?? '');
         if (!$userId || !in_array($role, self::ROLES, true) || ((int) $userId === (int) $actor['id'] && $role !== 'system_admin')) {
-            return $this->render(['users' => $this->users->list(), 'csrfToken' => Csrf::token(), 'oneTimePassword' => null, 'notice' => 'The role change is invalid.'], 422);
+            return $this->render(['csrfToken' => Csrf::token(), 'oneTimePassword' => null, 'notice' => 'The role change is invalid.'], 422);
         }
         $this->db->beginTransaction();
         try {
@@ -178,7 +178,7 @@ final class UserController
         }
         $userId = filter_var($request->form['user_id'] ?? null, FILTER_VALIDATE_INT);
         if (!$userId || (int) $userId === (int) $actor['id']) {
-            return $this->render(['users' => $this->users->list(), 'csrfToken' => Csrf::token(), 'oneTimePassword' => null, 'notice' => 'You cannot deactivate the current account.'], 422);
+            return $this->render(['csrfToken' => Csrf::token(), 'oneTimePassword' => null, 'notice' => 'You cannot deactivate the current account.'], 422);
         }
         $this->db->beginTransaction();
         try {
@@ -280,7 +280,6 @@ final class UserController
             throw $error;
         }
         return $this->render([
-            'users' => $this->users->list(),
             'csrfToken' => Csrf::token(),
             'oneTimePassword' => $temporaryPassword,
             'notice' => 'Temporary password generated. Copy it now and deliver it out of band; it will not be shown again.',
@@ -289,6 +288,11 @@ final class UserController
 
     private function render(array $data, int $status): Response
     {
+        // The account list is read one page at a time.
+        $total = $this->users->count();
+        $window = Pager::window($total);
+        $data['users'] = $this->users->list($window['limit'], $window['offset']);
+        $data['total'] = $total;
         extract($data, EXTR_SKIP);
         ob_start();
         require APP_ROOT . '/app/Views/admin/users.php';

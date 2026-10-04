@@ -10,6 +10,7 @@ use TripleR\Http\Request;
 use TripleR\Http\Response;
 use TripleR\Repositories\DriverRepository;
 use TripleR\Security\Csrf;
+use TripleR\Support\Pager;
 use TripleR\Services\DriverPiiCipher;
 use TripleR\Services\DriverService;
 
@@ -30,11 +31,14 @@ final class DriverController
         $canManage = in_array($user['role'],self::MANAGERS,true);
         $canReveal = in_array($user['role'],self::REVEALERS,true);
         $removed = ($request->query['show'] ?? '') === 'removed';
-        $rows = $this->drivers->list((string)($request->query['search'] ?? ''), false, $removed);
+        $search = (string)($request->query['search'] ?? '');
+        $total = $this->drivers->count($search, false, $removed);
+        $window = Pager::window($total);
+        $rows = $this->drivers->list($search, false, $removed, $window['limit'], $window['offset']);
         if ($canReveal) foreach ($rows as &$row) $row['license_display'] = $this->maskedOrUnreadable(fn (): string => '****' . substr(DriverPiiCipher::normalizeLicense($this->cipher->decrypt($row['license_number_ciphertext'],'driver-license')),-4));
         else foreach ($rows as &$row) $row['license_display'] = 'Restricted';
         unset($row);
-        return $this->render('drivers/list',['drivers'=>$rows,'eligibleDrivers'=>$this->service->selectableForAssignment(),'search'=>(string)($request->query['search']??''),'user'=>$user,'canManage'=>$canManage,'removed'=>$removed]);
+        return $this->render('drivers/list',['drivers'=>$rows,'eligibleDrivers'=>$this->service->selectableForAssignment(),'search'=>(string)($request->query['search']??''),'user'=>$user,'canManage'=>$canManage,'removed'=>$removed,'total'=>$total]);
     }
 
     public function newForm(): Response

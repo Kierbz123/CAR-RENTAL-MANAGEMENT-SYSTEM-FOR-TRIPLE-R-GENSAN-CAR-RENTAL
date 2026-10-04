@@ -9,14 +9,24 @@ final class VehicleRepository
 {
     public function __construct(private readonly PDO $db) {}
 
-    public function list(array $filters = []): array
+    public function list(array $filters = [], ?int $limit = null, int $offset = 0): array
     {
         $sql = 'SELECT v.*, l.name AS location_name FROM vehicles v LEFT JOIN vehicle_locations l ON l.location_id = v.current_location_id WHERE v.deleted_at IS NULL';
         $params = [];
         if (!empty($filters['status'])) { $sql .= ' AND v.current_status = :status'; $params['status'] = $filters['status']; }
         $sql .= ' ORDER BY v.plate_number';
+        if ($limit !== null) $sql .= ' LIMIT ' . max(1, min(500, $limit)) . ' OFFSET ' . max(0, $offset);
         $stmt = $this->db->prepare($sql); $stmt->execute($params);
         return $stmt->fetchAll();
+    }
+
+    public function count(array $filters = []): int
+    {
+        $sql = 'SELECT COUNT(*) FROM vehicles v WHERE v.deleted_at IS NULL';
+        $params = [];
+        if (!empty($filters['status'])) { $sql .= ' AND v.current_status = :status'; $params['status'] = $filters['status']; }
+        $stmt = $this->db->prepare($sql); $stmt->execute($params);
+        return (int) $stmt->fetchColumn();
     }
 
     public function availableForBooking(): array

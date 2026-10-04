@@ -63,10 +63,16 @@ final class StaffUserRepository
         $statement->execute(['id' => $userId]);
     }
 
-    public function list(int $limit = 200): array
+    public function list(int $limit = 200, int $offset = 0): array
     {
         $limit = max(1, min(200, $limit));
-        return $this->db->query("SELECT id, email, role, is_active, failed_login_count, locked_at, must_change_password, deleted_at, created_at FROM users ORDER BY email LIMIT {$limit}")->fetchAll();
+        $offset = max(0, $offset);
+        return $this->db->query("SELECT id, email, role, is_active, failed_login_count, locked_at, must_change_password, deleted_at, created_at FROM users ORDER BY email LIMIT {$limit} OFFSET {$offset}")->fetchAll();
+    }
+
+    public function count(): int
+    {
+        return (int) $this->db->query('SELECT COUNT(*) FROM users')->fetchColumn();
     }
 
     public function create(string $email, string $passwordHash, string $role): int

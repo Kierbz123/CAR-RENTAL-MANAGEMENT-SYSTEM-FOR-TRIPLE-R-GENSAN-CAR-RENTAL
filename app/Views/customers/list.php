@@ -8,7 +8,8 @@ use TripleR\Support\StatusPresenter as Status;
 use TripleR\Support\View;
 
 $e = static fn (mixed $value): string => View::e($value);
-$pager = new Pager($customers);
+// The controller fetched only this page; $total is the full count.
+$pager = new Pager($customers, 25, 'page', $total ?? null);
 $removed = $removed ?? false;
 $filtered = $search !== '' || $type !== '' || $removed;
 
@@ -51,7 +52,7 @@ View::begin('staff', ['title' => 'Customers', 'crumbs' => [['Customers', null]],
 <?php if ($filtered): ?>
         <a class="button button-ghost" href="/customers">Clear</a>
 <?php endif; ?>
-        <span class="toolbar-summary"><?= $e(Format::plural(count($customers), 'customer')) ?></span>
+        <span class="toolbar-summary"><?= $e(Format::plural($pager->total, 'customer')) ?></span>
     </form>
     <div class="table-wrap">
         <table class="data-table" data-stack>

@@ -11,6 +11,7 @@ use TripleR\Http\Response;
 use TripleR\Repositories\VehicleLocationRepository;
 use TripleR\Repositories\VehicleRepository;
 use TripleR\Security\Csrf;
+use TripleR\Support\Pager;
 use TripleR\Services\VehiclePhotoService;
 use TripleR\Services\VehicleService;
 
@@ -23,7 +24,8 @@ final class VehicleController
     {
         $user=$this->guard->requireRoles(self::ROLES); if ($user instanceof Response) return $user;
         $status=(string)($request->query['status']??''); if ($status!=='' && !in_array($status,VehicleService::STATUSES,true)) $status='';
-        return $this->render('fleet/vehicles',['vehicles'=>$this->vehicles->list(['status'=>$status]),'status'=>$status,'user'=>$user,'notice'=>null]);
+        $filters=['status'=>$status]; $total=$this->vehicles->count($filters); $window=Pager::window($total);
+        return $this->render('fleet/vehicles',['vehicles'=>$this->vehicles->list($filters,$window['limit'],$window['offset']),'total'=>$total,'status'=>$status,'user'=>$user,'notice'=>null]);
     }
 
     public function createForm(): Response

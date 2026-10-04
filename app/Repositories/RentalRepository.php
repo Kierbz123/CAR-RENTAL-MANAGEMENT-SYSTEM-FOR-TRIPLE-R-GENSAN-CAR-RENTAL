@@ -78,12 +78,25 @@ final class RentalRepository
         $q->execute(['id'=>$id]);return $q->rowCount()===1;
     }
 
-    public function list(array $filters=[]): array
+    /** Open bookings first (status_rank, migration 027), then by start date; one page when $limit is given. */
+    public function list(array $filters=[],?int $limit=null,int $offset=0): array
     {
         $sql='SELECT r.*,c.full_name AS customer_name,v.plate_number,v.make,v.model FROM rental_agreements r JOIN customers c ON c.customer_id=r.customer_id JOIN vehicles v ON v.vehicle_id=r.vehicle_id WHERE 1=1'; $params=[];
         if (!empty($filters['status'])) { $sql.=' AND r.status=:status'; $params['status']=$filters['status']; }
-        $sql.=' ORDER BY FIELD(r.status,\'reserved\',\'confirmed\',\'active\',\'returned\',\'completed\',\'cancelled\',\'no_show\'),r.start_date,r.agreement_id';
+        $sql.=' ORDER BY r.status_rank,r.start_date,r.agreement_id'.self::page($limit,$offset);
         $q=$this->db->prepare($sql);$q->execute($params);return $q->fetchAll();
+    }
+
+    public function count(array $filters=[]): int
+    {
+        $sql='SELECT COUNT(*) FROM rental_agreements r WHERE 1=1'; $params=[];
+        if (!empty($filters['status'])) { $sql.=' AND r.status=:status'; $params['status']=$filters['status']; }
+        $q=$this->db->prepare($sql);$q->execute($params);return (int)$q->fetchColumn();
+    }
+
+    private static function page(?int $limit,int $offset): string
+    {
+        return $limit===null?'':' LIMIT '.max(1,min(500,$limit)).' OFFSET '.max(0,$offset);
     }
 
     public function find(int $id,bool $lock=false): ?array

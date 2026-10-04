@@ -318,12 +318,15 @@ CREATE TABLE rental_agreements (
     -- One active agreement per vehicle and per driver (NULL unless active, so history never collides).
     active_vehicle_id BIGINT UNSIGNED GENERATED ALWAYS AS (CASE WHEN status = 'active' THEN vehicle_id END) STORED,
     active_driver_id BIGINT UNSIGNED GENERATED ALWAYS AS (CASE WHEN status = 'active' THEN driver_id END) STORED,
+    -- List order: open bookings first (migration 027).
+    status_rank TINYINT UNSIGNED GENERATED ALWAYS AS (FIELD(status, 'reserved', 'confirmed', 'active', 'returned', 'completed', 'cancelled', 'no_show')) STORED,
     PRIMARY KEY (agreement_id),
     UNIQUE KEY uq_rentals_one_active_per_vehicle (active_vehicle_id),
     UNIQUE KEY uq_rentals_one_active_per_driver (active_driver_id),
     KEY idx_rentals_vehicle_times (vehicle_id,status,scheduled_pickup_at,scheduled_return_at),
     KEY idx_rentals_driver_times (driver_id,status,scheduled_pickup_at,scheduled_return_at),
     KEY idx_rentals_vehicle_dates_status (vehicle_id,start_date,end_date,status),
+    KEY idx_rentals_list_order (status_rank, start_date, agreement_id),
     KEY idx_rentals_customer_status (customer_id,status),
     KEY idx_rentals_status_dates (status,start_date,end_date),
     KEY idx_rentals_driver_dates (driver_id,start_date,end_date,status),
@@ -1035,4 +1038,5 @@ INSERT INTO schema_migrations (migration,checksum) VALUES
 ('023_booking_guards.sql','11ca84b8ee68bfb9d97d6cf74d8756f19c41fae7f5b6b69449d4bc3da0c344d2'),
 ('024_chauffeur_rate_on_agreement.sql','e71900a8b17b8500f848668780ea2d4e7dfe764d5ba8391428663c7f96f3bbeb'),
 ('025_record_lifecycle_logs.sql','3cd877a9934c931eeae6ccfb3888f9a1f08d0fe7d541dc7998604e163e09ecab'),
-('026_sealed_phone_numbers.sql','8f41d7f00365d3b6fae9b5e415529ce010fa40e3fdc4aca212e4afb0758608c5');
+('026_sealed_phone_numbers.sql','8f41d7f00365d3b6fae9b5e415529ce010fa40e3fdc4aca212e4afb0758608c5'),
+('027_rental_list_order.sql','85e615e20c964fdb96654c704ddfb445cd3f7f3bc9d9776e71db0f579a026899');

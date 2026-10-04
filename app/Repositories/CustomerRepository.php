@@ -9,13 +9,27 @@ final class CustomerRepository
 {
     public function __construct(private readonly PDO $db) {}
 
-    /** Current customers, or with $removed the removed ones (which can be restored). */
-    public function list(?string $type,?string $search,bool $removed=false): array
+    public function list(?string $type,?string $search,bool $removed=false,?int $limit=null,int $offset=0): array
     {
-        $sql='SELECT customers.*, EXISTS(SELECT 1 FROM customer_telegram_links l WHERE l.active_customer_id=customers.customer_id) AS telegram_connected FROM customers WHERE deleted_at IS '.($removed?'NOT NULL':'NULL'); $params=[];
-        if ($type!==null && $type!=='') { $sql.=' AND customer_type=:type'; $params['type']=$type; }
-        if ($search!==null && trim($search)!=='') { $sql.=' AND (full_name LIKE :name_search OR company_name LIKE :company_search)'; $params['name_search']=$params['company_search']='%'.trim($search).'%'; } // One placeholder per use: native prepared statements reject a repeated name.
-        $sql.=' ORDER BY full_name,customer_id'; $stmt=$this->db->prepare($sql); $stmt->execute($params); return $stmt->fetchAll();
+        [$where,$params]=self::listFilter($type,$search,$removed);
+        $sql='SELECT customers.*, EXISTS(SELECT 1 FROM customer_telegram_links l WHERE l.active_customer_id=customers.customer_id) AS telegram_connected FROM customers WHERE '.$where.' ORDER BY full_name,customer_id';
+        if ($limit!==null) $sql.=' LIMIT '.max(1,min(500,$limit)).' OFFSET '.max(0,$offset);
+        $stmt=$this->db->prepare($sql); $stmt->execute($params); return $stmt->fetchAll();
+    }
+
+    public function count(?string $type,?string $search,bool $removed=false): int
+    {
+        [$where,$params]=self::listFilter($type,$search,$removed);
+        $stmt=$this->db->prepare('SELECT COUNT(*) FROM customers WHERE '.$where); $stmt->execute($params); return (int)$stmt->fetchColumn();
+    }
+
+    /** Current customers, or with $removed the removed ones (which can be restored). @return array{string,array} */
+    private static function listFilter(?string $type,?string $search,bool $removed): array
+    {
+        $where='deleted_at IS '.($removed?'NOT NULL':'NULL'); $params=[];
+        if ($type!==null && $type!=='') { $where.=' AND customer_type=:type'; $params['type']=$type; }
+        if ($search!==null && trim($search)!=='') { $where.=' AND (full_name LIKE :name_search OR company_name LIKE :company_search)'; $params['name_search']=$params['company_search']='%'.trim($search).'%'; } // One placeholder per use: native prepared statements reject a repeated name.
+        return [$where,$params];
     }
 
     public function find(int $id,bool $lock=false,bool $includeDeleted=false): ?array

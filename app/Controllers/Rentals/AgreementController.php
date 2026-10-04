@@ -10,6 +10,7 @@ use TripleR\Http\Response;
 use TripleR\Repositories\RentalRepository;
 use TripleR\Repositories\ChargeRepository;
 use TripleR\Security\Csrf;
+use TripleR\Support\Pager;
 use TripleR\Services\RentalService;
 use TripleR\Services\ChauffeurService;
 use TripleR\Services\DriverService;
@@ -26,7 +27,9 @@ final class AgreementController
     public function index(Request $request): Response
     {
         $user=$this->guard->requireRoles(self::VIEW);if($user instanceof Response)return $user;$status=(string)($request->query['status']??'');if($status!==''&&!in_array($status,RentalService::STATUSES,true))$status='';
-        return $this->render('rentals/agreements',['user'=>$user,'rows'=>$this->rentals->list(['status'=>$status]),'status'=>$status,'statuses'=>RentalService::STATUSES]);
+        // Only the page being shown is read from the database.
+        $filters=['status'=>$status];$total=$this->rentals->count($filters);$window=Pager::window($total);
+        return $this->render('rentals/agreements',['user'=>$user,'rows'=>$this->rentals->list($filters,$window['limit'],$window['offset']),'total'=>$total,'status'=>$status,'statuses'=>RentalService::STATUSES]);
     }
 
     public function newForm(): Response

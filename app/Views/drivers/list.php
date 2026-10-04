@@ -8,7 +8,8 @@ use TripleR\Support\StatusPresenter as Status;
 use TripleR\Support\View;
 
 $e = static fn (mixed $value): string => View::e($value);
-$pager = new Pager($drivers);
+// The controller fetched only this page; $total is the full count.
+$pager = new Pager($drivers, 25, 'page', $total ?? null);
 $today = Format::today();
 $unreadable = count(array_filter($drivers, static fn (array $row): bool => $row['license_display'] === 'Unreadable'));
 
@@ -48,7 +49,7 @@ View::begin('staff', ['title' => 'Drivers', 'crumbs' => [['Fleet', null], ['Driv
 <?php if ($search !== '' || ($removed ?? false)): ?>
         <a class="button button-ghost" href="/fleet/drivers">Clear</a>
 <?php endif; ?>
-        <span class="toolbar-summary"><?= $e(Format::plural(count($drivers), 'driver')) ?></span>
+        <span class="toolbar-summary"><?= $e(Format::plural($pager->total, 'driver')) ?></span>
     </form>
     <div class="table-wrap">
         <table class="data-table" data-stack>

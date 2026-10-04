@@ -9,18 +9,31 @@ final class DriverRepository
 {
     public function __construct(private readonly PDO $db) {}
 
-    /** Current drivers; with $includeDeleted removed ones too; with $removedOnly only the removed ones. */
-    public function list(?string $search = null, bool $includeDeleted = false, bool $removedOnly = false): array
+    public function count(?string $search = null, bool $includeDeleted = false, bool $removedOnly = false): int
     {
-        $sql = 'SELECT * FROM drivers WHERE 1=1';
-        if ($removedOnly) $sql .= ' AND deleted_at IS NOT NULL';
-        elseif (!$includeDeleted) $sql .= ' AND deleted_at IS NULL';
+        [$where, $params] = self::listFilter($search, $includeDeleted, $removedOnly);
+        $stmt = $this->db->prepare('SELECT COUNT(*) FROM drivers WHERE ' . $where);
+        $stmt->execute($params);
+        return (int) $stmt->fetchColumn();
+    }
+
+    /** Current drivers; with $includeDeleted removed ones too; with $removedOnly only the removed ones. @return array{string,array} */
+    private static function listFilter(?string $search, bool $includeDeleted, bool $removedOnly): array
+    {
+        $where = $removedOnly ? 'deleted_at IS NOT NULL' : ($includeDeleted ? '1=1' : 'deleted_at IS NULL');
         $params = [];
         if ($search !== null && trim($search) !== '') {
-            $sql .= ' AND full_name LIKE :search';
+            $where .= ' AND full_name LIKE :search';
             $params['search'] = '%' . trim($search) . '%';
         }
-        $sql .= ' ORDER BY full_name, driver_id';
+        return [$where, $params];
+    }
+
+    public function list(?string $search = null, bool $includeDeleted = false, bool $removedOnly = false, ?int $limit = null, int $offset = 0): array
+    {
+        [$where, $params] = self::listFilter($search, $includeDeleted, $removedOnly);
+        $sql = 'SELECT * FROM drivers WHERE ' . $where . ' ORDER BY full_name, driver_id';
+        if ($limit !== null) $sql .= ' LIMIT ' . max(1, min(500, $limit)) . ' OFFSET ' . max(0, $offset);
         $stmt = $this->db->prepare($sql);
         $stmt->execute($params);
         return $stmt->fetchAll();

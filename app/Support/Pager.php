@@ -4,8 +4,12 @@ declare(strict_types=1);
 namespace TripleR\Support;
 
 /**
- * Splits an already-loaded list into pages for display. The page number comes
- * from the query string, so paging works without scripts and keeps any filters.
+ * Pages a list for display. The page number comes from the query string, so paging works
+ * without scripts and keeps any filters.
+ *
+ * Long lists are paged by the database: the controller counts the rows, asks window() which
+ * slice the current page is, fetches only that slice, and passes the count as $total. Without
+ * $total the pager splits an already-loaded list itself.
  */
 final class Pager
 {
@@ -15,15 +19,31 @@ final class Pager
     /** @var list<mixed> */
     public readonly array $rows;
 
-    public function __construct(array $rows, int $perPage = 25, string $param = 'page')
+    public function __construct(array $rows, int $perPage = 25, string $param = 'page', ?int $total = null)
     {
-        $this->total = count($rows);
+        $this->total = $total ?? count($rows);
         $this->pages = max(1, (int) ceil($this->total / $perPage));
-        $requested = filter_var($_GET[$param] ?? 1, FILTER_VALIDATE_INT);
-        $this->page = min($this->pages, max(1, $requested === false ? 1 : (int) $requested));
-        $this->rows = array_slice(array_values($rows), ($this->page - 1) * $perPage, $perPage);
+        $this->page = self::requestedPage($this->pages, $param);
+        $this->rows = $total === null ? array_slice(array_values($rows), ($this->page - 1) * $perPage, $perPage) : array_values($rows);
         $this->param = $param;
         $this->perPage = $perPage;
+    }
+
+    /**
+     * The slice of a $total-row list that the requested page shows, for a LIMIT/OFFSET query.
+     *
+     * @return array{limit:int,offset:int}
+     */
+    public static function window(int $total, int $perPage = 25, string $param = 'page'): array
+    {
+        $page = self::requestedPage(max(1, (int) ceil($total / $perPage)), $param);
+        return ['limit' => $perPage, 'offset' => ($page - 1) * $perPage];
+    }
+
+    private static function requestedPage(int $pages, string $param): int
+    {
+        $requested = filter_var($_GET[$param] ?? 1, FILTER_VALIDATE_INT);
+        return min($pages, max(1, $requested === false ? 1 : (int) $requested));
     }
 
     private readonly string $param;

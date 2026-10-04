@@ -9,7 +9,8 @@ use TripleR\Support\View;
 
 $e = static fn (mixed $value): string => View::e($value);
 $roles = ['system_admin', 'fleet_manager', 'front_desk', 'driver_coordinator', 'finance_staff'];
-$pager = new Pager($users);
+// The controller fetched only this page; $total is the full count.
+$pager = new Pager($users, 25, 'page', $total ?? null);
 // When a lock lifts by itself (AUTH_LOCKOUT_MINUTES; 0 means only an administrator can lift it).
 $lockMinutes = Config::int('AUTH_LOCKOUT_MINUTES', 15);
 $lockLabel = static function (string $lockedAt) use ($lockMinutes): ?string {
@@ -62,7 +63,7 @@ View::begin('staff', ['title' => 'Staff accounts', 'crumbs' => [['Administration
 </section>
 
 <section class="panel" aria-labelledby="users-title">
-    <div class="panel-heading"><h2 id="users-title">All accounts</h2><span class="badge badge-neutral"><?= count($users) ?></span></div>
+    <div class="panel-heading"><h2 id="users-title">All accounts</h2><span class="badge badge-neutral"><?= $pager->total ?></span></div>
     <div class="table-wrap">
         <table class="data-table" data-stack>
             <thead><tr><th scope="col">Email</th><th scope="col">Role</th><th scope="col">Status</th><th scope="col" class="num">Failed sign-ins</th><th scope="col" class="actions">Actions</th></tr></thead>

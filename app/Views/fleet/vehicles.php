@@ -8,7 +8,8 @@ use TripleR\Support\StatusPresenter as Status;
 use TripleR\Support\View;
 
 $e = static fn (mixed $value): string => View::e($value);
-$pager = new Pager($vehicles);
+// The controller fetched only this page; $total is the full count.
+$pager = new Pager($vehicles, 25, 'page', $total ?? null);
 
 View::begin('staff', ['title' => 'Vehicles', 'crumbs' => [['Fleet', null], ['Vehicles', null]], 'scripts' => ['vehicles.js']]);
 ?>
@@ -38,7 +39,7 @@ View::begin('staff', ['title' => 'Vehicles', 'crumbs' => [['Fleet', null], ['Veh
 <?php if ($status !== ''): ?>
         <a class="button button-ghost" href="/fleet/vehicles">Clear filter</a>
 <?php endif; ?>
-        <span class="toolbar-summary"><?= $e(Format::plural(count($vehicles), 'vehicle')) ?></span>
+        <span class="toolbar-summary"><?= $e(Format::plural($pager->total, 'vehicle')) ?></span>
     </form>
     <div class="table-wrap">
         <table class="data-table" data-stack>

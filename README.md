@@ -71,7 +71,7 @@ The design plan and its status are in [docs/UI_DESIGN_MASTER_PLAN.md](docs/UI_DE
 | `entry` | sign-in, password change, secure link, find my booking, the customer's booking page, error pages | Dark, like the public site. `variant => 'split'` adds the brand panel. |
 | `public` | the landing page at `/` and the booking page at `/book` | Header, footer and business details. Options: `home` (where the brand links), `intro` (plays the loading screen), `actions` (header buttons), `scripts`. |
 
-Display helpers live in `app/Support/`: `StatusPresenter` (stored value to label and badge), `Format` (money, kilometres, dates in Manila time), `Pager`, and `Icon`.
+Display helpers live in `app/Support/`: `StatusPresenter` (stored value to label and badge), `Format` (money, kilometres, dates in Manila time), `Pager`, and `Icon`. The rental, customer, driver, vehicle and staff-account lists are paged by the database: the controller counts the rows, takes the current page's `LIMIT/OFFSET` from `Pager::window()`, fetches only that page and passes the count to the view as `$total`. The rental list's order (open bookings first) is the indexed `status_rank` column (migration 027).
 
 **Styles.** `public/assets/css/app.source.css` is the source for staff and entry pages; `app.css` is its built output. Rebuild after editing:
 

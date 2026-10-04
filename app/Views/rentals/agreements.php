@@ -8,7 +8,8 @@ use TripleR\Support\StatusPresenter as Status;
 use TripleR\Support\View;
 
 $e = static fn (mixed $value): string => View::e($value);
-$pager = new Pager($rows);
+// The controller fetched only this page; $total is the full count.
+$pager = new Pager($rows, 25, 'page', $total ?? null);
 // Driver coordinators schedule drivers; amounts are not part of their view.
 $showAmounts = $user['role'] !== 'driver_coordinator';
 
@@ -42,7 +43,7 @@ View::begin('staff', ['title' => 'Agreements', 'crumbs' => [['Agreements', null]
 <?php if ($status !== ''): ?>
         <a class="button button-ghost" href="/rentals">Clear filter</a>
 <?php endif; ?>
-        <span class="toolbar-summary"><?= $e(Format::plural(count($rows), 'agreement')) ?></span>
+        <span class="toolbar-summary"><?= $e(Format::plural($pager->total, 'agreement')) ?></span>
     </form>
     <div class="table-wrap">
         <table class="data-table" data-stack>

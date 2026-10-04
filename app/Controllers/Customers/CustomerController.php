@@ -10,6 +10,7 @@ use TripleR\Http\Request;
 use TripleR\Http\Response;
 use TripleR\Repositories\CustomerRepository;
 use TripleR\Security\Csrf;
+use TripleR\Support\Pager;
 use TripleR\Services\CustomerPiiCipher;
 use TripleR\Services\CustomerService;
 use TripleR\Services\TelegramLinkService;
@@ -25,8 +26,9 @@ final class CustomerController
     {
         $user=$this->guard->requireRoles(self::ROLES); if ($user instanceof Response) return $user;
         $type=trim((string)($request->query['type']??'')); if ($type!==''&&!in_array($type,['walk_in','online','corporate','repeat','referral'],true)) $type='';
-        $removed=($request->query['show']??'')==='removed';
-        return $this->render('customers/list',['customers'=>$this->customers->list($type?:null,(string)($request->query['search']??''),$removed),'removed'=>$removed,'type'=>$type,'search'=>(string)($request->query['search']??''),'telegramOn'=>$this->telegram->isConfigured(),'user'=>$user]);
+        $removed=($request->query['show']??'')==='removed'; $search=(string)($request->query['search']??'');
+        $total=$this->customers->count($type?:null,$search,$removed); $window=Pager::window($total);
+        return $this->render('customers/list',['customers'=>$this->customers->list($type?:null,$search,$removed,$window['limit'],$window['offset']),'total'=>$total,'removed'=>$removed,'type'=>$type,'search'=>(string)($request->query['search']??''),'telegramOn'=>$this->telegram->isConfigured(),'user'=>$user]);
     }
 
     public function newForm(): Response
