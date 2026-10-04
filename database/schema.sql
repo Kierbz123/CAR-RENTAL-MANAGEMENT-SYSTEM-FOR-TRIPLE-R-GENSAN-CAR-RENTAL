@@ -436,7 +436,10 @@ CREATE TABLE telegram_updates (
 
 CREATE TABLE notifications (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    -- Masked ("••••4567"); the number is in recipient_ciphertext, found by recipient_fingerprint (migration 026).
     recipient_phone VARCHAR(20) NOT NULL,
+    recipient_ciphertext VARBINARY(255) NULL,
+    recipient_fingerprint CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
     customer_id BIGINT UNSIGNED NULL,
     telegram_link_id BIGINT UNSIGNED NULL,
     idempotency_key VARCHAR(191) NULL,
@@ -466,6 +469,7 @@ CREATE TABLE notifications (
     KEY idx_notifications_recipient_created (recipient_phone,created_at),
     KEY idx_notifications_class_status (message_class,status),
     KEY idx_notifications_customer (customer_id,created_at),
+    KEY idx_notifications_recipient_fingerprint (recipient_fingerprint, created_at),
     CONSTRAINT fk_notifications_customer FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON DELETE RESTRICT,
     CONSTRAINT fk_notifications_telegram_link FOREIGN KEY (telegram_link_id) REFERENCES customer_telegram_links(link_id) ON DELETE RESTRICT,
     CONSTRAINT chk_notifications_telegram_link CHECK (channel <> 'telegram' OR telegram_link_id IS NOT NULL)
@@ -478,11 +482,14 @@ CREATE TABLE inbound_sms_events (
     raw_payload MEDIUMTEXT NOT NULL,
     received_at DATETIME(6) NOT NULL,
     sender_number VARCHAR(20) NOT NULL,
+    sender_ciphertext VARBINARY(255) NULL,
+    sender_fingerprint CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
     event_type VARCHAR(40) NOT NULL,
     message_text TEXT NULL,
     PRIMARY KEY (id),
     UNIQUE KEY uq_inbound_sms_provider_message_id (provider_message_id),
-    KEY idx_inbound_sms_sender_type (sender_number,event_type,received_at)
+    KEY idx_inbound_sms_sender_type (sender_number,event_type,received_at),
+    KEY idx_inbound_sms_sender_fingerprint (sender_fingerprint, event_type, received_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- The text of each policy a customer can be asked to accept, one row per version, never edited.
@@ -512,6 +519,8 @@ INSERT INTO rules_versions (rules_key, version_number, title, body) VALUES
 CREATE TABLE rules_acceptances (
     acceptance_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     phone VARCHAR(20) NOT NULL,
+    phone_ciphertext VARBINARY(255) NULL,
+    phone_fingerprint CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
     action ENUM('revoked','accepted') NOT NULL DEFAULT 'revoked',
     rules_version_id BIGINT UNSIGNED NULL,
     agreement_id BIGINT UNSIGNED NULL,
@@ -525,6 +534,7 @@ CREATE TABLE rules_acceptances (
     UNIQUE KEY uq_rules_event (inbound_sms_event_id),
     UNIQUE KEY uq_rules_acceptance_agreement_version (agreement_id,rules_version_id),
     KEY idx_rules_phone_action (phone,action,recorded_at),
+    KEY idx_rules_phone_fingerprint (phone_fingerprint, action, recorded_at),
     CONSTRAINT fk_rules_inbound_event FOREIGN KEY (inbound_sms_event_id) REFERENCES inbound_sms_events(id) ON DELETE RESTRICT,
     CONSTRAINT fk_rules_acceptance_version FOREIGN KEY (rules_version_id) REFERENCES rules_versions(rules_version_id) ON DELETE RESTRICT,
     CONSTRAINT fk_rules_acceptance_agreement FOREIGN KEY (agreement_id) REFERENCES rental_agreements(agreement_id) ON DELETE RESTRICT,
@@ -721,7 +731,15 @@ ALTER TABLE rental_charges
 -- ==========================================
 
 DELIMITER $$
-CREATE TRIGGER inbound_sms_events_no_update BEFORE UPDATE ON inbound_sms_events FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='inbound_sms_events is append-only'; END$$
+CREATE TRIGGER inbound_sms_events_no_update BEFORE UPDATE ON inbound_sms_events FOR EACH ROW
+BEGIN
+    -- Only sealing an unsealed row: the sender and the stored payload become their redacted forms.
+    IF NOT (OLD.sender_fingerprint IS NULL AND NEW.sender_fingerprint IS NOT NULL AND NEW.sender_ciphertext IS NOT NULL
+        AND NEW.id <=> OLD.id AND NEW.provider_message_id <=> OLD.provider_message_id AND NEW.provider <=> OLD.provider
+        AND NEW.received_at <=> OLD.received_at AND NEW.event_type <=> OLD.event_type AND NEW.message_text <=> OLD.message_text) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='inbound_sms_events is append-only';
+    END IF;
+END$$
 CREATE TRIGGER inbound_sms_events_no_delete BEFORE DELETE ON inbound_sms_events FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='inbound_sms_events is append-only'; END$$
 CREATE TRIGGER security_logs_no_update BEFORE UPDATE ON security_logs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='security_logs is append-only'; END$$
 CREATE TRIGGER security_logs_no_delete BEFORE DELETE ON security_logs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='security_logs is append-only'; END$$
@@ -745,7 +763,17 @@ CREATE TRIGGER customer_identity_document_audit_logs_no_update BEFORE UPDATE ON 
 CREATE TRIGGER customer_identity_document_audit_logs_no_delete BEFORE DELETE ON customer_identity_document_audit_logs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='customer_identity_document_audit_logs is append-only'; END$$
 CREATE TRIGGER rental_charges_no_update BEFORE UPDATE ON rental_charges FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='rental_charges is append-only; record a reversal'; END$$
 CREATE TRIGGER rental_charges_no_delete BEFORE DELETE ON rental_charges FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='rental_charges is append-only'; END$$
-CREATE TRIGGER rules_acceptances_no_update BEFORE UPDATE ON rules_acceptances FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='rules_acceptances is append-only'; END$$
+CREATE TRIGGER rules_acceptances_no_update BEFORE UPDATE ON rules_acceptances FOR EACH ROW
+BEGIN
+    -- Only sealing an unsealed row: the phone becomes its masked form.
+    IF NOT (OLD.phone_fingerprint IS NULL AND NEW.phone_fingerprint IS NOT NULL AND NEW.phone_ciphertext IS NOT NULL
+        AND NEW.acceptance_id <=> OLD.acceptance_id AND NEW.action <=> OLD.action AND NEW.rules_version_id <=> OLD.rules_version_id
+        AND NEW.agreement_id <=> OLD.agreement_id AND NEW.inbound_sms_event_id <=> OLD.inbound_sms_event_id
+        AND NEW.provider_message_id <=> OLD.provider_message_id AND NEW.ip_address <=> OLD.ip_address
+        AND NEW.user_agent <=> OLD.user_agent AND NEW.recorded_at <=> OLD.recorded_at) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='rules_acceptances is append-only';
+    END IF;
+END$$
 CREATE TRIGGER rules_acceptances_no_delete BEFORE DELETE ON rules_acceptances FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='rules_acceptances is append-only'; END$$
 CREATE TRIGGER rental_agreements_identity_immutable BEFORE UPDATE ON rental_agreements FOR EACH ROW
 BEGIN
@@ -1006,4 +1034,5 @@ INSERT INTO schema_migrations (migration,checksum) VALUES
 ('022_remove_maintenance_and_roles.sql','15a6c63e07256e5a41fc1a3b21baeefadb43cccc4afe9518b03320f32d0b1777'),
 ('023_booking_guards.sql','11ca84b8ee68bfb9d97d6cf74d8756f19c41fae7f5b6b69449d4bc3da0c344d2'),
 ('024_chauffeur_rate_on_agreement.sql','e71900a8b17b8500f848668780ea2d4e7dfe764d5ba8391428663c7f96f3bbeb'),
-('025_record_lifecycle_logs.sql','3cd877a9934c931eeae6ccfb3888f9a1f08d0fe7d541dc7998604e163e09ecab');
+('025_record_lifecycle_logs.sql','3cd877a9934c931eeae6ccfb3888f9a1f08d0fe7d541dc7998604e163e09ecab'),
+('026_sealed_phone_numbers.sql','8f41d7f00365d3b6fae9b5e415529ce010fa40e3fdc4aca212e4afb0758608c5');

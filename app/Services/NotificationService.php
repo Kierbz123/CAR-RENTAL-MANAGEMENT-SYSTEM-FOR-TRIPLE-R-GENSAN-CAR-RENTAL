@@ -15,6 +15,8 @@ use TripleR\Support\PhoneNumber;
 
 final class NotificationService
 {
+    private ?PhoneVault $vault = null;
+
     public function __construct(
         private readonly NotificationRepository $notifications,
         private readonly InboundSmsEventRepository $inboundEvents,
@@ -141,7 +143,7 @@ final class NotificationService
             try {
                 $provider = SmsProviderFactory::create((string) $item['provider']);
                 if ($item['message_class'] === 'non_transactional') {
-                    $hasStopped = $this->hasStop((string) $item['recipient_phone']);
+                    $hasStopped = $this->hasStop($this->recipientOf($item));
                     $reason = $hasStopped ? 'Suppressed by recorded STOP event' : 'Suppressed by policy: affirmative SMS opt-in capture is not available';
                     if ($this->notifications->markSuppressedByPolicy($id, $token, $reason)) {
                         $result['suppressed']++;
@@ -151,7 +153,7 @@ final class NotificationService
                 try {
                     $message = $this->messageCipher->decrypt(
                         (string) $item['rendered_message'],
-                        SmsMessageCipher::context((string) $item['recipient_phone'], (string) $item['template_key']),
+                        SmsMessageCipher::context($this->recipientOf($item), (string) $item['template_key']),
                     );
                 } catch (\Throwable $error) {
                     error_log('Encrypted SMS could not be decrypted for notification ' . $id . ': ' . get_class($error));
@@ -167,7 +169,7 @@ final class NotificationService
                     }
                     continue;
                 }
-                $recipient = (string) $item['recipient_phone'];
+                $recipient = $this->recipientOf($item);
                 if ($viaTelegram) {
                     $chatId = $this->telegram?->chatIdForLink($linkId);
                     if ($chatId === null) {
@@ -237,6 +239,13 @@ final class NotificationService
             if($entry['idempotency_key']!==null){$existing=$this->notifications->findByIdempotencyKey($entry['idempotency_key']);if($existing!==null){$this->notifications->commit();return $existing;}}
             $id=$this->notifications->insertSuppressedByPolicy($entry);$this->notifications->commit();return $id;
         }catch(\Throwable $e){$this->notifications->rollback();if($e instanceof PDOException&&(int)($e->errorInfo[1]??0)===1062&&$entry['idempotency_key']!==null){$existing=$this->notifications->findByIdempotencyKey($entry['idempotency_key']);if($existing!==null)return $existing;}throw $e;}
+    }
+
+    /** The real number of a queued row: sealed rows (migration 026) are decrypted, older rows hold it plainly. */
+    private function recipientOf(array $item): string
+    {
+        $this->vault ??= new PhoneVault();
+        return $this->vault->numberOf($item['recipient_ciphertext'] ?? null, (string) $item['recipient_phone']);
     }
 
     private function hasStop(string $phone): bool

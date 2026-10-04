@@ -78,10 +78,10 @@ $book = static function (array $input, string $ip) use ($bookings): string {
 };
 $textedCode = static function (string $number) use ($db): string {
     $normalized = PhoneNumber::normalize($number);
-    $row = $db->prepare("SELECT recipient_phone, template_key, rendered_message FROM notifications WHERE recipient_phone = :phone AND template_key = 'booking.verify_code' ORDER BY id DESC LIMIT 1");
-    $row->execute(['phone' => $normalized]);
+    $row = $db->prepare("SELECT recipient_phone, recipient_ciphertext, template_key, rendered_message FROM notifications WHERE recipient_fingerprint = :fingerprint AND template_key = 'booking.verify_code' ORDER BY id DESC LIMIT 1");
+    $row->execute(['fingerprint' => (new \TripleR\Services\PhoneVault())->fingerprint($normalized)]);
     $sms = $row->fetch();
-    $text = (new SmsMessageCipher())->decrypt((string) $sms['rendered_message'], SmsMessageCipher::context((string) $sms['recipient_phone'], 'booking.verify_code'));
+    $text = (new SmsMessageCipher())->decrypt((string) $sms['rendered_message'], SmsMessageCipher::context((new \TripleR\Services\PhoneVault())->numberOf($sms['recipient_ciphertext'] ?? null, (string) $sms['recipient_phone']), 'booking.verify_code'));
     preg_match('/\b(\d{6})\b/', $text, $match);
     return $match[1] ?? '';
 };

@@ -9,7 +9,7 @@ use TripleR\Http\Response;
 use TripleR\Http\AuthMiddleware;
 use TripleR\Repositories\NotificationRepository;
 use TripleR\Security\Csrf;
-use TripleR\Services\CustomerPiiCipher;
+use TripleR\Services\PhoneVault;
 use TripleR\Services\SmsMessageCipher;
 
 final class StaffNotificationController
@@ -42,16 +42,21 @@ final class StaffNotificationController
         $limit = $limit === false ? 50 : max(1, min(200, $limit));
         // Customer numbers are shown in full only to roles that may reveal customer contacts.
         $fullNumbers = in_array($user['role'], CustomerController::REVEAL_ROLES, true);
-        $history = array_map(function (array $item) use ($fullNumbers): array {
+        $vault = new PhoneVault();
+        $history = array_map(function (array $item) use ($fullNumbers, $vault): array {
+            // Numbers are stored sealed (migration 026); older rows still hold them plainly.
+            try {
+                $number = $vault->numberOf($item['recipient_ciphertext'] ?? null, (string) $item['recipient_phone']);
+            } catch (\Throwable) {
+                $number = (string) $item['recipient_phone'];
+            }
             $item['message_preview'] = $this->messageCipher->staffPreview(
                 (string) $item['rendered_message'],
                 (string) $item['template_key'],
-                (string) $item['recipient_phone'],
+                $number,
             );
-            unset($item['rendered_message']);
-            if (!$fullNumbers) {
-                $item['recipient_phone'] = CustomerPiiCipher::mask('phone', (string) $item['recipient_phone']);
-            }
+            unset($item['rendered_message'], $item['recipient_ciphertext']);
+            $item['recipient_phone'] = $fullNumbers ? $number : PhoneVault::mask($number);
             return $item;
         }, $this->notifications->history($limit));
         return Response::json([

@@ -4,11 +4,20 @@ declare(strict_types=1);
 namespace TripleR\Repositories;
 
 use PDO;
+use TripleR\Services\PhoneVault;
 
 final class NotificationRepository
 {
+    private ?PhoneVault $vault = null;
+
     public function __construct(private readonly PDO $db)
     {
+    }
+
+    /** The number is stored sealed (migration 026); the vault is made on first use, so reading needs no key. */
+    private function vault(): PhoneVault
+    {
+        return $this->vault ??= new PhoneVault();
     }
 
     public function begin(): void
@@ -38,30 +47,33 @@ final class NotificationRepository
 
     public function lockDailyBudget(string $phone, string $budgetDate): int
     {
-        // The day's count for one phone is a rate_counters row keyed "<phone>|<date>".
+        // The day's count for one phone is a rate_counters row keyed "<phone fingerprint>|<date>".
         $insert = $this->db->prepare("INSERT IGNORE INTO rate_counters (scope, counter_key, window_started_at, hits) VALUES ('message_daily', :key, :day, 0)");
-        $insert->execute(['key' => self::dailyBudgetKey($phone, $budgetDate), 'day' => $budgetDate . ' 00:00:00']);
+        $insert->execute(['key' => $this->dailyBudgetKey($phone, $budgetDate), 'day' => $budgetDate . ' 00:00:00']);
         $select = $this->db->prepare("SELECT hits FROM rate_counters WHERE scope = 'message_daily' AND counter_key = :key FOR UPDATE");
-        $select->execute(['key' => self::dailyBudgetKey($phone, $budgetDate)]);
+        $select->execute(['key' => $this->dailyBudgetKey($phone, $budgetDate)]);
         return (int) $select->fetchColumn();
     }
 
     public function incrementDailyBudget(string $phone, string $budgetDate): void
     {
         $statement = $this->db->prepare("UPDATE rate_counters SET hits = hits + 1 WHERE scope = 'message_daily' AND counter_key = :key");
-        $statement->execute(['key' => self::dailyBudgetKey($phone, $budgetDate)]);
+        $statement->execute(['key' => $this->dailyBudgetKey($phone, $budgetDate)]);
     }
 
-    private static function dailyBudgetKey(string $phone, string $budgetDate): string
+    private function dailyBudgetKey(string $phone, string $budgetDate): string
     {
-        return $phone . '|' . $budgetDate;
+        return $this->vault()->fingerprint($phone) . '|' . $budgetDate;
     }
 
     public function insertQueued(array $message, int $maxAttempts): int
     {
-        $statement = $this->db->prepare('INSERT INTO notifications (recipient_phone, customer_id, telegram_link_id, idempotency_key, channel, template_key, rendered_message, message_class, provider, status, priority, max_attempts) VALUES (:phone, :customer_id, :telegram_link_id, :idempotency_key, :channel, :template, :body, :class, :provider, \'queued\', :priority, :max_attempts)');
+        $stored = $this->vault()->store($message['recipient_phone']);
+        $statement = $this->db->prepare('INSERT INTO notifications (recipient_phone, recipient_ciphertext, recipient_fingerprint, customer_id, telegram_link_id, idempotency_key, channel, template_key, rendered_message, message_class, provider, status, priority, max_attempts) VALUES (:phone, :phone_cipher, :phone_fingerprint, :customer_id, :telegram_link_id, :idempotency_key, :channel, :template, :body, :class, :provider, \'queued\', :priority, :max_attempts)');
         $statement->execute([
-            'phone' => $message['recipient_phone'],
+            'phone' => $stored['masked'],
+            'phone_cipher' => $stored['ciphertext'],
+            'phone_fingerprint' => $stored['fingerprint'],
             'customer_id' => $message['customer_id'] ?? null,
             'telegram_link_id' => $message['telegram_link_id'] ?? null,
             'channel' => $message['channel'] ?? 'sms',
@@ -80,9 +92,10 @@ final class NotificationRepository
 
     public function insertSuppressedByPolicy(array $message): int
     {
-        $statement=$this->db->prepare("INSERT INTO notifications (recipient_phone,customer_id,telegram_link_id,idempotency_key,channel,template_key,rendered_message,message_class,provider,status,priority,max_attempts,last_error) VALUES (:phone,:customer_id,:telegram_link_id,:idempotency_key,:channel,:template,:body,:class,:provider,'suppressed_by_policy',:priority,0,:reason)");
+        $stored=$this->vault()->store($message['recipient_phone']);
+        $statement=$this->db->prepare("INSERT INTO notifications (recipient_phone,recipient_ciphertext,recipient_fingerprint,customer_id,telegram_link_id,idempotency_key,channel,template_key,rendered_message,message_class,provider,status,priority,max_attempts,last_error) VALUES (:phone,:phone_cipher,:phone_fingerprint,:customer_id,:telegram_link_id,:idempotency_key,:channel,:template,:body,:class,:provider,'suppressed_by_policy',:priority,0,:reason)");
         $body=$message['encrypt_at_rest']?(new \TripleR\Services\SmsMessageCipher())->encrypt($message['message'],\TripleR\Services\SmsMessageCipher::context($message['recipient_phone'],$message['template_key'])):$message['message'];
-        $statement->execute(['phone'=>$message['recipient_phone'],'customer_id'=>$message['customer_id']??null,'telegram_link_id'=>$message['telegram_link_id']??null,'channel'=>$message['channel']??'sms','idempotency_key'=>$message['idempotency_key'],'template'=>$message['template_key'],'body'=>$body,'class'=>$message['message_class'],'provider'=>$message['provider'],'priority'=>$message['priority'],'reason'=>substr((string)$message['suppression_reason'],0,512)]);
+        $statement->execute(['phone'=>$stored['masked'],'phone_cipher'=>$stored['ciphertext'],'phone_fingerprint'=>$stored['fingerprint'],'customer_id'=>$message['customer_id']??null,'telegram_link_id'=>$message['telegram_link_id']??null,'channel'=>$message['channel']??'sms','idempotency_key'=>$message['idempotency_key'],'template'=>$message['template_key'],'body'=>$body,'class'=>$message['message_class'],'provider'=>$message['provider'],'priority'=>$message['priority'],'reason'=>substr((string)$message['suppression_reason'],0,512)]);
         return (int)$this->db->lastInsertId();
     }
 
@@ -91,7 +104,7 @@ final class NotificationRepository
         $limit = max(1, min(100, $limit));
         $this->db->beginTransaction();
         try {
-            $select = $this->db->query("SELECT id, recipient_phone, channel, telegram_link_id, template_key, rendered_message, message_class, provider, priority, attempt_count, max_attempts FROM notifications WHERE status = 'queued' AND next_attempt_at <= UTC_TIMESTAMP() ORDER BY CASE priority WHEN 'high' THEN 0 ELSE 1 END, created_at ASC LIMIT {$limit} FOR UPDATE SKIP LOCKED");
+            $select = $this->db->query("SELECT id, recipient_phone, recipient_ciphertext, channel, telegram_link_id, template_key, rendered_message, message_class, provider, priority, attempt_count, max_attempts FROM notifications WHERE status = 'queued' AND next_attempt_at <= UTC_TIMESTAMP() ORDER BY CASE priority WHEN 'high' THEN 0 ELSE 1 END, created_at ASC LIMIT {$limit} FOR UPDATE SKIP LOCKED");
             $rows = $select->fetchAll();
             $claim = $this->db->prepare("UPDATE notifications SET status = 'sending', claim_token = :token, claimed_at = UTC_TIMESTAMP(), attempt_count = attempt_count + 1 WHERE id = :id AND status = 'queued'");
             $claimed = [];
@@ -189,7 +202,7 @@ final class NotificationRepository
     public function history(int $limit): array
     {
         $limit = max(1, min(200, $limit));
-        $statement = $this->db->query("SELECT id, recipient_phone, channel, template_key, rendered_message, message_class, provider, status, priority, provider_status, attempt_count, retry_count, last_error, created_at, sent_at FROM notifications ORDER BY created_at DESC, id DESC LIMIT {$limit}");
+        $statement = $this->db->query("SELECT id, recipient_phone, recipient_ciphertext, channel, template_key, rendered_message, message_class, provider, status, priority, provider_status, attempt_count, retry_count, last_error, created_at, sent_at FROM notifications ORDER BY created_at DESC, id DESC LIMIT {$limit}");
         return $statement->fetchAll();
     }
 

@@ -107,10 +107,10 @@ $check($row($b)['downpayment_status'] === 'due', 'the second booking stays unpai
 echo "\n== Confirming, and what the customer is told\n";
 $rentals->transition($a, 'confirm', $actor);
 $check($row($a)['status'] === 'confirmed', 'with the downpayment recorded, the reservation is confirmed');
-$message = $db->prepare("SELECT recipient_phone, template_key, rendered_message, channel FROM notifications WHERE idempotency_key = :key");
+$message = $db->prepare("SELECT recipient_phone, recipient_ciphertext, template_key, rendered_message, channel FROM notifications WHERE idempotency_key = :key");
 $message->execute(['key' => 'rental-' . $a . '-confirmed']);
 $queued = $message->fetch();
-$text = $queued ? (new SmsMessageCipher())->decrypt((string) $queued['rendered_message'], SmsMessageCipher::context((string) $queued['recipient_phone'], (string) $queued['template_key'])) : '';
+$text = $queued ? (new SmsMessageCipher())->decrypt((string) $queued['rendered_message'], SmsMessageCipher::context((new \TripleR\Services\PhoneVault())->numberOf($queued['recipient_ciphertext'] ?? null, (string) $queued['recipient_phone']), (string) $queued['template_key'])) : '';
 $check($text === 'Your Triple R Gensan rental is confirmed. Agreement #' . $a . '. Downpayment received: ₱3,000. Balance of ₱7,000 is due at pickup.', 'the confirmation message states the downpayment received and the balance due at pickup', $text);
 
 echo "\n== The hold, and what a payment does to it\n";

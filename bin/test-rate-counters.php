@@ -64,7 +64,10 @@ $nextDay = $notifications->lockDailyBudget($phone, $tomorrow);
 $db->commit();
 $check($before === 0 && $after === 2, 'a phone starts the day at zero and each message adds one');
 $check($nextDay === 0, 'the next day has its own count');
-$check($counter('message_daily', $phone . '|' . $today) === 2 && $counter('message_daily', $phone . '|' . $tomorrow) === 0, 'each day is one rate_counters row keyed by phone and date');
+// Keyed by the number's fingerprint, never the number itself (migration 026).
+$fingerprint = (new \TripleR\Services\PhoneVault())->fingerprint($phone);
+$check($counter('message_daily', $fingerprint . '|' . $today) === 2 && $counter('message_daily', $fingerprint . '|' . $tomorrow) === 0, 'each day is one rate_counters row keyed by the number\'s fingerprint and date');
+$check($counter('message_daily', $phone . '|' . $today) === null, 'the number itself is not stored in the counter key');
 
 echo "\n== Secure links per booking\n";
 $agreementId = (int) $db->query('SELECT MAX(agreement_id) FROM rental_agreements')->fetchColumn();

@@ -180,6 +180,8 @@ For rotation, pause the worker, set the new `SMS_CIPHER_KEY` and the former key 
 
 The token and append-only usage schema is defined in `database/migrations/002_magic_links.sql`; Feature E's notification schema remains in `001_notifications.sql`.
 
+
+**Mobile numbers in the SMS and consent records.** The SMS queue (`notifications`), the inbound SMS ledger (`inbound_sms_events`) and the consent ledger (`rules_acceptances`) do not keep mobile numbers in plain text (migration 026). Each row holds the number masked ("••••4567"), encrypted with `CUSTOMER_PII_KEY` and as a keyed fingerprint (the same one `customer_contacts` uses); an inbound payload is stored with its number fields masked. The daily SMS limit and STOP replies are matched by fingerprint; the worker decrypts the number only to send. The staff SMS history shows full numbers only to the roles that may see customer contacts. After migrating an existing installation, run `php bin/seal-phone-numbers.php` once to seal the rows written before 026 (the application reads both kinds until then). The two ledgers stay append-only: their guards allow exactly that one sealing of a row and nothing else. `php bin/test-sealed-phones.php` checks all of this.
 ## Worker schedule and duplicate protection
 
 Run the queue worker every minute. Linux/macOS crontab (replace project and PHP paths):

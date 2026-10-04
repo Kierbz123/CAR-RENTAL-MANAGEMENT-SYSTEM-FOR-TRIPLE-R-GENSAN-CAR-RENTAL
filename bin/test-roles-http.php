@@ -434,8 +434,8 @@ $link = submit($as('front_desk'), $frontDetail['body'], '/rentals/link', ['agree
 check($link['status'] === 303, 'front desk sends the customer booking link', 'HTTP ' . $link['status']);
 
 // The customer's side: the link in the queued SMS opens the booking, once.
-$sms = $db->query("SELECT recipient_phone, template_key, rendered_message FROM notifications WHERE idempotency_key LIKE 'magic-link:%' ORDER BY id DESC LIMIT 1")->fetch();
-$smsText = $sms ? (new SmsMessageCipher())->decrypt((string) $sms['rendered_message'], SmsMessageCipher::context((string) $sms['recipient_phone'], (string) $sms['template_key'])) : '';
+$sms = $db->query("SELECT recipient_phone, recipient_ciphertext, template_key, rendered_message FROM notifications WHERE idempotency_key LIKE 'magic-link:%' ORDER BY id DESC LIMIT 1")->fetch();
+$smsText = $sms ? (new SmsMessageCipher())->decrypt((string) $sms['rendered_message'], SmsMessageCipher::context((new \TripleR\Services\PhoneVault())->numberOf($sms['recipient_ciphertext'] ?? null, (string) $sms['recipient_phone']), (string) $sms['template_key'])) : '';
 if (check(preg_match('/#token=([A-Za-z0-9_-]{43})&purpose=([a-z_]+)/', $smsText, $linkParts) === 1, 'the queued SMS carries a secure booking link')) {
     // The server only accepts redemption from its own configured origin (APP_BASE_URL).
     $origin = preg_replace('#^(https?://[^/]+).*$#', '$1', Config::require('APP_BASE_URL'));
@@ -464,8 +464,8 @@ if (check(preg_match('/#token=([A-Za-z0-9_-]{43})&purpose=([a-z_]+)/', $smsText,
 }
 $confirmed = submit($as('front_desk'), $frontDetail['body'], '/rentals/action', [], ['action' => 'confirm', 'agreement_id' => (string) $agreementId], 'confirm');
 check((string) $db->query('SELECT status FROM rental_agreements WHERE agreement_id=' . $agreementId)->fetchColumn() === 'confirmed', 'front desk confirms the reservation once a driver is assigned');
-$confirmation = $db->query("SELECT recipient_phone, template_key, rendered_message FROM notifications WHERE idempotency_key = 'rental-{$agreementId}-confirmed'")->fetch();
-$confirmationText = $confirmation ? (new SmsMessageCipher())->decrypt((string) $confirmation['rendered_message'], SmsMessageCipher::context((string) $confirmation['recipient_phone'], (string) $confirmation['template_key'])) : '';
+$confirmation = $db->query("SELECT recipient_phone, recipient_ciphertext, template_key, rendered_message FROM notifications WHERE idempotency_key = 'rental-{$agreementId}-confirmed'")->fetch();
+$confirmationText = $confirmation ? (new SmsMessageCipher())->decrypt((string) $confirmation['rendered_message'], SmsMessageCipher::context((new \TripleR\Services\PhoneVault())->numberOf($confirmation['recipient_ciphertext'] ?? null, (string) $confirmation['recipient_phone']), (string) $confirmation['template_key'])) : '';
 check(preg_match('/Downpayment received: ₱[\d,.]+\. Balance of ₱[\d,.]+ is due at pickup\./u', $confirmationText) === 1, 'the confirmation message states the downpayment received and the balance due at pickup', $confirmationText);
 check((string) $db->query('SELECT current_status FROM vehicles WHERE vehicle_id=' . $vehicleId)->fetchColumn() === 'reserved', 'the vehicle shows as reserved');
 
@@ -610,10 +610,10 @@ $refusedSql = static function (string $sql, string $needle, string $label) use (
     }
 };
 $queuedText = static function (string $idempotencyKey) use ($db): string {
-    $q = $db->prepare('SELECT recipient_phone, template_key, rendered_message FROM notifications WHERE idempotency_key = :key');
+    $q = $db->prepare('SELECT recipient_phone, recipient_ciphertext, template_key, rendered_message FROM notifications WHERE idempotency_key = :key');
     $q->execute(['key' => $idempotencyKey]);
     $row = $q->fetch();
-    return $row ? (new SmsMessageCipher())->decrypt((string) $row['rendered_message'], SmsMessageCipher::context((string) $row['recipient_phone'], (string) $row['template_key'])) : '';
+    return $row ? (new SmsMessageCipher())->decrypt((string) $row['rendered_message'], SmsMessageCipher::context((new \TripleR\Services\PhoneVault())->numberOf($row['recipient_ciphertext'] ?? null, (string) $row['recipient_phone']), (string) $row['template_key'])) : '';
 };
 
 $shopper = client();
