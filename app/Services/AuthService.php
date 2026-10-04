@@ -13,6 +13,12 @@ use TripleR\Security\Csrf;
 
 final class AuthService
 {
+    /**
+     * Checked against when the email is unknown, so an unknown email takes as long to refuse as a
+     * wrong password and response times do not reveal which emails are staff accounts.
+     */
+    private const TIMING_HASH = '$2y$10$heiB6L.dZ4yr6pCRyDGIN.fuxAjoCdoIhHWz5In3K2Lq9cYm/ajhm';
+
     public function __construct(
         private readonly PDO $db,
         private readonly StaffUserRepository $users,
@@ -36,15 +42,24 @@ final class AuthService
         try {
             $user = $this->users->findActiveByEmailForUpdate($email);
             if ($user === null) {
+                password_verify($password, self::TIMING_HASH);
                 $this->securityLogs->append('login_failed', null, $email, $ip, $userAgent);
                 $this->db->commit();
                 return 'failed';
             }
             $userId = (int) $user['id'];
             if ($user['locked_at'] !== null) {
-                $this->securityLogs->append('login_locked', $userId, $email, $ip, $userAgent);
-                $this->db->commit();
-                return 'failed';
+                // A lock lasts AUTH_LOCKOUT_MINUTES (15) and then lifts by itself, so a stranger who
+                // knows a staff email cannot keep the account shut. 0 keeps it until an admin unlocks.
+                if (!$this->lockHasLapsed((string) $user['locked_at'])) {
+                    password_verify($password, self::TIMING_HASH);
+                    $this->securityLogs->append('login_locked', $userId, $email, $ip, $userAgent);
+                    $this->db->commit();
+                    // The same answer as a wrong password, so a lock does not confirm the account exists.
+                    return 'failed';
+                }
+                $this->users->unlock($userId);
+                $this->securityLogs->append('account_lock_expired', $userId, $email, $ip, $userAgent);
             }
             if (!password_verify($password, (string) $user['password_hash'])) {
                 $threshold = max(1, Config::int('AUTH_MAX_FAILED_LOGINS', 5));
@@ -79,6 +94,16 @@ final class AuthService
             }
             throw $error;
         }
+    }
+
+    private function lockHasLapsed(string $lockedAt): bool
+    {
+        $minutes = Config::int('AUTH_LOCKOUT_MINUTES', 15);
+        if ($minutes === 0) {
+            return false;
+        }
+        $utc = new \DateTimeZone('UTC');
+        return (new \DateTimeImmutable($lockedAt, $utc))->modify('+' . $minutes . ' minutes') <= new \DateTimeImmutable('now', $utc);
     }
 
     public function currentUser(): ?array

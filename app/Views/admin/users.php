@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+use TripleR\Config;
+use TripleR\Support\Format;
 use TripleR\Support\Pager;
 use TripleR\Support\StatusPresenter as Status;
 use TripleR\Support\View;
@@ -8,6 +10,15 @@ use TripleR\Support\View;
 $e = static fn (mixed $value): string => View::e($value);
 $roles = ['system_admin', 'fleet_manager', 'front_desk', 'driver_coordinator', 'finance_staff'];
 $pager = new Pager($users);
+// When a lock lifts by itself (AUTH_LOCKOUT_MINUTES; 0 means only an administrator can lift it).
+$lockMinutes = Config::int('AUTH_LOCKOUT_MINUTES', 15);
+$lockLabel = static function (string $lockedAt) use ($lockMinutes): ?string {
+    if ($lockMinutes === 0) {
+        return 'Locked';
+    }
+    $until = (new DateTimeImmutable($lockedAt, new DateTimeZone('UTC')))->modify('+' . $lockMinutes . ' minutes');
+    return $until > new DateTimeImmutable('now', new DateTimeZone('UTC')) ? 'Locked until ' . Format::time($until->format('Y-m-d H:i:s')) : null;
+};
 
 View::begin('staff', ['title' => 'Staff accounts', 'crumbs' => [['Administration', null], ['Staff accounts', null]]]);
 ?>
@@ -76,7 +87,7 @@ View::begin('staff', ['title' => 'Staff accounts', 'crumbs' => [['Administration
                     </td>
                     <td>
                         <span class="badge <?= $active ? 'badge-success' : 'badge-neutral' ?>"><?= $active ? 'Active' : 'Deactivated' ?></span>
-<?php if ($staffUser['locked_at'] !== null): ?> <span class="badge badge-danger">Locked</span><?php endif; ?>
+<?php if ($staffUser['locked_at'] !== null && ($label = $lockLabel((string) $staffUser['locked_at'])) !== null): ?> <span class="badge badge-danger"><?= $e($label) ?></span><?php endif; ?>
 <?php if ($staffUser['must_change_password']): ?> <span class="badge badge-warning">Must change password</span><?php endif; ?>
                     </td>
                     <td class="num"><?= (int) $staffUser['failed_login_count'] ?></td>

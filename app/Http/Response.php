@@ -69,6 +69,11 @@ final class Response
         }
         header('X-Content-Type-Options: nosniff');
         header('Referrer-Policy: same-origin');
+        // Only the tracker phone page needs location; nothing on the site uses the camera or microphone.
+        header('Permissions-Policy: camera=(), microphone=(), payment=(), usb=(), geolocation=(self)');
+        if (TrustedProxy::isHttps($_SERVER)) {
+            header('Strict-Transport-Security: max-age=31536000');
+        }
         // No page uses inline scripts or inline style attributes, so neither is allowed.
         header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; " . ($imageOrigin === null ? '' : "img-src 'self' " . $imageOrigin . '; ') . "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
         echo $this->body;

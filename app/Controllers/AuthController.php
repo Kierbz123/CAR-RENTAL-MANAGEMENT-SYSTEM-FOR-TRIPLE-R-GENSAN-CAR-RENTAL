@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace TripleR\Controllers;
 
+use TripleR\Config;
 use TripleR\Http\Request;
 use TripleR\Http\Response;
 use TripleR\Services\AuthService;
@@ -41,7 +42,7 @@ final class AuthController
             return $this->render('login.php', ['csrfToken' => Csrf::token(), 'error' => 'Too many attempts. Wait a minute and try again.'], 429);
         }
         if ($result === 'failed') {
-            return $this->render('login.php', ['csrfToken' => Csrf::token(), 'error' => 'Email or password is incorrect.'], 401);
+            return $this->render('login.php', ['csrfToken' => Csrf::token(), 'error' => self::failedMessage()], 401);
         }
         if ($result === 'password_change_required') {
             return Response::redirect('/auth/change-password');
@@ -89,6 +90,15 @@ final class AuthController
         }
         $this->auth->logout($request->ip, $request->userAgent);
         return Response::redirect('/staff/login');
+    }
+
+    /** One message for a wrong password and a locked account alike, saying what happens after repeated tries. */
+    private static function failedMessage(): string
+    {
+        $attempts = max(1, Config::int('AUTH_MAX_FAILED_LOGINS', 5));
+        $minutes = Config::int('AUTH_LOCKOUT_MINUTES', 15);
+        return 'Email or password is incorrect. After ' . $attempts . ' wrong attempts, the account '
+            . ($minutes === 0 ? 'is locked until an administrator unlocks it.' : 'is locked for ' . $minutes . ' minute' . ($minutes === 1 ? '' : 's') . '.');
     }
 
     private function render(string $view, array $data, int $status): Response
