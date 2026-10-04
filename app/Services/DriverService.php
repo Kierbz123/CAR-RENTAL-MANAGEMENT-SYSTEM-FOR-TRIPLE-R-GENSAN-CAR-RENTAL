@@ -8,6 +8,7 @@ use DateTimeZone;
 use PDO;
 use RuntimeException;
 use TripleR\Repositories\DriverRepository;
+use TripleR\Repositories\RecordLifecycleRepository;
 
 final class DriverService
 {
@@ -125,13 +126,41 @@ final class DriverService
         });
     }
 
-    public function softDelete(int $id): void
+    public function softDelete(int $id, ?int $actor = null, ?string $reason = null): void
     {
-        $this->transaction(function() use ($id): void {
+        $reason = $this->lifecycleReason($reason);
+        $this->transaction(function() use ($id, $actor, $reason): void {
             if (!$this->drivers->find($id,true)) throw new RuntimeException('Driver not found.');
             if ($this->drivers->hasOpenAgreement($id)) throw new RuntimeException('Driver has an open rental agreement and cannot be removed.');
             $this->db->prepare('UPDATE drivers SET deleted_at=UTC_TIMESTAMP(6) WHERE driver_id=:id AND deleted_at IS NULL')->execute(['id'=>$id]);
+            if ($actor !== null) (new RecordLifecycleRepository($this->db))->append('driver', $id, 'removed', $reason, $actor);
         });
+    }
+
+    /** Brings a removed driver back into every list with the status they had. */
+    public function restore(int $id, int $actor, ?string $reason = null): void
+    {
+        $reason = $this->lifecycleReason($reason);
+        $this->transaction(function() use ($id, $actor, $reason): void {
+            $driver = $this->drivers->find($id, true, true);
+            if (!$driver) throw new RuntimeException('Driver not found.');
+            if ($driver['deleted_at'] === null) throw new RuntimeException('This driver is not removed.');
+            $this->db->prepare('UPDATE drivers SET deleted_at=NULL WHERE driver_id=:id AND deleted_at IS NOT NULL')->execute(['id'=>$id]);
+            (new RecordLifecycleRepository($this->db))->append('driver', $id, 'restored', $reason, $actor);
+        });
+    }
+
+    /** Removals and restorations of this record, newest first. */
+    public function lifecycleHistory(int $id): array
+    {
+        return (new RecordLifecycleRepository($this->db))->history('driver', $id);
+    }
+
+    private function lifecycleReason(?string $reason): ?string
+    {
+        $reason = trim((string) $reason);
+        if (mb_strlen($reason) > 500) throw new RuntimeException('Keep the reason to 500 characters.');
+        return $reason === '' ? null : $reason;
     }
 
     /** Active drivers whose license is valid today and, given a rental's last day, through that day. */

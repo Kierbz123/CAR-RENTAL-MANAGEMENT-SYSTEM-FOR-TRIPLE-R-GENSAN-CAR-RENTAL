@@ -9,7 +9,8 @@ use TripleR\Support\View;
 
 $e = static fn (mixed $value): string => View::e($value);
 $pager = new Pager($customers);
-$filtered = $search !== '' || $type !== '';
+$removed = $removed ?? false;
+$filtered = $search !== '' || $type !== '' || $removed;
 
 View::begin('staff', ['title' => 'Customers', 'crumbs' => [['Customers', null]], 'scripts' => ['customers.js']]);
 ?>
@@ -39,6 +40,13 @@ View::begin('staff', ['title' => 'Customers', 'crumbs' => [['Customers', null]],
 <?php endforeach; ?>
             </select>
         </label>
+        <label class="field">
+            <span class="field-label">Show</span>
+            <select name="show" data-auto-submit>
+                <option value="">Current customers</option>
+                <option value="removed"<?= $removed ? ' selected' : '' ?>>Removed customers</option>
+            </select>
+        </label>
         <button class="button button-secondary" type="submit"><?= Icon::svg('search') ?>Search</button>
 <?php if ($filtered): ?>
         <a class="button button-ghost" href="/customers">Clear</a>
@@ -63,7 +71,7 @@ View::begin('staff', ['title' => 'Customers', 'crumbs' => [['Customers', null]],
                 </tr>
 <?php endforeach; ?>
 <?php if (!$customers): ?>
-                <tr><td class="empty-state" colspan="<?= $telegramOn ? 7 : 6 ?>"><strong>No customers found</strong><?php if ($filtered): ?><a href="/customers">Clear the search</a><?php else: ?>Add the first customer to get started.<?php endif; ?></td></tr>
+                <tr><td class="empty-state" colspan="<?= $telegramOn ? 7 : 6 ?>"><strong><?= $removed ? 'No removed customers' : 'No customers found' ?></strong><?php if ($filtered): ?><a href="/customers">Clear the search</a><?php else: ?>Add the first customer to get started.<?php endif; ?></td></tr>
 <?php endif; ?>
             </tbody>
         </table>

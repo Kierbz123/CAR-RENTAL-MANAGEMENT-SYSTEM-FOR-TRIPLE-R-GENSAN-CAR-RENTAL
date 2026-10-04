@@ -51,7 +51,7 @@ View::begin('staff', ['title' => (string) $customer['full_name'], 'crumbs' => [[
 <p class="callout" role="status"><strong>Blacklisted since <?= $e(Format::datetime($customer['blacklisted_at'])) ?>.</strong> <?= $e($customer['blacklist_reason']) ?></p>
 <?php endif; ?>
 <?php if ($deleted): ?>
-<p class="callout" role="status">This customer was removed on <?= $e(Format::datetime($customer['deleted_at'])) ?>. Past records are kept and can’t be changed.</p>
+<p class="callout" role="status">This customer was removed on <?= $e(Format::datetime($customer['deleted_at'])) ?>. Past records are kept and can’t be changed. To use this record again, restore it below.</p>
 <?php endif; ?>
 
 <div class="split">
@@ -307,11 +307,43 @@ View::begin('staff', ['title' => (string) $customer['full_name'], 'crumbs' => [[
         <section class="panel" aria-labelledby="remove-title">
             <div class="panel-heading"><div><h2 id="remove-title">Remove customer</h2><p>The record is kept for history but leaves every list. A customer with an open agreement can’t be removed.</p></div></div>
             <div class="panel-body">
-                <form method="post" action="/customers/delete" data-confirm="Remove <?= $e($customer['full_name']) ?> from the customer list? Their past rentals stay on record." data-confirm-action="Remove customer">
+                <form method="post" action="/customers/delete" class="stack" data-confirm="Remove <?= $e($customer['full_name']) ?> from the customer list? Their past rentals stay on record." data-confirm-action="Remove customer">
                     <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
                     <input type="hidden" name="customer_id" value="<?= (int) $customer['customer_id'] ?>">
+                    <label class="field"><span class="field-label">Reason <span class="optional">(optional)</span></span><textarea name="reason" maxlength="500" rows="2"></textarea></label>
                     <button class="button button-danger" type="submit">Remove customer</button>
                 </form>
+            </div>
+        </section>
+<?php endif; ?>
+<?php if ($deleted): ?>
+        <section class="panel" aria-labelledby="restore-title">
+            <div class="panel-heading"><div><h2 id="restore-title">Restore customer</h2><p>Puts this customer back in every list, with their history.</p></div></div>
+            <div class="panel-body">
+                <form method="post" action="/customers/restore" class="stack">
+                    <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
+                    <input type="hidden" name="customer_id" value="<?= (int) $customer['customer_id'] ?>">
+                    <label class="field"><span class="field-label">Reason <span class="optional">(optional)</span></span><textarea name="reason" maxlength="500" rows="2"></textarea></label>
+                    <button class="button button-primary" type="submit">Restore customer</button>
+                </form>
+            </div>
+        </section>
+<?php endif; ?>
+<?php if (!empty($lifecycle)): ?>
+        <section class="panel" aria-labelledby="lifecycle-title">
+            <div class="panel-heading"><div><h2 id="lifecycle-title">Removed and restored</h2></div></div>
+            <div class="panel-body">
+                <ol class="timeline">
+<?php foreach ($lifecycle as $event): ?>
+                    <li>
+                        <div class="timeline-title"><?= $event['action'] === 'removed' ? 'Removed' : 'Restored' ?></div>
+                        <div class="timeline-meta"><?= $e(Format::datetime($event['created_at'])) ?> · <?= $e($event['actor_email']) ?></div>
+<?php if ($event['reason'] !== null): ?>
+                        <div class="timeline-note"><?= $e($event['reason']) ?></div>
+<?php endif; ?>
+                    </li>
+<?php endforeach; ?>
+                </ol>
             </div>
         </section>
 <?php endif; ?>

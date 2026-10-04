@@ -25,7 +25,8 @@ final class CustomerController
     {
         $user=$this->guard->requireRoles(self::ROLES); if ($user instanceof Response) return $user;
         $type=trim((string)($request->query['type']??'')); if ($type!==''&&!in_array($type,['walk_in','online','corporate','repeat','referral'],true)) $type='';
-        return $this->render('customers/list',['customers'=>$this->customers->list($type?:null,(string)($request->query['search']??'')),'type'=>$type,'search'=>(string)($request->query['search']??''),'telegramOn'=>$this->telegram->isConfigured(),'user'=>$user]);
+        $removed=($request->query['show']??'')==='removed';
+        return $this->render('customers/list',['customers'=>$this->customers->list($type?:null,(string)($request->query['search']??''),$removed),'removed'=>$removed,'type'=>$type,'search'=>(string)($request->query['search']??''),'telegramOn'=>$this->telegram->isConfigured(),'user'=>$user]);
     }
 
     public function newForm(): Response
@@ -40,7 +41,7 @@ final class CustomerController
         if (!Csrf::valid($request)) return Response::html('Invalid request token.',403);
         try { $id=$this->service->create($request->form,(int)$user['id']); return Response::redirect('/customers/detail?customer_id='.$id); }
         // On an error the form comes back with what was typed, so nothing has to be entered twice.
-        catch (PDOException $e) { if ($this->isDuplicate($e)) return $this->render('customers/form',['customer'=>null,'old'=>$request->form,'error'=>'A customer or identity document with those details already exists.','user'=>$user],409); throw $e; }
+        catch (PDOException $e) { if ($this->isDuplicate($e)) return $this->render('customers/form',['customer'=>null,'old'=>$request->form,'error'=>'A customer with that identity document already exists. If they were removed, find them under Customers, Removed, and restore them instead.','user'=>$user],409); throw $e; }
         catch (RuntimeException $e) { return $this->render('customers/form',['customer'=>null,'old'=>$request->form,'error'=>$e->getMessage(),'user'=>$user],422); }
     }
 
@@ -52,7 +53,7 @@ final class CustomerController
         $contacts=$this->customers->contacts($id); foreach ($contacts as &$contact) $contact['masked_value']=$this->service->maskContact($contact); unset($contact);
         $documents=$this->customers->documents($id); foreach ($documents as &$doc) $doc['masked_value']=$this->service->maskDocument($doc); unset($doc);
         $notice=$_SESSION['_customer_notice']??null; unset($_SESSION['_customer_notice']);
-        return $this->render('customers/detail',['customer'=>$customer,'contacts'=>$contacts,'documents'=>$documents,'notes'=>$this->customers->notes($id),'documentAudits'=>$this->customers->documentAuditHistory($id),'rentals'=>$this->customers->rentalHistory($id),'telegram'=>$this->telegramPanel($id),'notice'=>$notice,'user'=>$user]);
+        return $this->render('customers/detail',['customer'=>$customer,'contacts'=>$contacts,'documents'=>$documents,'notes'=>$this->customers->notes($id),'documentAudits'=>$this->customers->documentAuditHistory($id),'rentals'=>$this->customers->rentalHistory($id),'telegram'=>$this->telegramPanel($id),'lifecycle'=>$this->service->lifecycleHistory($id),'notice'=>$notice,'user'=>$user]);
     }
 
     public function editForm(Request $request): Response
@@ -162,8 +163,19 @@ final class CustomerController
         $user=$this->guard->requireRoles(self::ROLES); if ($user instanceof Response) return $user;
         if (!Csrf::valid($request)) return Response::html('Invalid request token.',403);
         $id=$this->id($request->form['customer_id']??null); if (!$id) return Response::html('Invalid customer.',422);
-        try { $this->service->softDelete($id); return Response::redirect('/customers'); }
+        try { $this->service->softDelete($id,(int)$user['id'],(string)($request->form['reason']??'')); return Response::redirect('/customers'); }
         catch (RuntimeException $e) { $_SESSION['_customer_notice']=$e->getMessage(); return Response::redirect('/customers/detail?customer_id='.$id); }
+    }
+
+    /** Puts a removed customer back into every list; same roles as removing. */
+    public function restore(Request $request): Response
+    {
+        $user=$this->guard->requireRoles(self::ROLES); if ($user instanceof Response) return $user;
+        if (!Csrf::valid($request)) return Response::html('Invalid request token.',403);
+        $id=$this->id($request->form['customer_id']??null); if (!$id) return Response::html('Invalid customer.',422);
+        try { $this->service->restore($id,(int)$user['id'],(string)($request->form['reason']??'')); $_SESSION['_customer_notice']='Customer restored.'; }
+        catch (RuntimeException $e) { $_SESSION['_customer_notice']=$e->getMessage(); }
+        return Response::redirect('/customers/detail?customer_id='.$id);
     }
 
     public function reveal(Request $request): Response

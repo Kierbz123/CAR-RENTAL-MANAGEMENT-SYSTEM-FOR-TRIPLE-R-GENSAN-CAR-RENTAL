@@ -29,11 +29,12 @@ final class DriverController
         if ($user instanceof Response) return $user;
         $canManage = in_array($user['role'],self::MANAGERS,true);
         $canReveal = in_array($user['role'],self::REVEALERS,true);
-        $rows = $this->drivers->list((string)($request->query['search'] ?? ''));
+        $removed = ($request->query['show'] ?? '') === 'removed';
+        $rows = $this->drivers->list((string)($request->query['search'] ?? ''), false, $removed);
         if ($canReveal) foreach ($rows as &$row) $row['license_display'] = $this->maskedOrUnreadable(fn (): string => '****' . substr(DriverPiiCipher::normalizeLicense($this->cipher->decrypt($row['license_number_ciphertext'],'driver-license')),-4));
         else foreach ($rows as &$row) $row['license_display'] = 'Restricted';
         unset($row);
-        return $this->render('drivers/list',['drivers'=>$rows,'eligibleDrivers'=>$this->service->selectableForAssignment(),'search'=>(string)($request->query['search']??''),'user'=>$user,'canManage'=>$canManage]);
+        return $this->render('drivers/list',['drivers'=>$rows,'eligibleDrivers'=>$this->service->selectableForAssignment(),'search'=>(string)($request->query['search']??''),'user'=>$user,'canManage'=>$canManage,'removed'=>$removed]);
     }
 
     public function newForm(): Response
@@ -47,7 +48,7 @@ final class DriverController
         $user=$this->guard->requireRoles(self::MANAGERS); if ($user instanceof Response) return $user;
         if (!Csrf::valid($request)) return Response::html('Invalid request token.',403);
         try { $id=$this->service->create($request->form,(int)$user['id']); return Response::redirect('/fleet/drivers/detail?driver_id='.$id); }
-        catch (PDOException $error) { if ($this->duplicate($error)) return $this->render('drivers/form',['driver'=>null,'error'=>'That driver license is already recorded.','user'=>$user]); throw $error; }
+        catch (PDOException $error) { if ($this->duplicate($error)) return $this->render('drivers/form',['driver'=>null,'error'=>'That driver license is already recorded. If the driver was removed, find them under Drivers, Removed, and restore them instead.','user'=>$user]); throw $error; }
         catch (RuntimeException $error) { return $this->render('drivers/form',['driver'=>null,'error'=>$error->getMessage(),'user'=>$user]); }
     }
 
@@ -65,7 +66,7 @@ final class DriverController
         if (!Csrf::valid($request)) return Response::html('Invalid request token.',403);
         $id=$this->id($request->form['driver_id']??null); if (!$id) return Response::html('Invalid driver.',422);
         try { $this->service->update($id,$request->form); $_SESSION['_driver_notice']='Driver record updated.'; }
-        catch (PDOException $error) { if ($this->duplicate($error)) $_SESSION['_driver_notice']='That driver license is already recorded.'; else throw $error; }
+        catch (PDOException $error) { if ($this->duplicate($error)) $_SESSION['_driver_notice']='That driver license is already recorded. If the driver was removed, find them under Drivers, Removed, and restore them instead.'; else throw $error; }
         catch (RuntimeException $error) { $_SESSION['_driver_notice']=$error->getMessage(); }
         return Response::redirect('/fleet/drivers/detail?driver_id='.$id);
     }
@@ -90,7 +91,7 @@ final class DriverController
             $pii=['license'=>'Restricted','address'=>'Restricted','emergency_name'=>'Restricted','emergency_phone'=>'Restricted'];
         }
         $notice=$_SESSION['_driver_notice']??null; unset($_SESSION['_driver_notice']);
-        return $this->render('drivers/detail',['driver'=>$driver,'contacts'=>$contacts,'statusHistory'=>$this->drivers->statusHistory($id),'assignments'=>$this->drivers->assignmentHistory($id),'pii'=>$pii,'user'=>$user,'canManage'=>$canManage,'canReveal'=>$canReveal,'notice'=>$notice]);
+        return $this->render('drivers/detail',['driver'=>$driver,'contacts'=>$contacts,'statusHistory'=>$this->drivers->statusHistory($id),'assignments'=>$this->drivers->assignmentHistory($id),'pii'=>$pii,'user'=>$user,'canManage'=>$canManage,'canReveal'=>$canReveal,'lifecycle'=>$this->service->lifecycleHistory($id),'notice'=>$notice]);
     }
 
     public function status(Request $request): Response
@@ -108,7 +109,7 @@ final class DriverController
         $user=$this->guard->requireRoles(self::MANAGERS); if ($user instanceof Response) return $user;
         if (!Csrf::valid($request)) return Response::html('Invalid request token.',403);
         $id=$this->id($request->form['driver_id']??null); if (!$id) return Response::html('Invalid driver.',422);
-        try { $this->service->softDelete($id); return Response::redirect('/fleet/drivers'); }
+        try { $this->service->softDelete($id,(int)$user['id'],(string)($request->form['reason']??'')); return Response::redirect('/fleet/drivers'); }
         catch (RuntimeException $error) { $_SESSION['_driver_notice']=$error->getMessage(); return Response::redirect('/fleet/drivers/detail?driver_id='.$id); }
     }
 
@@ -138,6 +139,17 @@ final class DriverController
         if (!Csrf::valid($request)) return Response::html('Invalid request token.',403);
         $id=$this->id($request->form['driver_id']??null); $contact=$this->id($request->form['contact_id']??null); if (!$id||!$contact) return Response::html('Invalid contact.',422);
         try { $this->service->removeContact($id,$contact); $_SESSION['_driver_notice']='Contact removed.'; }
+        catch (RuntimeException $error) { $_SESSION['_driver_notice']=$error->getMessage(); }
+        return Response::redirect('/fleet/drivers/detail?driver_id='.$id);
+    }
+
+    /** Puts a removed driver back into every list; same roles as removing. */
+    public function restore(Request $request): Response
+    {
+        $user=$this->guard->requireRoles(self::MANAGERS); if ($user instanceof Response) return $user;
+        if (!Csrf::valid($request)) return Response::html('Invalid request token.',403);
+        $id=$this->id($request->form['driver_id']??null); if (!$id) return Response::html('Invalid driver.',422);
+        try { $this->service->restore($id,(int)$user['id'],(string)($request->form['reason']??'')); $_SESSION['_driver_notice']='Driver restored.'; }
         catch (RuntimeException $error) { $_SESSION['_driver_notice']=$error->getMessage(); }
         return Response::redirect('/fleet/drivers/detail?driver_id='.$id);
     }

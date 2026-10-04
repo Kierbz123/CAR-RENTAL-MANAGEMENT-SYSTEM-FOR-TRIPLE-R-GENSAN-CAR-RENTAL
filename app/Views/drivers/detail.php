@@ -179,11 +179,43 @@ View::begin('staff', ['title' => (string) $driver['full_name'], 'crumbs' => [['F
         <section class="panel">
             <div class="panel-heading"><div><h2>Remove driver</h2><p>The record is kept for history but leaves every list. A driver with an open assignment can’t be removed.</p></div></div>
             <div class="panel-body">
-                <form method="post" action="/fleet/drivers/delete" data-confirm="Remove <?= $e($driver['full_name']) ?> from the driver list? Their past assignments stay on record." data-confirm-action="Remove driver">
+                <form method="post" action="/fleet/drivers/delete" class="stack" data-confirm="Remove <?= $e($driver['full_name']) ?> from the driver list? Their past assignments stay on record." data-confirm-action="Remove driver">
                     <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
                     <input type="hidden" name="driver_id" value="<?= (int) $driver['driver_id'] ?>">
+                    <label class="field"><span class="field-label">Reason <span class="optional">(optional)</span></span><textarea name="reason" maxlength="500" rows="2"></textarea></label>
                     <button class="button button-danger" type="submit">Remove driver</button>
                 </form>
+            </div>
+        </section>
+<?php endif; ?>
+<?php if ($canManage && $deleted): ?>
+        <section class="panel" aria-labelledby="restore-title">
+            <div class="panel-heading"><div><h2 id="restore-title">Restore driver</h2><p>Puts this driver back in every list, with their history.</p></div></div>
+            <div class="panel-body">
+                <form method="post" action="/fleet/drivers/restore" class="stack">
+                    <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
+                    <input type="hidden" name="driver_id" value="<?= (int) $driver['driver_id'] ?>">
+                    <label class="field"><span class="field-label">Reason <span class="optional">(optional)</span></span><textarea name="reason" maxlength="500" rows="2"></textarea></label>
+                    <button class="button button-primary" type="submit">Restore driver</button>
+                </form>
+            </div>
+        </section>
+<?php endif; ?>
+<?php if (!empty($lifecycle)): ?>
+        <section class="panel" aria-labelledby="lifecycle-title">
+            <div class="panel-heading"><div><h2 id="lifecycle-title">Removed and restored</h2></div></div>
+            <div class="panel-body">
+                <ol class="timeline">
+<?php foreach ($lifecycle as $event): ?>
+                    <li>
+                        <div class="timeline-title"><?= $event['action'] === 'removed' ? 'Removed' : 'Restored' ?></div>
+                        <div class="timeline-meta"><?= $e(Format::datetime($event['created_at'])) ?> · <?= $e($event['actor_email']) ?></div>
+<?php if ($event['reason'] !== null): ?>
+                        <div class="timeline-note"><?= $e($event['reason']) ?></div>
+<?php endif; ?>
+                    </li>
+<?php endforeach; ?>
+                </ol>
             </div>
         </section>
 <?php endif; ?>

@@ -37,9 +37,16 @@ View::begin('staff', ['title' => 'Drivers', 'crumbs' => [['Fleet', null], ['Driv
             <span class="field-label">Search by name</span>
             <input type="search" name="search" value="<?= $e($search) ?>" maxlength="160" placeholder="Driver name">
         </label>
+        <label class="field">
+            <span class="field-label">Show</span>
+            <select name="show" data-auto-submit>
+                <option value="">Current drivers</option>
+                <option value="removed"<?= ($removed ?? false) ? ' selected' : '' ?>>Removed drivers</option>
+            </select>
+        </label>
         <button class="button button-secondary" type="submit"><?= Icon::svg('search') ?>Search</button>
-<?php if ($search !== ''): ?>
-        <a class="button button-ghost" href="/fleet/drivers">Clear search</a>
+<?php if ($search !== '' || ($removed ?? false)): ?>
+        <a class="button button-ghost" href="/fleet/drivers">Clear</a>
 <?php endif; ?>
         <span class="toolbar-summary"><?= $e(Format::plural(count($drivers), 'driver')) ?></span>
     </form>
@@ -57,7 +64,7 @@ View::begin('staff', ['title' => 'Drivers', 'crumbs' => [['Fleet', null], ['Driv
                 </tr>
 <?php endforeach; ?>
 <?php if (!$drivers): ?>
-                <tr><td class="empty-state" colspan="5"><strong>No drivers found</strong><?= $search !== '' ? 'Try a different name.' : 'Drivers you add appear here.' ?></td></tr>
+                <tr><td class="empty-state" colspan="5"><strong><?= ($removed ?? false) ? 'No removed drivers' : 'No drivers found' ?></strong><?= $search !== '' ? 'Try a different name.' : 'Drivers you add appear here.' ?></td></tr>
 <?php endif; ?>
             </tbody>
         </table>

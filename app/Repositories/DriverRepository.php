@@ -9,10 +9,12 @@ final class DriverRepository
 {
     public function __construct(private readonly PDO $db) {}
 
-    public function list(?string $search = null, bool $includeDeleted = false): array
+    /** Current drivers; with $includeDeleted removed ones too; with $removedOnly only the removed ones. */
+    public function list(?string $search = null, bool $includeDeleted = false, bool $removedOnly = false): array
     {
         $sql = 'SELECT * FROM drivers WHERE 1=1';
-        if (!$includeDeleted) $sql .= ' AND deleted_at IS NULL';
+        if ($removedOnly) $sql .= ' AND deleted_at IS NOT NULL';
+        elseif (!$includeDeleted) $sql .= ' AND deleted_at IS NULL';
         $params = [];
         if ($search !== null && trim($search) !== '') {
             $sql .= ' AND full_name LIKE :search';

@@ -6,6 +6,7 @@ namespace TripleR\Services;
 use PDO;
 use RuntimeException;
 use TripleR\Repositories\CustomerRepository;
+use TripleR\Repositories\RecordLifecycleRepository;
 
 final class CustomerService
 {
@@ -145,16 +146,42 @@ final class CustomerService
         });
     }
 
-    public function softDelete(int $id): void
+    public function softDelete(int $id,?int $actor=null,?string $reason=null): void
     {
-        $this->transaction(function() use ($id): void {
+        $reason=$this->lifecycleReason($reason);
+        $this->transaction(function() use ($id,$actor,$reason): void {
             if (!$this->customers->find($id,true)) throw new RuntimeException('Customer not found.');
             if ($this->hasRentalAgreements()) {
                 $stmt=$this->db->prepare("SELECT agreement_id FROM rental_agreements WHERE customer_id=:id AND status IN ('reserved','confirmed','active','returned') LIMIT 1"); $stmt->execute(['id'=>$id]);
                 if ($stmt->fetchColumn()!==false) throw new RuntimeException('Customer has an open rental agreement and cannot be removed.');
             }
             $this->db->prepare('UPDATE customers SET deleted_at=UTC_TIMESTAMP(6) WHERE customer_id=:id AND deleted_at IS NULL')->execute(['id'=>$id]);
+            if ($actor!==null) (new RecordLifecycleRepository($this->db))->append('customer',$id,'removed',$reason,$actor);
         });
+    }
+
+    /** Brings a removed customer back into every list, with their history, contacts and documents. */
+    public function restore(int $id,int $actor,?string $reason=null): void
+    {
+        $reason=$this->lifecycleReason($reason);
+        $this->transaction(function() use ($id,$actor,$reason): void {
+            $customer=$this->customers->find($id,true,true); if (!$customer) throw new RuntimeException('Customer not found.');
+            if ($customer['deleted_at']===null) throw new RuntimeException('This customer is not removed.');
+            $this->db->prepare('UPDATE customers SET deleted_at=NULL WHERE customer_id=:id AND deleted_at IS NOT NULL')->execute(['id'=>$id]);
+            (new RecordLifecycleRepository($this->db))->append('customer',$id,'restored',$reason,$actor);
+        });
+    }
+
+    /** Removals and restorations of this record, newest first. */
+    public function lifecycleHistory(int $id): array
+    {
+        return (new RecordLifecycleRepository($this->db))->history('customer', $id);
+    }
+
+    private function lifecycleReason(?string $reason): ?string
+    {
+        $reason=trim((string)$reason); if (mb_strlen($reason)>500) throw new RuntimeException('Keep the reason to 500 characters.');
+        return $reason===''?null:$reason;
     }
 
     public function revealContact(int $customerId,int $contactId): string

@@ -937,6 +937,39 @@ END$$
 DELIMITER ;
 
 
+-- ==========================================
+-- REMOVED AND RESTORED MASTER RECORDS
+-- ==========================================
+
+-- Who removed or restored a customer or a driver, when, and why. Append-only (migration 025).
+CREATE TABLE record_lifecycle_logs (
+    log_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    subject ENUM('customer','driver') NOT NULL,
+    customer_id BIGINT UNSIGNED NULL,
+    driver_id BIGINT UNSIGNED NULL,
+    action ENUM('removed','restored') NOT NULL,
+    reason VARCHAR(500) NULL,
+    actor_user_id BIGINT UNSIGNED NOT NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (log_id),
+    KEY idx_record_lifecycle_customer (customer_id, created_at, log_id),
+    KEY idx_record_lifecycle_driver (driver_id, created_at, log_id),
+    CONSTRAINT fk_record_lifecycle_customer FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_record_lifecycle_driver FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_record_lifecycle_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE RESTRICT,
+    CONSTRAINT chk_record_lifecycle_owner CHECK (
+        (subject = 'customer' AND customer_id IS NOT NULL AND driver_id IS NULL)
+        OR (subject = 'driver' AND driver_id IS NOT NULL AND customer_id IS NULL)
+    ),
+    CONSTRAINT chk_record_lifecycle_reason CHECK (reason IS NULL OR CHAR_LENGTH(TRIM(reason)) > 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+DELIMITER $$
+CREATE TRIGGER record_lifecycle_logs_no_update BEFORE UPDATE ON record_lifecycle_logs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='record_lifecycle_logs is append-only'; END$$
+CREATE TRIGGER record_lifecycle_logs_no_delete BEFORE DELETE ON record_lifecycle_logs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='record_lifecycle_logs is append-only'; END$$
+DELIMITER ;
+
+
 -- MIGRATION CHECKSUM BASELINE
 -- ==========================================
 -- Required so existing bin/migrate.php installations verify and skip these migrations.
@@ -972,4 +1005,5 @@ INSERT INTO schema_migrations (migration,checksum) VALUES
 ('021_vehicle_tracking.sql','340bad79ccf96c905708c423aa4300c2bd4263801f7142f44346b6617e4ebf12'),
 ('022_remove_maintenance_and_roles.sql','15a6c63e07256e5a41fc1a3b21baeefadb43cccc4afe9518b03320f32d0b1777'),
 ('023_booking_guards.sql','11ca84b8ee68bfb9d97d6cf74d8756f19c41fae7f5b6b69449d4bc3da0c344d2'),
-('024_chauffeur_rate_on_agreement.sql','e71900a8b17b8500f848668780ea2d4e7dfe764d5ba8391428663c7f96f3bbeb');
+('024_chauffeur_rate_on_agreement.sql','e71900a8b17b8500f848668780ea2d4e7dfe764d5ba8391428663c7f96f3bbeb'),
+('025_record_lifecycle_logs.sql','3cd877a9934c931eeae6ccfb3888f9a1f08d0fe7d541dc7998604e163e09ecab');

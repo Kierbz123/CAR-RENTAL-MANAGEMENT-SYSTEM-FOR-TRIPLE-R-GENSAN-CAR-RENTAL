@@ -9,9 +9,10 @@ final class CustomerRepository
 {
     public function __construct(private readonly PDO $db) {}
 
-    public function list(?string $type,?string $search): array
+    /** Current customers, or with $removed the removed ones (which can be restored). */
+    public function list(?string $type,?string $search,bool $removed=false): array
     {
-        $sql='SELECT customers.*, EXISTS(SELECT 1 FROM customer_telegram_links l WHERE l.active_customer_id=customers.customer_id) AS telegram_connected FROM customers WHERE deleted_at IS NULL'; $params=[];
+        $sql='SELECT customers.*, EXISTS(SELECT 1 FROM customer_telegram_links l WHERE l.active_customer_id=customers.customer_id) AS telegram_connected FROM customers WHERE deleted_at IS '.($removed?'NOT NULL':'NULL'); $params=[];
         if ($type!==null && $type!=='') { $sql.=' AND customer_type=:type'; $params['type']=$type; }
         if ($search!==null && trim($search)!=='') { $sql.=' AND (full_name LIKE :name_search OR company_name LIKE :company_search)'; $params['name_search']=$params['company_search']='%'.trim($search).'%'; } // One placeholder per use: native prepared statements reject a repeated name.
         $sql.=' ORDER BY full_name,customer_id'; $stmt=$this->db->prepare($sql); $stmt->execute($params); return $stmt->fetchAll();

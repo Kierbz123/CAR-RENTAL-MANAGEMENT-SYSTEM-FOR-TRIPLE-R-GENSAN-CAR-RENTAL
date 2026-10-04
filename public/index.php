@@ -252,6 +252,7 @@ try {
     $router->post('/fleet/drivers/update', static fn (Request $request): Response => $fleetDrivers->update($request));
     $router->post('/fleet/drivers/status', static fn (Request $request): Response => $fleetDrivers->status($request));
     $router->post('/fleet/drivers/delete', static fn (Request $request): Response => $fleetDrivers->delete($request));
+    $router->post('/fleet/drivers/restore', static fn (Request $request): Response => $fleetDrivers->restore($request));
     $router->post('/fleet/drivers/contacts/add', static fn (Request $request): Response => $fleetDrivers->addContact($request));
     $router->post('/fleet/drivers/contacts/update', static fn (Request $request): Response => $fleetDrivers->updateContact($request));
     $router->post('/fleet/drivers/contacts/remove', static fn (Request $request): Response => $fleetDrivers->removeContact($request));
@@ -271,6 +272,7 @@ try {
     $router->post('/customers/blacklist', static fn (Request $request): Response => $customerController->blacklist($request));
     $router->post('/customers/unblacklist', static fn (Request $request): Response => $customerController->unblacklist($request));
     $router->post('/customers/delete', static fn (Request $request): Response => $customerController->softDelete($request));
+    $router->post('/customers/restore', static fn (Request $request): Response => $customerController->restore($request));
     $router->post('/customers/reveal', static fn (Request $request): Response => $customerController->reveal($request));
     $router->post('/customers/telegram/code', static fn (Request $request): Response => $customerController->telegramCode($request));
     $router->post('/customers/telegram/disconnect', static fn (Request $request): Response => $customerController->telegramDisconnect($request));
