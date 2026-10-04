@@ -108,6 +108,24 @@ $rentals->transition($now, 'return', $actor, null, 1100);
 $status = $db->query('SELECT current_status FROM vehicles WHERE vehicle_id = ' . $v)->fetchColumn();
 $check($status === 'reserved', 'returning the vehicle leaves it reserved for the confirmed booking', (string) $status);
 
+echo "== The downpayment covers the chauffeur rate\n";
+$v = $vehicle('F', true);
+$chauffeurBooking = $book($v, $day('+40 days'), $day('+42 days'), '09:00', '09:00', 'chauffeur');
+$row = $db->query('SELECT downpayment_amount, chauffeur_daily_rate FROM rental_agreements WHERE agreement_id = ' . $chauffeurBooking)->fetch();
+$check($row['downpayment_amount'] === '1800.00' && $row['chauffeur_daily_rate'] === '1000.00', '2 days x (2,000 vehicle + 1,000 chauffeur) = 6,000; 30% = 1,800.00', json_encode($row));
+$db->prepare('UPDATE vehicles SET chauffeur_daily_rate = 1500.00 WHERE vehicle_id = :id')->execute(['id' => $v]);
+$db->prepare("INSERT INTO drivers (full_name, license_number_ciphertext, license_number_fingerprint, license_expiry) VALUES (:name, :cipher, :fingerprint, :expiry)")
+    ->execute(['name' => 'Rate Driver ' . $tag, 'cipher' => 'rate-' . $tag, 'fingerprint' => hash('sha256', 'rate-' . $tag), 'expiry' => $day('+1 year')]);
+(new ChauffeurService($db, new RentalRepository($db, new BookingOverlapService($db)), new ChargeRepository($db), new VehicleRepository($db), new BookingOverlapService($db)))->assignDriver($chauffeurBooking, (int) $db->lastInsertId(), $actor);
+$fee = $db->query("SELECT amount FROM rental_charges WHERE agreement_id = {$chauffeurBooking} AND charge_type = 'chauffeur_fee'")->fetchColumn();
+$check($fee === '2000.00', 'the chauffeur fee uses the rate fixed at booking, not the vehicle\'s later rate', (string) $fee);
+try {
+    $db->exec("UPDATE rental_agreements SET chauffeur_daily_rate = 1.00 WHERE agreement_id = {$chauffeurBooking}");
+    $check(false, 'a booking\'s rates cannot be changed afterwards', 'the update was accepted');
+} catch (PDOException $error) {
+    $check(str_contains($error->getMessage(), 'fixed when it is made'), 'a booking\'s rates cannot be changed afterwards', $error->getMessage());
+}
+
 echo "== Two requests assigning one driver at the same moment\n";
 $db->prepare("INSERT INTO drivers (full_name, license_number_ciphertext, license_number_fingerprint, license_expiry) VALUES (:name, :cipher, :fingerprint, :expiry)")
     ->execute(['name' => 'Integrity Driver ' . $tag, 'cipher' => 'test-' . $tag, 'fingerprint' => hash('sha256', 'integrity-' . $tag), 'expiry' => $day('+1 year')]);

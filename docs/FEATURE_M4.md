@@ -19,7 +19,7 @@
 
 `DRIVER_PII_KEY` is a dedicated base64-encoded 32-byte key, distinct from customer, SMS, and application keys. HKDF derives separate encryption and license-fingerprint keys. AES-256-GCM uses a new random 12-byte nonce per value and stores version, nonce, tag, and ciphertext. Full license/contact/address/emergency values are encrypted; only a keyed HMAC fingerprint of normalized license numbers is used for cross-record uniqueness. License normalization uppercases and removes formatting characters. There is no contact fingerprint. Full name remains plaintext for staff search. Notes are free text and must not contain license or contact details.
 
-`system_admin` and `fleet_manager` may create, edit, change status, soft-delete, and reveal PII. `driver_coordinator` has read-only access to names, status, license expiry, assignment-eligible names, and history; it cannot decrypt license, address, contacts, or emergency details. Reveal uses a CSRF-protected POST and no-store JSON. Driver records do not provide driver login.
+`system_admin` and `fleet_manager` may create, edit, change status and soft-delete drivers. `system_admin`, `fleet_manager` and `driver_coordinator` see license, contact and emergency details masked and may reveal them (decided 2026-10-04: coordinators need driver contacts for scheduling and coordination). `driver_coordinator` cannot change driver records. Reveal uses a CSRF-protected POST and no-store JSON. Driver records do not provide driver login.
 
 New records start active and append an initial status row with `old_status=NULL`. Every later active/inactive change updates the driver and appends `old_status`, `new_status`, actor, and UTC `DATETIME(6)` in the same transaction. `driver_status_logs` has database triggers that reject UPDATE and DELETE.
 
@@ -40,7 +40,7 @@ Set `DRIVER_PII_KEY` in `.env` before opening driver routes, then run `php bin/m
 - Create and edit drivers; verify a duplicate license is rejected even when its formatting differs.
 - Verify active, non-deleted drivers with license expiry today or later in Asia/Manila appear as assignment eligible; inactive, deleted, and expired drivers do not.
 - Verify initial active status and subsequent changes appear oldest-first in history; attempt UPDATE and DELETE against `driver_status_logs` and confirm triggers reject them.
-- Verify only system_admin/fleet_manager can mutate/reveal; driver_coordinator sees readable master data but all PII remains restricted.
+- Verify only system_admin/fleet_manager can mutate; system_admin, fleet_manager and driver_coordinator see PII masked and can reveal it.
 - Verify contact-primary changes leave no more than one primary per driver/contact type; test concurrent updates to the same driver.
 - With migration 007 applied, verify the shared overlap service catches intersections, allows adjacent half-open ranges, handles same-day occupancy, and respects the excluded agreement ID.
 - Run `php bin/driver-conflict-check.php <driver_id> <start> <end> [exclude_agreement_id]` to exercise the repository query path without writes.

@@ -96,7 +96,7 @@ View::begin('staff', ['title' => 'New reservation', 'crumbs' => [['Agreements', 
                         <div class="facts-total"><dt>Base amount</dt><dd data-summary="base">—</dd></div>
                         <div><dt>Security deposit</dt><dd data-summary="deposit">—</dd></div>
                     </dl>
-                    <p class="muted">The saved agreement shows the final amounts. A chauffeur fee is added when a driver is assigned.</p>
+                    <p class="muted">The saved agreement shows the final amounts. For a chauffeur rental the 30% downpayment includes the chauffeur rate; the chauffeur fee itself is charged when a driver is assigned.</p>
                 </div>
             </section>
         </aside>

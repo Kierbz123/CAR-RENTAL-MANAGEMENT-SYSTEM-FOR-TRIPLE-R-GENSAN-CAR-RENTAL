@@ -29,9 +29,16 @@ View::begin('staff', ['title' => 'Reservation saved', 'crumbs' => [['Agreements'
             <div><dt>Dates</dt><dd><?= $e(Format::date($agreement['start_date'])) ?> to <?= $e(Format::date($agreement['end_date'])) ?></dd></div>
             <div><dt>Days billed</dt><dd><?= (int) $agreement['rental_days'] ?></dd></div>
             <div><dt>Base amount</dt><dd><?= $e(Format::money($agreement['base_amount'])) ?></dd></div>
+<?php
+// A chauffeur rental's cost includes the chauffeur rate for every day billed (charged when a driver is assigned).
+$chauffeurFee = $agreement['rental_type'] === 'chauffeur' && $agreement['chauffeur_daily_rate'] !== null ? (int) $agreement['rental_days'] * (float) $agreement['chauffeur_daily_rate'] : 0.0;
+?>
+<?php if ($chauffeurFee > 0): ?>
+            <div><dt>Chauffeur fee</dt><dd><?= $e(Format::money($chauffeurFee)) ?></dd></div>
+<?php endif; ?>
 <?php if ($agreement['downpayment_status'] !== 'not_required'): ?>
             <div><dt>Downpayment to collect (30%, non-refundable)</dt><dd><?= $e(Format::money($agreement['downpayment_amount'])) ?></dd></div>
-            <div><dt>Balance due at pickup</dt><dd><?= $e(Format::money((float) $agreement['base_amount'] - (float) $agreement['downpayment_amount'])) ?></dd></div>
+            <div><dt>Balance due at pickup</dt><dd><?= $e(Format::money((float) $agreement['base_amount'] + $chauffeurFee - (float) $agreement['downpayment_amount'])) ?></dd></div>
 <?php endif; ?>
         </dl>
         <p class="muted">If the customer has a primary phone number, a booking link has been queued to send by SMS.</p>

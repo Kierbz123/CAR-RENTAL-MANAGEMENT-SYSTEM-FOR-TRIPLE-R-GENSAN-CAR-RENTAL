@@ -119,11 +119,12 @@ checkHttp($guestReveal['status'] === 401, 'Unauthenticated PII reveal is rejecte
 [$coordinator, $coordinatorCsrf] = loginClient($accounts['coordinator']);
 $driverQuery = '/fleet/drivers?' . http_build_query(['search' => 'M4 HTTP Driver ' . $tag]);
 $coordinatorList = httpRequest($coordinator, 'GET', $driverQuery);
-checkHttp($coordinatorList['status'] === 200 && str_contains($coordinatorList['body'], 'Restricted') && !str_contains($coordinatorList['body'], $license), 'driver_coordinator can view driver list with license restricted', 'HTTP ' . $coordinatorList['status'] . ' ' . substr(strip_tags($coordinatorList['body']), 0, 120));
+checkHttp($coordinatorList['status'] === 200 && !str_contains($coordinatorList['body'], 'Restricted') && !str_contains($coordinatorList['body'], $license), 'driver_coordinator can view driver list with license masked', 'HTTP ' . $coordinatorList['status'] . ' ' . substr(strip_tags($coordinatorList['body']), 0, 120));
 $coordinatorDetail = httpRequest($coordinator, 'GET', '/fleet/drivers/detail?' . http_build_query(['driver_id' => $driverId]));
-checkHttp($coordinatorDetail['status'] === 200 && str_contains($coordinatorDetail['body'], 'Restricted') && !str_contains($coordinatorDetail['body'], $license), 'driver_coordinator sees PII restricted on driver detail', 'HTTP ' . $coordinatorDetail['status'] . ' ' . substr(strip_tags($coordinatorDetail['body']), 0, 120));
+checkHttp($coordinatorDetail['status'] === 200 && str_contains($coordinatorDetail['body'], 'data-reveal-kind') && !str_contains($coordinatorDetail['body'], $license), 'driver_coordinator sees PII masked on driver detail, with Reveal', 'HTTP ' . $coordinatorDetail['status'] . ' ' . substr(strip_tags($coordinatorDetail['body']), 0, 120));
 $coordinatorReveal = httpRequest($coordinator, 'POST', '/fleet/drivers/reveal', ['_csrf' => $coordinatorCsrf, 'driver_id' => $driverId, 'kind' => 'license']);
-checkHttp($coordinatorReveal['status'] === 403, 'driver_coordinator cannot call PII reveal', 'HTTP ' . $coordinatorReveal['status']);
+$coordinatorJson = json_decode($coordinatorReveal['body'], true);
+checkHttp($coordinatorReveal['status'] === 200 && ($coordinatorJson['value'] ?? null) === $license, 'driver_coordinator can reveal PII for scheduling', 'HTTP ' . $coordinatorReveal['status']);
 $coordinatorNew = httpRequest($coordinator, 'GET', '/fleet/drivers/new');
 checkHttp($coordinatorNew['status'] === 403, 'driver_coordinator cannot open driver mutation form', 'HTTP ' . $coordinatorNew['status'] . ' ' . substr(strip_tags($coordinatorNew['body']), 0, 120));
 $coordinatorMutation = httpRequest($coordinator, 'POST', '/fleet/drivers/status', ['_csrf' => $coordinatorCsrf, 'driver_id' => $driverId, 'status' => 'inactive']);

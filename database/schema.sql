@@ -302,6 +302,8 @@ CREATE TABLE rental_agreements (
     actual_pickup_at DATETIME(6) NULL,
     actual_return_at DATETIME(6) NULL,
     daily_rate DECIMAL(10,2) NOT NULL,
+    -- Fixed at booking for a chauffeur rental; counts towards the downpayment (migration 024).
+    chauffeur_daily_rate DECIMAL(10,2) NULL,
     rental_days INT GENERATED ALWAYS AS (GREATEST(DATEDIFF(end_date,start_date),1)) STORED,
     base_amount DECIMAL(18,2) GENERATED ALWAYS AS (GREATEST(DATEDIFF(end_date,start_date),1)*daily_rate) STORED,
     security_deposit_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
@@ -333,6 +335,7 @@ CREATE TABLE rental_agreements (
     CONSTRAINT chk_rentals_dates CHECK (end_date >= start_date),
     CONSTRAINT chk_rentals_length CHECK (DATEDIFF(end_date, start_date) <= 366),
     CONSTRAINT chk_rentals_rate CHECK (daily_rate >= 0),
+    CONSTRAINT chk_rentals_chauffeur_rate CHECK (chauffeur_daily_rate IS NULL OR chauffeur_daily_rate >= 0),
     CONSTRAINT chk_rentals_deposit CHECK (security_deposit_amount >= 0),
     CONSTRAINT chk_rentals_scheduled_times CHECK (scheduled_pickup_at IS NULL OR scheduled_return_at IS NULL OR scheduled_return_at >= scheduled_pickup_at),
     CONSTRAINT chk_rentals_actual_times CHECK (actual_pickup_at IS NULL OR actual_return_at IS NULL OR actual_return_at >= actual_pickup_at),
@@ -799,6 +802,13 @@ BEGIN
 END$$
 CREATE TRIGGER payments_no_delete BEFORE DELETE ON payments FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='payments is append-only'; END$$
 -- A booking keeps its reference and its source for life.
+-- Neither rate of a booking changes after it is made.
+CREATE TRIGGER rental_agreements_rates_fixed BEFORE UPDATE ON rental_agreements FOR EACH ROW
+BEGIN
+    IF NOT (NEW.daily_rate <=> OLD.daily_rate) OR NOT (NEW.chauffeur_daily_rate <=> OLD.chauffeur_daily_rate) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='The rates of a booking are fixed when it is made';
+    END IF;
+END$$
 CREATE TRIGGER rental_agreements_booking_identity BEFORE UPDATE ON rental_agreements FOR EACH ROW
 BEGIN
     IF NEW.booking_reference <> OLD.booking_reference OR NEW.booking_source <> OLD.booking_source THEN
@@ -961,4 +971,5 @@ INSERT INTO schema_migrations (migration,checksum) VALUES
 ('020_payments.sql','98c3b62a03c0554643faf1d5fd4e716a774b74b9136fafe0f93d3b9225724ba3'),
 ('021_vehicle_tracking.sql','340bad79ccf96c905708c423aa4300c2bd4263801f7142f44346b6617e4ebf12'),
 ('022_remove_maintenance_and_roles.sql','15a6c63e07256e5a41fc1a3b21baeefadb43cccc4afe9518b03320f32d0b1777'),
-('023_booking_guards.sql','11ca84b8ee68bfb9d97d6cf74d8756f19c41fae7f5b6b69449d4bc3da0c344d2');
+('023_booking_guards.sql','11ca84b8ee68bfb9d97d6cf74d8756f19c41fae7f5b6b69449d4bc3da0c344d2'),
+('024_chauffeur_rate_on_agreement.sql','e71900a8b17b8500f848668780ea2d4e7dfe764d5ba8391428663c7f96f3bbeb');

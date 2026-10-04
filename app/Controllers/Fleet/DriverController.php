@@ -17,6 +17,8 @@ final class DriverController
 {
     private const MANAGERS = ['system_admin','fleet_manager'];
     private const READERS = ['system_admin','fleet_manager','driver_coordinator'];
+    /** Roles that see masked personal details and may reveal them: coordinators need contacts for scheduling. */
+    private const REVEALERS = ['system_admin','fleet_manager','driver_coordinator'];
     public const UNREADABLE = 'Unreadable';
 
     public function __construct(private readonly AuthMiddleware $guard, private readonly DriverRepository $drivers, private readonly DriverService $service, private readonly DriverPiiCipher $cipher) {}
@@ -26,8 +28,9 @@ final class DriverController
         $user = $this->guard->requireRoles(self::READERS);
         if ($user instanceof Response) return $user;
         $canManage = in_array($user['role'],self::MANAGERS,true);
+        $canReveal = in_array($user['role'],self::REVEALERS,true);
         $rows = $this->drivers->list((string)($request->query['search'] ?? ''));
-        if ($canManage) foreach ($rows as &$row) $row['license_display'] = $this->maskedOrUnreadable(fn (): string => '****' . substr(DriverPiiCipher::normalizeLicense($this->cipher->decrypt($row['license_number_ciphertext'],'driver-license')),-4));
+        if ($canReveal) foreach ($rows as &$row) $row['license_display'] = $this->maskedOrUnreadable(fn (): string => '****' . substr(DriverPiiCipher::normalizeLicense($this->cipher->decrypt($row['license_number_ciphertext'],'driver-license')),-4));
         else foreach ($rows as &$row) $row['license_display'] = 'Restricted';
         unset($row);
         return $this->render('drivers/list',['drivers'=>$rows,'eligibleDrivers'=>$this->service->selectableForAssignment(),'search'=>(string)($request->query['search']??''),'user'=>$user,'canManage'=>$canManage]);
@@ -73,11 +76,12 @@ final class DriverController
         $id=$this->id($request->query['driver_id']??null); $driver=$id?$this->drivers->find($id,false,true):null;
         if (!$driver) return Response::html('Driver not found.',404);
         $canManage=in_array($user['role'],self::MANAGERS,true);
+        $canReveal=in_array($user['role'],self::REVEALERS,true);
         $contacts=$this->drivers->contacts($id);
-        foreach ($contacts as &$contact) $contact['display']=$canManage?$this->maskedOrUnreadable(fn (): string => $this->service->masked($contact['contact_ciphertext'],'contact',$contact['contact_type'])):'Restricted';
+        foreach ($contacts as &$contact) $contact['display']=$canReveal?$this->maskedOrUnreadable(fn (): string => $this->service->masked($contact['contact_ciphertext'],'contact',$contact['contact_type'])):'Restricted';
         unset($contact);
         $pii=[];
-        if ($canManage) {
+        if ($canReveal) {
             $pii['license']=$this->maskedOrUnreadable(fn (): string => '****'.substr(DriverPiiCipher::normalizeLicense($this->cipher->decrypt($driver['license_number_ciphertext'],'driver-license')),-4));
             $pii['address']=$driver['address_ciphertext']===null?'Not recorded':'Address on file';
             $pii['emergency_name']=$driver['emergency_contact_name_ciphertext']===null?'Not recorded':'Name on file';
@@ -86,7 +90,7 @@ final class DriverController
             $pii=['license'=>'Restricted','address'=>'Restricted','emergency_name'=>'Restricted','emergency_phone'=>'Restricted'];
         }
         $notice=$_SESSION['_driver_notice']??null; unset($_SESSION['_driver_notice']);
-        return $this->render('drivers/detail',['driver'=>$driver,'contacts'=>$contacts,'statusHistory'=>$this->drivers->statusHistory($id),'assignments'=>$this->drivers->assignmentHistory($id),'pii'=>$pii,'user'=>$user,'canManage'=>$canManage,'notice'=>$notice]);
+        return $this->render('drivers/detail',['driver'=>$driver,'contacts'=>$contacts,'statusHistory'=>$this->drivers->statusHistory($id),'assignments'=>$this->drivers->assignmentHistory($id),'pii'=>$pii,'user'=>$user,'canManage'=>$canManage,'canReveal'=>$canReveal,'notice'=>$notice]);
     }
 
     public function status(Request $request): Response
@@ -140,7 +144,7 @@ final class DriverController
 
     public function reveal(Request $request): Response
     {
-        $user=$this->guard->requireRoles(self::MANAGERS,true); if ($user instanceof Response) return $user;
+        $user=$this->guard->requireRoles(self::REVEALERS,true); if ($user instanceof Response) return $user;
         if (!Csrf::valid($request)) return Response::json(['error'=>'Invalid request token.'],403);
         $id=$this->id($request->form['driver_id']??null); $record=$this->id($request->form['record_id']??null); $kind=(string)($request->form['kind']??'');
         if (!$id || !in_array($kind,['license','address','emergency_name','emergency_phone','contact'],true)) return Response::json(['error'=>'Invalid driver value.'],422);

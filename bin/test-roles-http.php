@@ -296,7 +296,9 @@ check(str_contains($driverPage['body'], '****7788') && !str_contains($driverPage
 $reveal = request($as('fleet_manager'), 'POST', '/fleet/drivers/reveal', ['_csrf' => csrfFrom($driverPage['body']), 'driver_id' => (string) $driverId, 'kind' => 'license', 'record_id' => ''], ['X-CSRF-Token: ' . csrfFrom($driverPage['body'])]);
 check($reveal['status'] === 200 && str_contains($reveal['body'], $license), 'fleet manager can reveal the licence number', 'HTTP ' . $reveal['status']);
 $coordinatorDriver = $get('driver_coordinator', '/fleet/drivers/detail?driver_id=' . $driverId);
-check($coordinatorDriver['status'] === 200 && str_contains($coordinatorDriver['body'], 'Restricted') && !str_contains($coordinatorDriver['body'], '7788') && !str_contains($coordinatorDriver['body'], 'data-reveal-kind'), 'driver coordinator sees the driver with personal details restricted');
+check($coordinatorDriver['status'] === 200 && str_contains($coordinatorDriver['body'], '****7788') && !str_contains($coordinatorDriver['body'], $license) && str_contains($coordinatorDriver['body'], 'data-reveal-kind'), 'driver coordinator sees the licence masked, with Reveal');
+$coordinatorReveal = request($as('driver_coordinator'), 'POST', '/fleet/drivers/reveal', ['_csrf' => csrfFrom($coordinatorDriver['body']), 'driver_id' => (string) $driverId, 'kind' => 'license', 'record_id' => ''], ['X-CSRF-Token: ' . csrfFrom($coordinatorDriver['body'])]);
+check($coordinatorReveal['status'] === 200 && str_contains($coordinatorReveal['body'], $license), 'driver coordinator can reveal the licence number for scheduling', 'HTTP ' . $coordinatorReveal['status']);
 check(!str_contains(mainOf($get('driver_coordinator', '/fleet/drivers')['body']), 'Add driver'), 'driver coordinator is not offered "Add driver"');
 
 /* ---------------------------------------------------------------------- */
@@ -386,9 +388,10 @@ $baseAmount = '₱' . number_format((float) $db->query('SELECT base_amount FROM 
 check($frontDetail['status'] === 200 && str_contains($frontDetail['body'], 'Needs driver') && str_contains($frontDetail['body'], $baseAmount), 'agreement page shows the reservation, base amount and that it needs a driver', 'expected ' . $baseAmount);
 
 // The 30% downpayment: stored at booking, recorded by finance (here as GCash at the counter), required before confirming.
-$booking = $db->query('SELECT base_amount, downpayment_amount, downpayment_status, TIMESTAMPDIFF(MINUTE, created_at, hold_expires_at) AS hold_minutes FROM rental_agreements WHERE agreement_id=' . $agreementId)->fetch();
+// For a chauffeur rental the rental cost includes the chauffeur rate for every day billed.
+$booking = $db->query('SELECT base_amount + rental_days * COALESCE(chauffeur_daily_rate, 0) AS rental_cost, downpayment_amount, downpayment_status, TIMESTAMPDIFF(MINUTE, created_at, hold_expires_at) AS hold_minutes FROM rental_agreements WHERE agreement_id=' . $agreementId)->fetch();
 $downpaymentText = '₱' . number_format((float) $booking['downpayment_amount'], 2);
-check(abs((float) $booking['downpayment_amount'] - round((float) $booking['base_amount'] * 0.30, 2)) < 0.005 && $booking['downpayment_status'] === 'due', 'the booking stores a downpayment of 30% of the rental, marked due', $booking['downpayment_amount'] . ' of ' . $booking['base_amount']);
+check(abs((float) $booking['downpayment_amount'] - round((float) $booking['rental_cost'] * 0.30, 2)) < 0.005 && $booking['downpayment_status'] === 'due', 'the booking stores a downpayment of 30% of the rental, marked due', $booking['downpayment_amount'] . ' of ' . $booking['base_amount']);
 check((int) $booking['hold_minutes'] >= 1439, 'the vehicle is held for 24 hours while the customer pays', $booking['hold_minutes'] . ' minutes');
 $frontMain = mainOf($frontDetail['body']);
 check(str_contains($frontMain, 'Waiting for the downpayment of ' . $downpaymentText) && formFields($frontMain, '/rentals/action', ['action' => 'confirm']) === null, 'front desk is told the downpayment is awaited and is not offered Confirm');
@@ -925,7 +928,7 @@ $actions = [
     '/fleet/vehicles/create' => $fleet, '/fleet/vehicles/update' => $fleet, '/fleet/vehicles/status' => $fleet, '/fleet/vehicles/mileage' => $fleet,
     '/fleet/vehicles/photos/upload' => $fleet, '/fleet/locations/create' => $fleet, '/fleet/locations/retire' => $fleet, '/fleet/locations/remove' => ['system_admin'],
     '/fleet/drivers/create' => $fleet, '/fleet/drivers/update' => $fleet, '/fleet/drivers/status' => $fleet, '/fleet/drivers/delete' => $fleet,
-    '/fleet/drivers/contacts/add' => $fleet, '/fleet/drivers/contacts/update' => $fleet, '/fleet/drivers/contacts/remove' => $fleet, '/fleet/drivers/reveal' => $fleet,
+    '/fleet/drivers/contacts/add' => $fleet, '/fleet/drivers/contacts/update' => $fleet, '/fleet/drivers/contacts/remove' => $fleet, '/fleet/drivers/reveal' => ['system_admin', 'fleet_manager', 'driver_coordinator'],
     '/customers/create' => $desk, '/customers/update' => $desk, '/customers/contacts/add' => $desk, '/customers/contacts/update' => $desk,
     '/customers/contacts/remove' => $desk, '/customers/documents/add' => $desk, '/customers/documents/update' => $desk, '/customers/notes/add' => $desk,
     '/customers/blacklist' => $desk, '/customers/unblacklist' => $desk, '/customers/delete' => $desk, '/customers/reveal' => $desk,

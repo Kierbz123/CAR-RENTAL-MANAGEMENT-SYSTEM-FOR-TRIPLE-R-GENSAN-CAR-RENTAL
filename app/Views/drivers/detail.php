@@ -46,13 +46,13 @@ View::begin('staff', ['title' => (string) $driver['full_name'], 'crumbs' => [['F
 <div class="split">
     <div class="split-main">
         <section class="panel" aria-labelledby="info-title">
-            <div class="panel-heading"><div><h2 id="info-title">Personal details</h2><p><?= $canManage ? 'Stored encrypted and hidden until you choose Reveal.' : 'These details are restricted for your role.' ?></p></div></div>
+            <div class="panel-heading"><div><h2 id="info-title">Personal details</h2><p><?= $canReveal ? 'Stored encrypted and hidden until you choose Reveal.' : 'These details are restricted for your role.' ?></p></div></div>
             <div class="panel-body">
                 <dl class="facts">
-                    <div><dt>Licence number</dt><dd><?php if ($licenceUnreadable): ?><span class="badge badge-warning">Unreadable</span><?php else: ?><span data-pii-value><?= $e($pii['license']) ?></span><?php if ($canManage): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="license">Reveal</button><?php endif; ?><?php endif; ?></dd></div>
-                    <div><dt>Address</dt><dd><span data-pii-value><?= $e($pii['address']) ?></span><?php if ($canManage && $driver['address_ciphertext'] !== null): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="address">Reveal</button><?php endif; ?></dd></div>
-                    <div><dt>Emergency contact name</dt><dd><span data-pii-value><?= $e($pii['emergency_name']) ?></span><?php if ($canManage && $driver['emergency_contact_name_ciphertext'] !== null): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="emergency_name">Reveal</button><?php endif; ?></dd></div>
-                    <div><dt>Emergency contact phone</dt><dd><span data-pii-value><?= $e($pii['emergency_phone']) ?></span><?php if ($canManage && $driver['emergency_contact_phone_ciphertext'] !== null): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="emergency_phone">Reveal</button><?php endif; ?></dd></div>
+                    <div><dt>Licence number</dt><dd><?php if ($licenceUnreadable): ?><span class="badge badge-warning">Unreadable</span><?php else: ?><span data-pii-value><?= $e($pii['license']) ?></span><?php if ($canReveal): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="license">Reveal</button><?php endif; ?><?php endif; ?></dd></div>
+                    <div><dt>Address</dt><dd><span data-pii-value><?= $e($pii['address']) ?></span><?php if ($canReveal && $driver['address_ciphertext'] !== null): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="address">Reveal</button><?php endif; ?></dd></div>
+                    <div><dt>Emergency contact name</dt><dd><span data-pii-value><?= $e($pii['emergency_name']) ?></span><?php if ($canReveal && $driver['emergency_contact_name_ciphertext'] !== null): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="emergency_name">Reveal</button><?php endif; ?></dd></div>
+                    <div><dt>Emergency contact phone</dt><dd><span data-pii-value><?= $e($pii['emergency_phone']) ?></span><?php if ($canReveal && $driver['emergency_contact_phone_ciphertext'] !== null): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="emergency_phone">Reveal</button><?php endif; ?></dd></div>
                 </dl>
 <?php if (!empty($driver['notes'])): ?>
                 <div><h3>Staff notes</h3><p class="timeline-note"><?= nl2br($e($driver['notes'])) ?></p></div>
@@ -79,7 +79,7 @@ View::begin('staff', ['title' => (string) $driver['full_name'], 'crumbs' => [['F
 <?php foreach ($contacts as $contact): ?>
                         <tr>
                             <td><?= $e(Status::label($contact['contact_type'])) ?></td>
-                            <td><span data-pii-value><?= $e($contact['display']) ?></span><?php if ($canManage): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="contact" data-record-id="<?= (int) $contact['contact_id'] ?>">Reveal</button><?php endif; ?></td>
+                            <td><span data-pii-value><?= $e($contact['display']) ?></span><?php if ($canReveal): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="contact" data-record-id="<?= (int) $contact['contact_id'] ?>">Reveal</button><?php endif; ?></td>
                             <td><?= (int) $contact['is_primary'] === 1 ? '<span class="badge badge-info">Primary</span>' : '—' ?></td>
                             <td class="actions">
 <?php if ($canEdit): ?>

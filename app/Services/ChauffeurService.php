@@ -39,17 +39,19 @@ final class ChauffeurService
             $r = $this->rentals->lockAgreement($agreementId);
             if (!$r || $r['status'] !== $snapshot['status']) throw new RuntimeException('The agreement changed in another request. Reload and try again.');
 
+            // The rate fixed on the agreement at booking; agreements from before migration 024 fall back to the vehicle's.
             $vehicle = $this->vehicles->find((int)$r['vehicle_id']);
-            if ($vehicle['chauffeur_daily_rate'] === null) throw new RuntimeException('This vehicle is not available for chauffeur rentals.');
+            $chauffeurRate = $r['chauffeur_daily_rate'] ?? $vehicle['chauffeur_daily_rate'] ?? null;
+            if ($chauffeurRate === null) throw new RuntimeException('This vehicle is not available for chauffeur rentals.');
 
             if ((string)$r['driver_id'] !== (string)$driverId) {
                 // Remove old fee if exists
                 $this->reverseChauffeurFee($agreementId, $actor);
                 
                 // Add new fee
-                $fee = (int)$r['rental_days'] * $this->toCents((string)$vehicle['chauffeur_daily_rate']);
+                $fee = (int)$r['rental_days'] * $this->toCents((string)$chauffeurRate);
                 $formattedFee = $this->centsToMoney($fee);
-                $this->charges->appendCharge($agreementId, 'chauffeur_fee', $formattedFee, 'Chauffeur fee (' . $r['rental_days'] . ' days at ₱' . $vehicle['chauffeur_daily_rate'] . '/day)', $actor);
+                $this->charges->appendCharge($agreementId, 'chauffeur_fee', $formattedFee, 'Chauffeur fee (' . $r['rental_days'] . ' days at ₱' . $chauffeurRate . '/day)', $actor);
                 
                 // Update agreement
                 $q = $this->db->prepare('UPDATE rental_agreements SET driver_id=:driver WHERE agreement_id=:id');

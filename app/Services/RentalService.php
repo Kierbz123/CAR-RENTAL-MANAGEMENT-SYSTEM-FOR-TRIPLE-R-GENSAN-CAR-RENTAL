@@ -258,8 +258,8 @@ final class RentalService
     /**
      * At return: a late return is charged, and damage recorded during the rental keeps the vehicle
      * off the road. Late means more than LATE_RETURN_GRACE_MINUTES (60) after the scheduled return;
-     * each started day late is charged at the agreement's daily rate, plus the vehicle's chauffeur
-     * rate for a chauffeur rental. LATE_RETURN_CHARGE=off turns the charge off. It is an ordinary
+     * each started day late is charged at the agreement's daily rate, plus its chauffeur rate for a
+     * chauffeur rental. LATE_RETURN_CHARGE=off turns the charge off. It is an ordinary
      * charge, so finance can reverse it.
      */
     private function settleReturn(array $r,array $vehicle,int $actor): void
@@ -272,7 +272,7 @@ final class RentalService
             $late=(new DateTimeImmutable('now',$utc))->getTimestamp()-$due->getTimestamp();
             if($late>max(0,Config::int('LATE_RETURN_GRACE_MINUTES',60))*60){
                 $days=(int)ceil($late/86400);
-                $rateCents=$this->toCents((string)$r['daily_rate'])+($r['rental_type']==='chauffeur'&&$vehicle['chauffeur_daily_rate']!==null?$this->toCents((string)$vehicle['chauffeur_daily_rate']):0);
+                $rateCents=$this->toCents((string)$r['daily_rate'])+($r['rental_type']==='chauffeur'&&($r['chauffeur_daily_rate']??$vehicle['chauffeur_daily_rate'])!==null?$this->toCents((string)($r['chauffeur_daily_rate']??$vehicle['chauffeur_daily_rate'])):0);
                 if($rateCents>0)$this->charges->appendCharge($id,'fee',$this->centsToAmount($days*$rateCents),'Late return: '.$days.' day'.($days===1?'':'s').' at '.$this->pesos($rateCents).'/day (due '.$due->setTimezone(new DateTimeZone('Asia/Manila'))->format('M j, g:i A').')',$actor);
             }
         }

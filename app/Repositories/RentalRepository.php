@@ -29,9 +29,12 @@ final class RentalRepository
             if ($this->overlaps->vehicleConflicts((int)$v['vehicle_id'],$data['start_date'],$data['end_date'],null,$data['scheduled_pickup_at']??null,$data['scheduled_return_at']??null)) throw new RuntimeException('This vehicle already has a rental at that time. Check the pickup and return times.');
             $holdMinutes=max(1,min(1440,(int)$data['hold_minutes']));
             // The downpayment is a share of the rental as priced right now, and is stored so it never moves afterwards.
-            $downpaymentCents=self::downpaymentCents((string)$v['daily_rate'],$data['start_date'],$data['end_date'],(int)$data['downpayment_percent']);
-            $stmt=$this->db->prepare("INSERT INTO rental_agreements (booking_reference,booking_source,customer_id,vehicle_id,rental_type,start_date,end_date,scheduled_pickup_at,scheduled_return_at,daily_rate,security_deposit_amount,deposit_status,downpayment_amount,downpayment_status,hold_expires_at,status,created_by_user_id) VALUES (:reference,:source,:customer,:vehicle,:rental_type,:start_date,:end_date,:pickup,:return_at,:rate,:deposit,:deposit_status,:downpayment,:downpayment_status,DATE_ADD(UTC_TIMESTAMP(6), INTERVAL {$holdMinutes} MINUTE),'reserved',:actor)");
-            $stmt->execute(['reference'=>self::bookingReference(),'source'=>($data['booking_source']??'staff')==='online'?'online':'staff','customer'=>$data['customer_id'],'vehicle'=>$data['vehicle_id'],'rental_type'=>$data['rental_type'],'start_date'=>$data['start_date'],'end_date'=>$data['end_date'],'pickup'=>$data['scheduled_pickup_at'],'return_at'=>$data['scheduled_return_at'],'rate'=>$v['daily_rate'],'deposit'=>$data['deposit_amount'],'deposit_status'=>$data['deposit_amount']>0?'due':'not_required','downpayment'=>intdiv($downpaymentCents,100).'.'.str_pad((string)($downpaymentCents%100),2,'0',STR_PAD_LEFT),'downpayment_status'=>$downpaymentCents>0?'due':'not_required','actor'=>$actor]);
+            // For a chauffeur rental the chauffeur rate is part of the rental cost, so it counts towards the downpayment too.
+            $chauffeurRate=$data['rental_type']==='chauffeur'?$v['chauffeur_daily_rate']:null;
+            if($data['rental_type']==='chauffeur'&&$chauffeurRate===null) throw new RuntimeException('This vehicle is not available for chauffeur rentals.');
+            $downpaymentCents=self::downpaymentCents((string)$v['daily_rate'],$data['start_date'],$data['end_date'],(int)$data['downpayment_percent'],$chauffeurRate===null?null:(string)$chauffeurRate);
+            $stmt=$this->db->prepare("INSERT INTO rental_agreements (booking_reference,booking_source,customer_id,vehicle_id,rental_type,start_date,end_date,scheduled_pickup_at,scheduled_return_at,daily_rate,chauffeur_daily_rate,security_deposit_amount,deposit_status,downpayment_amount,downpayment_status,hold_expires_at,status,created_by_user_id) VALUES (:reference,:source,:customer,:vehicle,:rental_type,:start_date,:end_date,:pickup,:return_at,:rate,:chauffeur_rate,:deposit,:deposit_status,:downpayment,:downpayment_status,DATE_ADD(UTC_TIMESTAMP(6), INTERVAL {$holdMinutes} MINUTE),'reserved',:actor)");
+            $stmt->execute(['reference'=>self::bookingReference(),'source'=>($data['booking_source']??'staff')==='online'?'online':'staff','customer'=>$data['customer_id'],'vehicle'=>$data['vehicle_id'],'rental_type'=>$data['rental_type'],'start_date'=>$data['start_date'],'end_date'=>$data['end_date'],'pickup'=>$data['scheduled_pickup_at'],'return_at'=>$data['scheduled_return_at'],'rate'=>$v['daily_rate'],'chauffeur_rate'=>$chauffeurRate,'deposit'=>$data['deposit_amount'],'deposit_status'=>$data['deposit_amount']>0?'due':'not_required','downpayment'=>intdiv($downpaymentCents,100).'.'.str_pad((string)($downpaymentCents%100),2,'0',STR_PAD_LEFT),'downpayment_status'=>$downpaymentCents>0?'due':'not_required','actor'=>$actor]);
             $id=(int)$this->db->lastInsertId();
             $this->appendStatus($id,null,'reserved',null,$actor);
             $this->appendDeposit($id,null,$data['deposit_amount']>0?'due':'not_required',null,(string)$data['deposit_amount'],'Initial deposit state',$actor);
@@ -39,13 +42,17 @@ final class RentalRepository
         } catch (\Throwable $e) { if ($this->db->inTransaction()) $this->db->rollBack(); throw $e; }
     }
 
-    /** The same sum the database uses for base_amount (days billed x daily rate), then the share, rounded to the centavo. */
-    private static function downpaymentCents(string $dailyRate,string $start,string $end,int $percent): int
+    /**
+     * The rental cost as booked (days billed x daily rate, the same sum the database uses for
+     * base_amount, plus days billed x chauffeur rate for a chauffeur rental), then the share,
+     * rounded to the centavo.
+     */
+    private static function downpaymentCents(string $dailyRate,string $start,string $end,int $percent,?string $chauffeurRate=null): int
     {
         $days=max(1,(int)(new \DateTimeImmutable($start))->diff(new \DateTimeImmutable($end))->days);
-        [$whole,$fraction]=array_pad(explode('.',$dailyRate,2),2,'0');
-        $baseCents=$days*(((int)$whole*100)+(int)str_pad(substr($fraction,0,2),2,'0'));
-        return intdiv($baseCents*max(0,min(100,$percent))+50,100);
+        $cents=static function(string $amount): int{[$whole,$fraction]=array_pad(explode('.',$amount,2),2,'0');return ((int)$whole*100)+(int)str_pad(substr($fraction,0,2),2,'0');};
+        $costCents=$days*($cents($dailyRate)+($chauffeurRate===null?0:$cents($chauffeurRate)));
+        return intdiv($costCents*max(0,min(100,$percent))+50,100);
     }
 
     /** The code a customer quotes to find their booking: 8 characters with no 0/O or 1/I to misread. */
