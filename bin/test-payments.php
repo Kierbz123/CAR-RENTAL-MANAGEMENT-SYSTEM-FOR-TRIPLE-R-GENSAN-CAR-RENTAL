@@ -35,6 +35,9 @@ $gateway = new SimulatedGateway('test-secret-' . bin2hex(random_bytes(12)));
 $paymentRows = new PaymentRepository($db);
 $service = static fn (?SimulatedGateway $with): PaymentService => new PaymentService($db, $paymentRows, new RentalRepository($db, new BookingOverlapService($db)), $rentals, new PaymentProofRepository($db), new RulesAcceptanceRepository($db), new RateLimiter($db), new SecurityLogRepository($db), $with);
 $payments = $service($gateway);
+// Checks over the payments table look only at the rows this run writes: other suites leave
+// payments behind whose random references can look like a card number.
+$firstPaymentId = (int) $db->query('SELECT COALESCE(MAX(payment_id), 0) + 1 FROM payments')->fetchColumn();
 
 $passed = 0;
 $failed = 0;
@@ -106,10 +109,10 @@ $refused(fn () => $rentals->recordDownpayment($a, 'GC' . $run . '900', $actor), 
 $refused(fn () => $rentals->transition($a, 'confirm', $actor), 'Record the 30% downpayment', 'the reservation still cannot be confirmed');
 $paid = $finish($receipt, 'approved');
 $check(($paid['payment_status'] ?? '') === 'paid' && str_starts_with((string) $paid['external_reference'], 'DEMO-') && $paid['settled_at'] !== null && $agreement($a)['downpayment_status'] === 'received', 'when the wallet approves, the payment is paid and the downpayment is received, with the gateway\'s reference');
-$message = $db->prepare('SELECT recipient_phone, template_key, rendered_message FROM notifications WHERE idempotency_key = :key');
+$message = $db->prepare('SELECT recipient_phone, recipient_ciphertext, template_key, rendered_message FROM notifications WHERE idempotency_key = :key');
 $message->execute(['key' => 'payment-received-' . $paid['payment_id']]);
 $queued = $message->fetch();
-$text = $queued ? (new SmsMessageCipher())->decrypt((string) $queued['rendered_message'], SmsMessageCipher::context((string) $queued['recipient_phone'], (string) $queued['template_key'])) : '';
+$text = $queued ? (new SmsMessageCipher())->decrypt((string) $queued['rendered_message'], SmsMessageCipher::context((new \TripleR\Services\PhoneVault())->numberOf($queued['recipient_ciphertext'] ?? null, (string) $queued['recipient_phone']), (string) $queued['template_key'])) : '';
 $check(str_contains($text, 'received your downpayment of ₱3,000') && str_contains($text, $receipt) && str_contains($text, 'demonstration payment'), 'the customer is told it was received, with the receipt number, and that it was a demonstration', $text);
 $rentals->transition($a, 'confirm', $actor);
 $check($agreement($a)['status'] === 'confirmed', 'front desk can now confirm the reservation');
@@ -158,7 +161,7 @@ $goodCard = $gateway->testCard('4242-4242-4242-4242');
 $check(($finish($start($c, 'card'), 'verification_failed', $goodCard['detail'])['failure_reason'] ?? '') === 'The bank’s verification step was not passed', 'a good card whose bank verification fails is not charged');
 $charged = $finish($start($c, 'card'), 'approved', $goodCard['detail']);
 $check(($charged['payment_status'] ?? '') === 'paid' && $charged['method_detail'] === 'Visa ending 4242' && $charged['amount'] === '1800.00' && $agreement($c)['downpayment_status'] === 'received', 'a good card that passes verification pays the downpayment of ₱1,800');
-$check($count("SELECT COUNT(*) FROM payments WHERE CONCAT_WS('|', method_detail, external_reference, failure_reason) REGEXP '[0-9]{12,}'") === 0, 'no full card number is stored anywhere in the payments table');
+$check($count("SELECT COUNT(*) FROM payments WHERE payment_id >= {$firstPaymentId} AND CONCAT_WS('|', method_detail, external_reference, failure_reason) REGEXP '[0-9]{12,}'") === 0, 'no full card number is stored anywhere in the payments table');
 
 echo "\n== When paying online is not possible\n";
 $d = $book();
