@@ -134,10 +134,11 @@ final class DriverService
         });
     }
 
-    public function selectableForAssignment(): array
+    /** Active drivers whose license is valid today and, given a rental's last day, through that day. */
+    public function selectableForAssignment(?string $through = null): array
     {
         $today = (new DateTimeImmutable('now', new DateTimeZone('Asia/Manila')))->format('Y-m-d');
-        return $this->drivers->selectableForAssignment($today);
+        return $this->drivers->selectableForAssignment($through !== null && $through > $today ? $through : $today);
     }
 
     public function availableForAssignment(string $start, string $end, ?int $excludeAgreementId = null): array

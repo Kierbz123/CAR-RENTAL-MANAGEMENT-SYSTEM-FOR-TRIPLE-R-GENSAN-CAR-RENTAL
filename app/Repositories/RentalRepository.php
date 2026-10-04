@@ -20,12 +20,13 @@ final class RentalRepository
         try {
             $vehicle = $this->db->prepare('SELECT * FROM vehicles WHERE vehicle_id=:id AND deleted_at IS NULL FOR UPDATE');
             $vehicle->execute(['id'=>$data['vehicle_id']]); $v=$vehicle->fetch();
-            if (!$v || !in_array($v['current_status'],['available','reserved'],true)) throw new RuntimeException('Choose an available vehicle.');
+            // A vehicle out with another customer can still be booked for later dates; the overlap check below decides.
+            if (!$v || !in_array($v['current_status'],['available','reserved','rented'],true)) throw new RuntimeException('Choose an available vehicle.');
             $customer = $this->db->prepare('SELECT customer_id,is_blacklisted,deleted_at FROM customers WHERE customer_id=:id FOR UPDATE');
             $customer->execute(['id'=>$data['customer_id']]); $c=$customer->fetch();
             if (!$c || (int)$c['is_blacklisted']===1 || $c['deleted_at']!==null) throw new RuntimeException('Choose an eligible customer.');
             if ($data['rental_type'] !== 'self_drive' && $data['rental_type'] !== 'chauffeur') throw new RuntimeException('Invalid rental type.');
-            if ($this->overlaps->vehicleConflicts((int)$v['vehicle_id'],$data['start_date'],$data['end_date'])) throw new RuntimeException('This vehicle already has an overlapping rental.');
+            if ($this->overlaps->vehicleConflicts((int)$v['vehicle_id'],$data['start_date'],$data['end_date'],null,$data['scheduled_pickup_at']??null,$data['scheduled_return_at']??null)) throw new RuntimeException('This vehicle already has a rental at that time. Check the pickup and return times.');
             $holdMinutes=max(1,min(1440,(int)$data['hold_minutes']));
             // The downpayment is a share of the rental as priced right now, and is stored so it never moves afterwards.
             $downpaymentCents=self::downpaymentCents((string)$v['daily_rate'],$data['start_date'],$data['end_date'],(int)$data['downpayment_percent']);

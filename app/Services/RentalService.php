@@ -39,6 +39,7 @@ final class RentalService
         if ($rentalType === 'chauffeur' && (!$vehicleRow || $vehicleRow['chauffeur_daily_rate'] === null)) throw new RuntimeException('This vehicle is not available for chauffeur rentals.');
         $start=$this->date((string)($input['start_date']??''),'start date');$end=$this->date((string)($input['end_date']??''),'end date');
         if($end<$start)throw new RuntimeException('Return date must be the same day or after pickup date.');
+        $this->assertPeriodAllowed($start,$end);
         $pickup=$this->localDateTime((string)($input['scheduled_pickup_at']??''));$return=$this->localDateTime((string)($input['scheduled_return_at']??''));
         if($pickup===null||$return===null)throw new RuntimeException('Scheduled pickup and return times are required.');
         if((new DateTimeImmutable($pickup,new DateTimeZone('UTC')))->setTimezone(new DateTimeZone('Asia/Manila'))->format('Y-m-d')!==$start||(new DateTimeImmutable($return,new DateTimeZone('UTC')))->setTimezone(new DateTimeZone('Asia/Manila'))->format('Y-m-d')!==$end)throw new RuntimeException('Scheduled pickup and return times must fall on their selected Manila rental dates.');
@@ -90,7 +91,7 @@ final class RentalService
             if($action==='confirm'&&$r['downpayment_status']==='due')throw new RuntimeException('Record the '.self::DOWNPAYMENT_PERCENT.'% downpayment before confirming this reservation.');
             // A received downpayment stops the hold clock: the customer has paid, so the vehicle stays theirs.
             if($action==='confirm'&&$r['downpayment_status']!=='received'&&($r['hold_expires_at']===null||new DateTimeImmutable((string)$r['hold_expires_at'],new DateTimeZone('UTC'))<=new DateTimeImmutable('now',new DateTimeZone('UTC'))))throw new RuntimeException('The reservation hold has expired and cannot be confirmed.');
-            if($to==='confirmed'&&!in_array($vehicle['current_status'],['available','reserved'],true))throw new RuntimeException('The vehicle is no longer available for confirmation.');
+            if($to==='confirmed'&&!in_array($vehicle['current_status'],['available','reserved','rented'],true))throw new RuntimeException('The vehicle is no longer available for confirmation.');
             if($to==='active'&&$vehicle['current_status']!=='reserved')throw new RuntimeException('The vehicle is not in the reserved status required for pickup.');
             if($to==='returned'&&$vehicle['current_status']!=='rented')throw new RuntimeException('The vehicle is not marked rented.');
             if(in_array($action,['pickup','return'],true))$this->vehicleService->recordMileageInTransaction((int)$r['vehicle_id'],(int)$mileage,$locationId,$actor);
@@ -273,6 +274,21 @@ final class RentalService
         if($vehicle['current_status']!==$target)$this->vehicleService->transitionStatusInTransaction($vehicleId,$target,$actor);
     }
     private function invalidateLinks(int $id): void { $q=$this->db->prepare('UPDATE booking_access_tokens SET used_at=COALESCE(used_at,UTC_TIMESTAMP(6)),expires_at=LEAST(expires_at,UTC_TIMESTAMP(6)) WHERE booking_id=:id');$q->execute(['id'=>$id]); }
+    /**
+     * A pickup up to RENTAL_MAX_BACKDATE_DAYS (7) in the past is allowed, so a rental that already
+     * started can still be written down; earlier dates are almost always typing mistakes. A rental
+     * runs at most RENTAL_MAX_DAYS (90); the database refuses anything over 366 days whatever is set.
+     */
+    private function assertPeriodAllowed(string $start,string $end): void
+    {
+        $manila=new DateTimeZone('Asia/Manila');
+        $backdate=min(366,Config::int('RENTAL_MAX_BACKDATE_DAYS',7));
+        $earliest=(new DateTimeImmutable('today',$manila))->modify('-'.$backdate.' days')->format('Y-m-d');
+        if($start<$earliest)throw new RuntimeException($backdate===0?'The pickup date cannot be in the past.':'The pickup date can be at most '.$backdate.' day'.($backdate===1?'':'s').' in the past.');
+        $maxDays=max(1,min(366,Config::int('RENTAL_MAX_DAYS',90)));
+        $days=(int)(new DateTimeImmutable($start,$manila))->diff(new DateTimeImmutable($end,$manila))->days;
+        if($days>$maxDays)throw new RuntimeException('A rental can be at most '.$maxDays.' days long.');
+    }
     private function date(string $value,string $label): string { $d=DateTimeImmutable::createFromFormat('!Y-m-d',$value,new DateTimeZone('Asia/Manila'));if(!$d||$d->format('Y-m-d')!==$value)throw new RuntimeException('Enter a valid '.$label.'.');return $value; }
     private function localDateTime(string $value): ?string { if($value==='')return null;$d=DateTimeImmutable::createFromFormat('!Y-m-d\TH:i',$value,new DateTimeZone('Asia/Manila'));if(!$d||$d->format('Y-m-d\TH:i')!==$value)throw new RuntimeException('Enter a valid scheduled pickup and return time.');return $d->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s.u'); }
     private function money(string $value,string $label): string { $value=trim($value);if(!preg_match('/^\d{1,8}(?:\.\d{1,2})?$/',$value))throw new RuntimeException('Enter a valid '.$label.'.');[$a,$b]=array_pad(explode('.',$value,2),2,'');return $a.'.'.str_pad($b,2,'0'); }

@@ -198,7 +198,11 @@ final class OnlineBookingService
         }
 
         // Checked before a customer record is made, so a lost race for a vehicle leaves nothing behind.
-        if ($this->overlaps->vehicleConflicts((int) $vehicleId, $period['start'], $period['end'])) {
+        $utc = new DateTimeZone('UTC');
+        $manila = new DateTimeZone('Asia/Manila');
+        $pickupAt = (new DateTimeImmutable($period['start'] . ' ' . $time, $manila))->setTimezone($utc)->format('Y-m-d H:i:s');
+        $returnAt = (new DateTimeImmutable($period['end'] . ' ' . $time, $manila))->setTimezone($utc)->format('Y-m-d H:i:s');
+        if ($this->overlaps->vehicleConflicts((int) $vehicleId, $period['start'], $period['end'], null, $pickupAt, $returnAt)) {
             throw new RuntimeException('That vehicle was just booked for those dates. Please choose another vehicle or other dates.');
         }
         $actor = $this->systemActor();

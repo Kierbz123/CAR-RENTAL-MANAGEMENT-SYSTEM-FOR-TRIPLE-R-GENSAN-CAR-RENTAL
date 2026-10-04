@@ -49,7 +49,8 @@ $driverId2 = (int)$db->lastInsertId();
 $manila = new DateTimeZone('Asia/Manila');
 $today = new DateTimeImmutable('today', $manila);
 $expiredLicense = $today->modify('-1 day')->format('Y-m-d');
-$expiresToday = $today->format('Y-m-d');
+// Valid through the +42-day rental below; the test then expires it to check confirmation.
+$expiresToday = $today->modify('+60 days')->format('Y-m-d');
 $stmt = $db->prepare("INSERT INTO drivers (full_name, license_number_ciphertext, license_number_fingerprint, license_expiry) VALUES (?, ?, ?, ?)");
 $stmt->execute(["Driver Expired $r", "cipher-expired-$r", "hash-expired-$r", $expiredLicense]);
 $expiredDriverId = (int)$db->lastInsertId();
@@ -153,6 +154,11 @@ $licenseConfirmation = $rentalService->create([
     'deposit_amount' => '0',
     'hold_minutes' => 60
 ], $adminActor);
+// A license still valid today but expiring before the rental's last day is refused too.
+$midRentalExpiry = $db->prepare('UPDATE drivers SET license_expiry=:expiry WHERE driver_id=:id');
+$midRentalExpiry->execute(['expiry' => $today->modify('+41 days')->format('Y-m-d'), 'id' => $expiringDriverId]);
+assertException(fn() => $chauffeurService->assignDriver($licenseConfirmation, $expiringDriverId, $adminActor), 'before this rental ends', 'License expiring mid-rental rejected at assignment');
+$midRentalExpiry->execute(['expiry' => $expiresToday, 'id' => $expiringDriverId]);
 $chauffeurService->assignDriver($licenseConfirmation, $expiringDriverId, $adminActor);
 $expireLicense = $db->prepare('UPDATE drivers SET license_expiry=:expiry WHERE driver_id=:id');
 $expireLicense->execute(['expiry' => $expiredLicense, 'id' => $expiringDriverId]);

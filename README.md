@@ -261,6 +261,8 @@ schtasks.exe /Create /F /SC MINUTE /MO 1 /TN "TripleR-Consume-STOP" /TR '"C:\php
 See [docs/FEATURE_M5.md](docs/FEATURE_M5.md) for the exact state graph, lock order, SMS policy, and local acceptance checklist.
 Before beginning M6, run the consolidated [M1–M5 local runtime acceptance checklist](docs/LOCAL_ACCEPTANCE_M1_M5.md) and record pass/fail evidence for every section.
 
+
+**Double-booking protection.** A vehicle or driver conflicts with a booking when their Manila dates overlap (one booking may start on the day another ends) or, on any day, when the scheduled pickup and return times overlap, with `BOOKING_TURNAROUND_MINUTES` kept free between a return and the next pickup. The conflict check is a locking read (`FOR SHARE`), so two requests booking the same vehicle or driver at the same moment cannot both pass. The database itself allows only one `active` agreement per vehicle and per driver (migration 023). A vehicle that is out on a rental can still be booked and confirmed for later, non-overlapping dates. A staff booking may start up to `RENTAL_MAX_BACKDATE_DAYS` (7) in the past and last up to `RENTAL_MAX_DAYS` (90); a chauffeur's license must be valid through the rental's last day. `php bin/test-booking-integrity.php` checks all of this, including two simultaneous driver assignments.
 ## Downpayment (30%)
 
 A reservation needs a 30% downpayment before it can be confirmed. Bookings are made by front desk at the counter or by the customer online; the downpayment rules below are the same for both. The ways to pay it, online and at the counter, are in [Payments](#payments-every-method-and-the-simulated-checkout).

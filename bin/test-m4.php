@@ -161,6 +161,8 @@ $agreementId = $rentalService->create([
     'deposit_amount' => '0',
     'hold_minutes' => 60,
 ], 1);
+// A driver's license must be valid through the rental's last day to be assigned.
+$db->prepare('UPDATE drivers SET license_expiry=:expiry WHERE driver_id=:id')->execute(['expiry' => $rentalDate, 'id' => $driverId]);
 $chauffeurService->assignDriver($agreementId, $driverId, 1);
 expectFailure(fn() => $service->softDelete($driverId), 'open rental agreement', 'Driver soft-delete is blocked while a reserved agreement references the driver');
 

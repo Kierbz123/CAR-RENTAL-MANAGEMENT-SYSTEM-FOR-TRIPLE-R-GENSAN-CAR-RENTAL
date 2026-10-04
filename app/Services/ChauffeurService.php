@@ -29,10 +29,10 @@ final class ChauffeurService
             $this->rentals->lockCustomer((int)$snapshot['customer_id']);
             $driver = $this->rentals->lockDriver($driverId);
             if (!$driver || $driver['status'] !== 'active') throw new RuntimeException('Choose an active driver.');
-            if (!$this->licenseIsValidToday($driver)) throw new RuntimeException('The driver license has expired. Choose a driver with a valid license.');
+            $this->assertLicenseCovers($driver, (string)$snapshot['end_date'], 'Choose a driver with a valid license.');
 
-            // Check overlap
-            if ($this->overlaps->driverConflicts($driverId, $snapshot['start_date'], $snapshot['end_date'], $agreementId)) {
+            // A locking read, so a booking another request committed after this transaction began is seen.
+            if ($this->overlaps->driverConflicts($driverId, $snapshot['start_date'], $snapshot['end_date'], $agreementId, $snapshot['scheduled_pickup_at'], $snapshot['scheduled_return_at'])) {
                 throw new RuntimeException('This driver already has an overlapping rental assignment.');
             }
 
@@ -101,23 +101,25 @@ final class ChauffeurService
             if (!$driver || (int)$driver['driver_id'] !== (int)$agreement['driver_id'] || $driver['status'] !== 'active') {
                 throw new RuntimeException('The assigned driver is no longer active. Reassign an active driver before confirming.');
             }
-            if (!$this->licenseIsValidToday($driver)) {
-                throw new RuntimeException('The assigned driver license has expired. Reassign a driver with a valid license before confirming.');
-            }
-            if ($this->overlaps->driverConflicts((int)$agreement['driver_id'], $agreement['start_date'], $agreement['end_date'], (int)$agreement['agreement_id'])) {
+            $this->assertLicenseCovers($driver, (string)$agreement['end_date'], 'Reassign a driver with a valid license before confirming.', 'The assigned driver');
+            if ($this->overlaps->driverConflicts((int)$agreement['driver_id'], $agreement['start_date'], $agreement['end_date'], (int)$agreement['agreement_id'], $agreement['scheduled_pickup_at'], $agreement['scheduled_return_at'])) {
                 throw new RuntimeException('The assigned driver has an overlapping assignment. Reassign the driver before confirming.');
             }
         }
     }
 
-    private function licenseIsValidToday(array $driver): bool
+    /** The license must be valid today and still valid on the rental's last day. */
+    private function assertLicenseCovers(array $driver, string $rentalEnd, string $advice, string $who = 'The driver'): void
     {
         $manila = new DateTimeZone('Asia/Manila');
         $expiryValue = (string)($driver['license_expiry'] ?? '');
         $expiry = DateTimeImmutable::createFromFormat('!Y-m-d', $expiryValue, $manila);
-        return $expiry !== false
-            && $expiry->format('Y-m-d') === $expiryValue
-            && $expiry >= new DateTimeImmutable('today', $manila);
+        if ($expiry === false || $expiry->format('Y-m-d') !== $expiryValue || $expiry < new DateTimeImmutable('today', $manila)) {
+            throw new RuntimeException($who . ' license has expired. ' . $advice);
+        }
+        if ($expiryValue < $rentalEnd) {
+            throw new RuntimeException($who . ' license expires on ' . $expiryValue . ', before this rental ends. ' . $advice);
+        }
     }
 
     private function reverseChauffeurFee(int $agreementId, int $actor): void

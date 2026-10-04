@@ -69,7 +69,7 @@ final class AgreementController
                 $row['driver_name'] = $d ? $d['full_name'] : 'Unknown Driver';
             }
         }
-        $drivers = $this->driverService->selectableForAssignment();
+        $drivers = $this->driverService->selectableForAssignment((string)$row['end_date']);
         $notice=$_SESSION['_rental_notice']??null;unset($_SESSION['_rental_notice']);return $this->render('rentals/agreement-detail',['user'=>$user,'agreement'=>$row,'charges'=>$this->charges->forAgreement($id),'total'=>$this->service->total($id),'statusHistory'=>$this->rentals->statusHistory($id),'depositHistory'=>$this->rentals->depositHistory($id),'drivers'=>$drivers,'damageReports'=>$this->damage->forAgreement($id),'proofs'=>$this->proofs->forAgreement($id),'policyAcceptance'=>$this->rules->acceptanceForAgreement($id),'payments'=>$this->payments->forAgreement($id),'outstanding'=>$this->service->outstandingCents($id)/100,'notice'=>$notice]);
     }
 
