@@ -62,6 +62,22 @@ final class VehicleService
         } catch (\Throwable $e) { if ($ownsTransaction && $this->db->inTransaction()) $this->db->rollBack(); throw $e; }
     }
 
+    /**
+     * Takes a vehicle off the road after damage: severe → out_of_service, moderate → maintenance,
+     * minor → unchanged. Only a vehicle on the lot is moved (never one out on a rental), and severe
+     * damage overrides maintenance. Returns the new status, or null when nothing changed. A fleet
+     * manager puts the vehicle back once it is repaired. Caller holds the transaction.
+     */
+    public function holdForDamageInTransaction(int $id, string $severity, int $actor): ?string
+    {
+        $target = ['severe' => 'out_of_service', 'moderate' => 'maintenance'][$severity] ?? null;
+        $v = $target === null ? null : $this->vehicles->find($id, true);
+        $movable = $target === 'out_of_service' ? ['available','reserved','cleaning','maintenance'] : ['available','reserved','cleaning'];
+        if (!$v || !in_array($v['current_status'], $movable, true)) return null;
+        $this->transitionStatusInTransaction($id, $target, $actor);
+        return $target;
+    }
+
     /** Caller must already hold the surrounding rental transaction. */
     public function transitionStatusInTransaction(int $id, string $next, int $actor): void
     {

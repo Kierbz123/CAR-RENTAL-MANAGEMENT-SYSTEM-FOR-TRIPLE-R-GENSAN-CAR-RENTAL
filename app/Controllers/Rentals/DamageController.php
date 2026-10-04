@@ -19,7 +19,7 @@ final class DamageController
         $user=$this->guard->requireRoles(['front_desk','fleet_manager']);if($user instanceof Response)return $user;
         if(!Csrf::valid($request))return Response::html('Invalid request token.',403);
         $agreement=$this->id($request->form['agreement_id']??null);if(!$agreement)return Response::html('Invalid rental agreement.',422);
-        try{$this->damage->record($agreement,(string)($request->form['phase']??''),($request->form['has_damage']??'')==='1',$request->form,$this->uploads($request->files['photos']??[]),(int)$user['id']);$_SESSION['_rental_notice']='Damage inspection recorded.';}
+        try{$this->damage->record($agreement,(string)($request->form['phase']??''),($request->form['has_damage']??'')==='1',$request->form,$this->uploads($request->files['photos']??[]),(int)$user['id']);$held=$this->damage->vehicleHeldAs();$_SESSION['_rental_notice']='Damage inspection recorded.'.($held===null?'':' The vehicle is now '.($held==='out_of_service'?'out of service':'in maintenance').' and cannot be booked until a fleet manager makes it available again.');}
         catch(RuntimeException $e){$_SESSION['_rental_notice']=$e->getMessage();}
         return Response::redirect('/rentals/detail?agreement_id='.$agreement);
     }

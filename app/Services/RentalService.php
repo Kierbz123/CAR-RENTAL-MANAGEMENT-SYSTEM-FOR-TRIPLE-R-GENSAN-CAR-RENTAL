@@ -99,6 +99,7 @@ final class RentalService
             if($to==='confirmed'&&$vehicle['current_status']==='available')$this->vehicleService->transitionStatusInTransaction((int)$r['vehicle_id'],'reserved',$actor);
             if($to==='active')$this->vehicleService->transitionStatusInTransaction((int)$r['vehicle_id'],'rented',$actor);
             if($to==='returned'||(in_array($to,['cancelled','no_show'],true)&&$from==='confirmed'))$this->reconcileVehicleStatus((int)$r['vehicle_id'],$id,$actor);
+            if($to==='returned')$this->settleReturn($r,$vehicle,$actor);
             if(in_array($to,['completed','cancelled','no_show'],true))$this->invalidateLinks($id);
             if(in_array($to,['cancelled','no_show'],true)) {
                 $cList = $this->charges->forAgreement($id);
@@ -254,6 +255,32 @@ final class RentalService
     private function positiveId(mixed $v,string $name): int { $n=filter_var($v,FILTER_VALIDATE_INT);if($n===false||$n<1)throw new RuntimeException('Choose a valid '.$name.'.');return (int)$n; }
     private function totalCents(int $id): int{$r=$this->rentals->find($id);if(!$r)throw new RuntimeException('Rental agreement not found.');$total=$this->toCents((string)$r['base_amount']);foreach($this->charges->forAgreement($id) as $charge)$total+=$this->toCents((string)$charge['amount'])*self::CHARGE_SIGN[$charge['charge_type']]*($charge['entry_kind']==='reversal'?-1:1);return $total;}
     private function toCents(string $amount): int{[$whole,$fraction]=array_pad(explode('.', $amount,2),2,'0');return ((int)$whole*100)+(int)str_pad(substr($fraction,0,2),2,'0');}
+    /**
+     * At return: a late return is charged, and damage recorded during the rental keeps the vehicle
+     * off the road. Late means more than LATE_RETURN_GRACE_MINUTES (60) after the scheduled return;
+     * each started day late is charged at the agreement's daily rate, plus the vehicle's chauffeur
+     * rate for a chauffeur rental. LATE_RETURN_CHARGE=off turns the charge off. It is an ordinary
+     * charge, so finance can reverse it.
+     */
+    private function settleReturn(array $r,array $vehicle,int $actor): void
+    {
+        $id=(int)$r['agreement_id'];
+        $setting=strtolower(trim((string)(Config::get('LATE_RETURN_CHARGE','on')??'on')));
+        if($r['scheduled_return_at']!==null&&!in_array($setting,['0','off','false','no'],true)){
+            $utc=new DateTimeZone('UTC');
+            $due=new DateTimeImmutable((string)$r['scheduled_return_at'],$utc);
+            $late=(new DateTimeImmutable('now',$utc))->getTimestamp()-$due->getTimestamp();
+            if($late>max(0,Config::int('LATE_RETURN_GRACE_MINUTES',60))*60){
+                $days=(int)ceil($late/86400);
+                $rateCents=$this->toCents((string)$r['daily_rate'])+($r['rental_type']==='chauffeur'&&$vehicle['chauffeur_daily_rate']!==null?$this->toCents((string)$vehicle['chauffeur_daily_rate']):0);
+                if($rateCents>0)$this->charges->appendCharge($id,'fee',$this->centsToAmount($days*$rateCents),'Late return: '.$days.' day'.($days===1?'':'s').' at '.$this->pesos($rateCents).'/day (due '.$due->setTimezone(new DateTimeZone('Asia/Manila'))->format('M j, g:i A').')',$actor);
+            }
+        }
+        $worst=$this->db->prepare("SELECT severity FROM damage_reports WHERE agreement_id=:id AND phase='during' AND has_damage=1 ORDER BY FIELD(severity,'severe','moderate','minor') LIMIT 1");
+        $worst->execute(['id'=>$id]);$severity=$worst->fetchColumn();
+        if(is_string($severity))$this->vehicleService->holdForDamageInTransaction((int)$r['vehicle_id'],$severity,$actor);
+    }
+
     /** Shared fleet-status reconciliation after a rental releases its vehicle. */
     private function reconcileVehicleStatus(int $vehicleId,int $excludeAgreementId,int $actor): void
     {

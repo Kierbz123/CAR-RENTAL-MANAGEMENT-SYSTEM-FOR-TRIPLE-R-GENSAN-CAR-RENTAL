@@ -7,13 +7,24 @@ use PDO;
 use RuntimeException;
 use TripleR\Repositories\DamageReportRepository;
 use TripleR\Repositories\RentalRepository;
+use TripleR\Repositories\VehicleRepository;
+use TripleR\Repositories\VehicleStatusLogRepository;
 
 final class DamageService
 {
     private const PHASES=['pre','during','post'];
     private const SEVERITIES=['minor','moderate','severe'];
 
-    public function __construct(private readonly PDO $db,private readonly DamageReportRepository $reports,private readonly RentalRepository $rentals,private readonly VehiclePhotoService $photos,private readonly RentalService $rentalService) {}
+    private readonly VehicleService $vehicles;
+    /** The status the vehicle was moved to by the last record() call, or null when it was left alone. */
+    private ?string $vehicleHeldAs = null;
+
+    public function __construct(private readonly PDO $db,private readonly DamageReportRepository $reports,private readonly RentalRepository $rentals,private readonly VehiclePhotoService $photos,private readonly RentalService $rentalService,?VehicleService $vehicles=null)
+    {
+        $this->vehicles=$vehicles??new VehicleService($db,new VehicleRepository($db),new VehicleStatusLogRepository($db));
+    }
+
+    public function vehicleHeldAs(): ?string { return $this->vehicleHeldAs; }
 
     public function forAgreement(int $id): array { return $this->reports->forAgreement($id); }
     public function detail(int $reportId): ?array { return $this->reports->detail($reportId); }
@@ -40,6 +51,8 @@ final class DamageService
             if(!$valid)throw new RuntimeException('This inspection phase is not available for the agreement’s current status.');
             $reportId=$this->reports->appendReport($agreementId,$phase,$hasDamage,$hasDamage?$location:null,$hasDamage?$type:null,$hasDamage?$severity:null,$suggestion,$notes===''?null:$notes,$actor);
             foreach($uploads as $upload){$photo=$this->photos->storeEvidence($upload,'damage/'.$agreementId.'/'.$reportId);$stored[]=$photo['storage_path'];$this->reports->appendPhoto($reportId,$photo,$actor);}
+            // Damage found at return keeps the vehicle off the road until a fleet manager clears it.
+            $this->vehicleHeldAs=$hasDamage&&$phase==='post'?$this->vehicles->holdForDamageInTransaction((int)$agreement['vehicle_id'],$severity,$actor):null;
             $this->db->commit();return $reportId;
         }catch(\Throwable $e){if($this->db->inTransaction())$this->db->rollBack();foreach($stored as $path)$this->photos->removeEvidence($path);throw $e;}
     }
