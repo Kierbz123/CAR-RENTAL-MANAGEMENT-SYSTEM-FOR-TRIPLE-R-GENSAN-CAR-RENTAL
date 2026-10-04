@@ -147,7 +147,7 @@ try {
     $paymentService = new PaymentService($db, $paymentRepository, $rentalRepository, $rentalService, $paymentProofs, $rulesAcceptanceRepository, new RateLimiter($db), $securityLogs, $paymentGateway);
     $payments = new PaymentController($authMiddleware, $paymentProofs, $paymentProofService, $paymentRepository);
     $demoCheckout = new DemoCheckoutController($magicLinkService, $paymentService, $paymentGateway instanceof SimulatedGateway ? $paymentGateway : null);
-    $onlineBookings = new PublicBookingController(new OnlineBookingService($db, $rentalService, $rentalRepository, $vehicleRepository, $bookingOverlapService, $customerService, $rulesAcceptanceRepository, new RateLimiter($db)));
+    $onlineBookings = new PublicBookingController(new OnlineBookingService($db, $rentalService, $rentalRepository, $vehicleRepository, $bookingOverlapService, $customerService, $rulesAcceptanceRepository, new RateLimiter($db), $notificationService));
     $customerBooking = new CustomerBookingController($magicLinkService, $rentalRepository, $rentalService, $paymentProofs, $paymentProofService, $rulesAcceptanceRepository, $paymentRepository, $paymentService);
     $staffHome = new StaffHomeController($authMiddleware, new DashboardRepository($db), $paymentProofs);
     $damageController = new \TripleR\Controllers\Rentals\DamageController($authMiddleware, $damageService);
@@ -185,6 +185,7 @@ try {
     $router->get('/staff/booking-qr', static fn (): Response => $staffHome->bookingQr());
     $router->get('/book', static fn (Request $request): Response => $onlineBookings->form($request));
     $router->post('/book', static fn (Request $request): Response => $onlineBookings->submit($request));
+    $router->post('/book/verify', static fn (Request $request): Response => $onlineBookings->verify($request));
     $router->get('/book/find', static fn (): Response => $onlineBookings->findForm());
     $router->post('/book/find', static fn (Request $request): Response => $onlineBookings->find($request));
     $router->get('/payments', static fn (): Response => $payments->index());

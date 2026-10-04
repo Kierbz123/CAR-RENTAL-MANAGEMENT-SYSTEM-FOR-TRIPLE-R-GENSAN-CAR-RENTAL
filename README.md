@@ -307,6 +307,8 @@ A customer can book without an account and pay the downpayment from their own bo
 
 Checks: the "Online booking" section of `bin/test-roles-http.php` drives the whole flow through the real pages as a visitor, finance and front desk.
 
+
+**Who a booking belongs to, and how many can wait.** An online booking is filed under the customer who already owns its mobile number. So that nobody can file a booking (and its texts) under someone else's number, the visitor first types back a 6-digit code texted to it (`/book/verify`; the code is kept hashed in the session, lasts 10 minutes and allows five tries). `ONLINE_BOOKING_VERIFY_PHONE=auto` asks for the code on the live site and skips it while `config/site.php` has `'is_demo' => true`, because a demonstration may have no SMS provider; set `on` or `off` to force it. Each unpaid online reservation holds a vehicle for the whole hold, so at most `ONLINE_MAX_UNPAID_PER_ADDRESS` (3) may wait from one visitor address and `ONLINE_MAX_UNPAID_HOLDS` (15) across the site; a recorded downpayment frees the slot. `php bin/test-online-booking-guards.php` checks both.
 ## Live tracking: the tracker phone and the live map
 
 `/fleet/locations` shows a map with every vehicle that is out on rental. The positions are real: they come from the GPS of a phone travelling with the vehicle. Migration: `021_vehicle_tracking.sql`. Settings: `config/tracking.php`.

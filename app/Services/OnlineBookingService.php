@@ -7,10 +7,13 @@ use DateTimeImmutable;
 use DateTimeZone;
 use PDO;
 use RuntimeException;
+use TripleR\Config;
 use TripleR\Repositories\RentalRepository;
 use TripleR\Repositories\RulesAcceptanceRepository;
 use TripleR\Repositories\VehicleRepository;
+use TripleR\Security\BookingPhoneVerification;
 use TripleR\Support\PhoneNumber;
+use TripleR\Support\SiteProfile;
 
 /**
  * Booking by the customer, from the public site, with no account.
@@ -39,7 +42,64 @@ final class OnlineBookingService
         private readonly CustomerService $customers,
         private readonly RulesAcceptanceRepository $rules,
         private readonly RateLimiter $rateLimiter,
+        private readonly ?NotificationService $notifications = null,
     ) {
+    }
+
+    /**
+     * Whether a booking needs the visitor to prove the mobile number is theirs with a texted code.
+     * ONLINE_BOOKING_VERIFY_PHONE: "on", "off", or "auto" (the default), which is on for the live
+     * site and off while config/site.php says it is a demonstration, where texts may not be sent.
+     */
+    public function phoneVerificationRequired(): bool
+    {
+        $setting = strtolower(trim((string) (Config::get('ONLINE_BOOKING_VERIFY_PHONE', 'auto') ?? 'auto')));
+        if (in_array($setting, ['1', 'on', 'true', 'yes'], true)) {
+            return true;
+        }
+        if (in_array($setting, ['0', 'off', 'false', 'no'], true)) {
+            return false;
+        }
+        return SiteProfile::get('is_demo', true) !== true;
+    }
+
+    /** Texts a new 6-digit code to the number; returns the number as stored. */
+    public function sendPhoneCode(string $rawPhone, string $ip): string
+    {
+        try {
+            $phone = PhoneNumber::normalize($rawPhone);
+        } catch (\InvalidArgumentException) {
+            throw new RuntimeException('Enter a valid mobile number, for example 0917 123 4567.');
+        }
+        if (!$this->rateLimiter->allow('booking-code-phone', $phone, 3, 3600) || !$this->rateLimiter->allow('booking-code-ip', $ip, 10, 3600)) {
+            throw new RuntimeException('Too many codes were requested. Please wait an hour, or call the rental office to book.');
+        }
+        if ($this->notifications === null) {
+            throw new RuntimeException('Online booking is not available right now. Please call the rental office.');
+        }
+        $code = BookingPhoneVerification::issue($phone);
+        $this->notifications->enqueue($phone, 'booking.verify_code', 'Your Triple R Gensan booking code is ' . $code . '. It expires in ' . intdiv(BookingPhoneVerification::CODE_SECONDS, 60) . ' minutes. Do not share it with anyone.', 'transactional', 'high', 'booking-code:' . bin2hex(random_bytes(12)), true, null);
+        return $phone;
+    }
+
+    /**
+     * Unpaid online reservations hold vehicles for the whole hold period, so the number of them
+     * waiting at once is capped: per visitor address (ONLINE_MAX_UNPAID_PER_ADDRESS, 3) and in
+     * total (ONLINE_MAX_UNPAID_HOLDS, 15). Bookings with a recorded downpayment do not count.
+     */
+    private function assertHoldCapacity(string $ip): void
+    {
+        $waiting = "r.booking_source = 'online' AND r.status = 'reserved' AND r.downpayment_status = 'due' AND r.hold_expires_at > UTC_TIMESTAMP(6)";
+        $perAddress = max(1, Config::int('ONLINE_MAX_UNPAID_PER_ADDRESS', 3));
+        $mine = $this->db->prepare("SELECT COUNT(*) FROM rental_agreements r JOIN rules_acceptances a ON a.agreement_id = r.agreement_id AND a.action = 'accepted' WHERE {$waiting} AND a.ip_address = :ip");
+        $mine->execute(['ip' => $ip]);
+        if ((int) $mine->fetchColumn() >= $perAddress) {
+            throw new RuntimeException('Reservations made from this connection are still waiting for their downpayment. Pay for one of them first, or call the rental office.');
+        }
+        $total = (int) $this->db->query("SELECT COUNT(*) FROM rental_agreements r WHERE {$waiting}")->fetchColumn();
+        if ($total >= max(1, Config::int('ONLINE_MAX_UNPAID_HOLDS', 15))) {
+            throw new RuntimeException('Online booking is very busy right now. Please try again later, or call the rental office to book.');
+        }
     }
 
     /** The policy text the customer must accept, as currently published. */
@@ -196,6 +256,11 @@ final class OnlineBookingService
         if (!$this->rateLimiter->allow('online-booking-phone', $phone, 3, 86400)) {
             throw new RuntimeException('This mobile number has made several bookings today. Please call the rental office to book.');
         }
+        // The booking is filed under whoever owns this number, so the visitor proves it is theirs first.
+        if ($this->phoneVerificationRequired() && !BookingPhoneVerification::isVerified($phone)) {
+            throw new PhoneVerificationRequired($phone);
+        }
+        $this->assertHoldCapacity($ip);
 
         // Checked before a customer record is made, so a lost race for a vehicle leaves nothing behind.
         $utc = new DateTimeZone('UTC');

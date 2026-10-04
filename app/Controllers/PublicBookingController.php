@@ -7,8 +7,10 @@ use RuntimeException;
 use TripleR\Http\Request;
 use TripleR\Http\Response;
 use TripleR\Security\Csrf;
+use TripleR\Security\BookingPhoneVerification;
 use TripleR\Security\CustomerBookingAccess;
 use TripleR\Services\OnlineBookingService;
+use TripleR\Services\PhoneVerificationRequired;
 use TripleR\Support\SiteProfile;
 
 /** The public booking pages: choose dates and a vehicle, enter details, accept the policy. No sign-in. */
@@ -31,14 +33,63 @@ final class PublicBookingController
         if (!Csrf::valid($request)) {
             return $this->render($request->form, 'This page was open for a long time. Please check your details and send the booking again.', 403);
         }
+        return $this->complete($request->form, $request);
+    }
+
+    /** The code texted to the visitor's mobile number: confirm it and finish the booking, or send a new one. */
+    public function verify(Request $request): Response
+    {
+        $form = BookingPhoneVerification::heldForm();
+        if ($form === null) {
+            return Response::redirect('/book');
+        }
+        if (!Csrf::valid($request)) {
+            return $this->renderVerify(null, 'This page was open for a long time. Please enter the code again.', 403);
+        }
+        if (($request->form['resend'] ?? '') === '1') {
+            try {
+                $this->bookings->sendPhoneCode((string) ($form['phone'] ?? ''), $request->ip);
+            } catch (RuntimeException $error) {
+                return $this->renderVerify(null, $error->getMessage(), 429);
+            }
+            return $this->renderVerify('A new code is on its way.', null);
+        }
+        if (!BookingPhoneVerification::confirm((string) ($request->form['code'] ?? ''))) {
+            return $this->renderVerify(null, BookingPhoneVerification::pendingPhone() === null
+                ? 'That code has expired or was entered wrong too many times. Ask for a new code.'
+                : 'That code is not right. Check the text message and try again.', 422);
+        }
+        BookingPhoneVerification::clearForm();
+        return $this->complete($form, $request);
+    }
+
+    private function complete(array $form, Request $request): Response
+    {
         try {
-            $agreementId = $this->bookings->book($request->form, $request->ip, $request->userAgent);
+            $agreementId = $this->bookings->book($form, $request->ip, $request->userAgent);
+        } catch (PhoneVerificationRequired $needed) {
+            BookingPhoneVerification::holdForm($form);
+            try {
+                $this->bookings->sendPhoneCode($needed->phone, $request->ip);
+            } catch (RuntimeException $error) {
+                return $this->render($form, $error->getMessage(), 429);
+            }
+            return $this->renderVerify(null, null);
         } catch (RuntimeException $error) {
-            return $this->render($request->form, $error->getMessage(), 422);
+            return $this->render($form, $error->getMessage(), 422);
         }
         CustomerBookingAccess::grant($agreementId);
         $_SESSION['_booking_notice'] = 'Your vehicle is reserved. Pay the downpayment within 24 hours to keep it.';
         return Response::redirect('/customer/booking');
+    }
+
+    private function renderVerify(?string $notice, ?string $error, int $status = 200): Response
+    {
+        $phone = (string) (BookingPhoneVerification::heldForm()['phone'] ?? '');
+        $csrfToken = Csrf::token();
+        ob_start();
+        require APP_ROOT . '/app/Views/public/book-verify.php';
+        return Response::html((string) ob_get_clean(), $status);
     }
 
     public function findForm(): Response
