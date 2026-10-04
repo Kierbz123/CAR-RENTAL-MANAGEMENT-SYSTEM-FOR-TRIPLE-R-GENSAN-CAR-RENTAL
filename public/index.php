@@ -92,6 +92,17 @@ if ($isSmsWebhook) {
 
 Csrf::startSession();
 
+// Past post_max_size PHP drops the whole form, which would otherwise fail the CSRF check and
+// show "Invalid request token" for what is really a file that is too large.
+$postLimit = (static function (string $setting): int {
+    $value = (int) $setting;
+    return match (strtolower(substr(trim($setting), -1))) { 'g' => $value * 1073741824, 'm' => $value * 1048576, 'k' => $value * 1024, default => $value };
+})((string) ini_get('post_max_size'));
+if ($request->method === 'POST' && $postLimit > 0 && (int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > $postLimit) {
+    $tooLarge = 'The file is too large to upload. Photos and screenshots can be at most 8 MB. Go back and choose a smaller file.';
+    (str_starts_with($request->path, '/api/') ? Response::json(['error' => $tooLarge], 413) : Response::html($tooLarge, 413))->send();
+}
+
 try {
     $db = Database::connection();
     $users = new StaffUserRepository($db);

@@ -3,11 +3,13 @@ declare(strict_types=1);
 
 namespace TripleR\Controllers;
 
+use TripleR\Controllers\Customers\CustomerController;
 use TripleR\Http\Request;
 use TripleR\Http\Response;
 use TripleR\Http\AuthMiddleware;
 use TripleR\Repositories\NotificationRepository;
 use TripleR\Security\Csrf;
+use TripleR\Services\CustomerPiiCipher;
 use TripleR\Services\SmsMessageCipher;
 
 final class StaffNotificationController
@@ -38,13 +40,18 @@ final class StaffNotificationController
         }
         $limit = filter_var($request->query['limit'] ?? 50, FILTER_VALIDATE_INT);
         $limit = $limit === false ? 50 : max(1, min(200, $limit));
-        $history = array_map(function (array $item): array {
+        // Customer numbers are shown in full only to roles that may reveal customer contacts.
+        $fullNumbers = in_array($user['role'], CustomerController::REVEAL_ROLES, true);
+        $history = array_map(function (array $item) use ($fullNumbers): array {
             $item['message_preview'] = $this->messageCipher->staffPreview(
                 (string) $item['rendered_message'],
                 (string) $item['template_key'],
                 (string) $item['recipient_phone'],
             );
             unset($item['rendered_message']);
+            if (!$fullNumbers) {
+                $item['recipient_phone'] = CustomerPiiCipher::mask('phone', (string) $item['recipient_phone']);
+            }
             return $item;
         }, $this->notifications->history($limit));
         return Response::json([

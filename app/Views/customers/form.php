@@ -5,7 +5,9 @@ use TripleR\Support\StatusPresenter as Status;
 use TripleR\Support\View;
 
 $e = static fn (mixed $value): string => View::e($value);
-$c = $customer ?? [];
+// $old holds what was typed when a new customer could not be saved; strings only.
+$old = array_map(static fn (mixed $v): string => is_string($v) ? $v : '', $old ?? []);
+$c = $customer ?? $old;
 $editing = $customer !== null;
 $backHref = $editing ? '/customers/detail?customer_id=' . (int) $c['customer_id'] : '/customers';
 $crumbs = [['Customers', '/customers']];
@@ -49,8 +51,8 @@ View::begin('staff', ['title' => $editing ? 'Edit customer' : 'Add customer', 'c
     <div class="panel-body form-section">
         <div class="form-section-heading"><h2>Contact</h2><p>Optional now, encrypted when saved. A phone number is needed to send the booking link by SMS.</p></div>
         <div class="form-grid">
-            <label class="field"><span class="field-label">Phone</span><input name="phone" type="tel" maxlength="40" autocomplete="off"></label>
-            <label class="field"><span class="field-label">Email</span><input name="email" type="email" maxlength="254" autocomplete="off"></label>
+            <label class="field"><span class="field-label">Phone</span><input name="phone" type="tel" maxlength="40" autocomplete="off" value="<?= $e($old['phone'] ?? '') ?>"></label>
+            <label class="field"><span class="field-label">Email</span><input name="email" type="email" maxlength="254" autocomplete="off" value="<?= $e($old['email'] ?? '') ?>"></label>
         </div>
     </div>
     <div class="panel-body form-section">
@@ -60,12 +62,12 @@ View::begin('staff', ['title' => $editing ? 'Edit customer' : 'Add customer', 'c
                 <select name="document_type">
                     <option value="">None yet</option>
 <?php foreach ($documentTypes as $docType): ?>
-                    <option value="<?= $e($docType) ?>"><?= $e(Status::label($docType)) ?></option>
+                    <option value="<?= $e($docType) ?>"<?= ($old['document_type'] ?? '') === $docType ? ' selected' : '' ?>><?= $e(Status::label($docType)) ?></option>
 <?php endforeach; ?>
                 </select>
             </label>
-            <label class="field"><span class="field-label">Document number</span><input name="document_number" maxlength="100" autocomplete="off"></label>
-            <label class="field"><span class="field-label">Expiry date</span><input type="date" name="expires_on"></label>
+            <label class="field"><span class="field-label">Document number</span><input name="document_number" maxlength="100" autocomplete="off" value="<?= $e($old['document_number'] ?? '') ?>"></label>
+            <label class="field"><span class="field-label">Expiry date</span><input type="date" name="expires_on" value="<?= $e($old['expires_on'] ?? '') ?>"></label>
         </div>
     </div>
 <?php endif; ?>

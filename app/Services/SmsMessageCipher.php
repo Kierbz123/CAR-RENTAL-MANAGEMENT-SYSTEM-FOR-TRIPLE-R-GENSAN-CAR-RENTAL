@@ -76,6 +76,9 @@ final class SmsMessageCipher
         if (str_starts_with($templateKey, 'magic_link')) {
             return '[Magic-link content masked]';
         }
+        if ($templateKey === 'booking.verify_code') {
+            return '[Booking code masked]';
+        }
         try {
             return $this->decrypt($stored, $this->context($recipient, $templateKey));
         } catch (\Throwable) {

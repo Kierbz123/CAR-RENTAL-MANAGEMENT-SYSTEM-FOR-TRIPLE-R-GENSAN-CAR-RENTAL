@@ -5,7 +5,8 @@ use TripleR\Support\StatusPresenter as Status;
 use TripleR\Support\View;
 
 $e = static fn (mixed $value): string => View::e($value);
-$v = $vehicle ?? [];
+// $old holds what was typed when a new vehicle could not be saved; strings only.
+$v = $vehicle ?? array_map(static fn (mixed $value): string => is_string($value) ? $value : '', $old ?? []);
 $editing = $vehicle !== null;
 $backHref = $editing ? '/fleet/vehicles/detail?vehicle_id=' . (int) $v['vehicle_id'] : '/fleet/vehicles';
 $crumbs = [['Fleet', null], ['Vehicles', '/fleet/vehicles']];

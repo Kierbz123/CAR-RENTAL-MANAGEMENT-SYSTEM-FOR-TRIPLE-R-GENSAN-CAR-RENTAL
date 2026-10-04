@@ -17,6 +17,8 @@ use TripleR\Services\TelegramLinkService;
 final class CustomerController
 {
     private const ROLES=['system_admin','front_desk'];
+    /** Roles that may see customers' contact details in full, anywhere in the staff workspace. */
+    public const REVEAL_ROLES=self::ROLES;
     public function __construct(private readonly AuthMiddleware $guard,private readonly CustomerRepository $customers,private readonly CustomerService $service,private readonly CustomerPiiCipher $cipher,private readonly TelegramLinkService $telegram) {}
 
     public function index(Request $request): Response
@@ -37,8 +39,9 @@ final class CustomerController
         $user=$this->guard->requireRoles(self::ROLES); if ($user instanceof Response) return $user;
         if (!Csrf::valid($request)) return Response::html('Invalid request token.',403);
         try { $id=$this->service->create($request->form,(int)$user['id']); return Response::redirect('/customers/detail?customer_id='.$id); }
-        catch (PDOException $e) { if ($this->isDuplicate($e)) return $this->render('customers/form',['customer'=>null,'error'=>'A customer or identity document with those details already exists.','user'=>$user]); throw $e; }
-        catch (RuntimeException $e) { return $this->render('customers/form',['customer'=>null,'error'=>$e->getMessage(),'user'=>$user]); }
+        // On an error the form comes back with what was typed, so nothing has to be entered twice.
+        catch (PDOException $e) { if ($this->isDuplicate($e)) return $this->render('customers/form',['customer'=>null,'old'=>$request->form,'error'=>'A customer or identity document with those details already exists.','user'=>$user],409); throw $e; }
+        catch (RuntimeException $e) { return $this->render('customers/form',['customer'=>null,'old'=>$request->form,'error'=>$e->getMessage(),'user'=>$user],422); }
     }
 
     public function detail(Request $request): Response
@@ -66,7 +69,11 @@ final class CustomerController
         if (!Csrf::valid($request)) return Response::html('Invalid request token.',403);
         $id=$this->id($request->form['customer_id']??null); if (!$id) return Response::html('Invalid customer.',422);
         try { $this->service->update($id,$request->form); return Response::redirect('/customers/detail?customer_id='.$id); }
-        catch (RuntimeException $e) { return Response::html(htmlspecialchars($e->getMessage(),ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8'),422); }
+        catch (RuntimeException $e) {
+            $customer=$this->customers->find($id); if (!$customer) return Response::html('Customer not found.',404);
+            $typed=array_intersect_key($request->form,array_flip(['full_name','customer_type','company_name','referral_source']));
+            return $this->render('customers/form',['customer'=>array_merge($customer,array_map('strval',$typed)),'error'=>$e->getMessage(),'user'=>$user],422);
+        }
     }
 
     public function addContact(Request $request): Response
@@ -206,9 +213,9 @@ final class CustomerController
         $panel['pending']=$pending; return $panel;
     }
 
-    private function render(string $view,array $data): Response
+    private function render(string $view,array $data,int $status=200): Response
     {
-        $csrfToken=Csrf::token(); $types=['walk_in','online','corporate','repeat','referral']; $documentTypes=['ph_driver_license','passport','national_id','other_government_id']; extract($data,EXTR_SKIP); ob_start(); require APP_ROOT.'/app/Views/'.$view.'.php'; return Response::html((string)ob_get_clean());
+        $csrfToken=Csrf::token(); $types=['walk_in','online','corporate','repeat','referral']; $documentTypes=['ph_driver_license','passport','national_id','other_government_id']; extract($data,EXTR_SKIP); ob_start(); require APP_ROOT.'/app/Views/'.$view.'.php'; return Response::html((string)ob_get_clean(),$status);
     }
     private function id(mixed $value): ?int { $id=filter_var($value,FILTER_VALIDATE_INT); return $id!==false&&$id!==null&&$id>0?(int)$id:null; }
     private function isDuplicate(PDOException $error): bool { return (int)($error->errorInfo[1]??0)===1062; }

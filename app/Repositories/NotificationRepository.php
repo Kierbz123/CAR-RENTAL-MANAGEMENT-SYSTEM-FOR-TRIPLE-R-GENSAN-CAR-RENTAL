@@ -142,7 +142,7 @@ final class NotificationRepository
 
     public function markSent(int $id, string $claimToken, string $providerMessageId, string $providerStatus): bool
     {
-        $statement = $this->db->prepare("UPDATE notifications SET status = 'sent', provider_message_id = :message_id, provider_status = :provider_status, rendered_message = IF(LEFT(template_key,11)='magic_link.', '', rendered_message), sent_at = UTC_TIMESTAMP(), claim_token = NULL, claimed_at = NULL, last_error = NULL WHERE id = :id AND status = 'sending' AND claim_token = :token");
+        $statement = $this->db->prepare("UPDATE notifications SET status = 'sent', provider_message_id = :message_id, provider_status = :provider_status, rendered_message = IF((LEFT(template_key,11)='magic_link.' OR template_key='booking.verify_code'), '', rendered_message), sent_at = UTC_TIMESTAMP(), claim_token = NULL, claimed_at = NULL, last_error = NULL WHERE id = :id AND status = 'sending' AND claim_token = :token");
         $statement->execute(['id' => $id, 'token' => $claimToken, 'message_id' => substr($providerMessageId, 0, 191), 'provider_status' => substr($providerStatus, 0, 80)]);
         return $statement->rowCount() === 1;
     }
@@ -156,7 +156,7 @@ final class NotificationRepository
     public function markFailure(int $id, string $claimToken, string $error, bool $retry, int $delaySeconds, bool $preserveEncrypted = false): bool
     {
         $nextAttempt = gmdate('Y-m-d H:i:s', time() + max(1, $delaySeconds));
-        $statement = $this->db->prepare("UPDATE notifications SET status = IF(:retry = 1 AND attempt_count < max_attempts, 'queued', 'failed'), rendered_message = IF(LEFT(template_key,11)='magic_link.' AND (:redact = 1 OR attempt_count >= max_attempts) AND rendered_message LIKE 'smsenc:v1:%' AND :preserve = 0, '', rendered_message), retry_count = retry_count + IF(:retry_count = 1 AND attempt_count < max_attempts, 1, 0), next_attempt_at = IF(:next_retry = 1 AND attempt_count < max_attempts, :next_attempt, next_attempt_at), last_error = :error, claim_token = NULL, claimed_at = NULL WHERE id = :id AND status = 'sending' AND claim_token = :token");
+        $statement = $this->db->prepare("UPDATE notifications SET status = IF(:retry = 1 AND attempt_count < max_attempts, 'queued', 'failed'), rendered_message = IF((LEFT(template_key,11)='magic_link.' OR template_key='booking.verify_code') AND (:redact = 1 OR attempt_count >= max_attempts) AND rendered_message LIKE 'smsenc:v1:%' AND :preserve = 0, '', rendered_message), retry_count = retry_count + IF(:retry_count = 1 AND attempt_count < max_attempts, 1, 0), next_attempt_at = IF(:next_retry = 1 AND attempt_count < max_attempts, :next_attempt, next_attempt_at), last_error = :error, claim_token = NULL, claimed_at = NULL WHERE id = :id AND status = 'sending' AND claim_token = :token");
         $statement->execute([
             'retry' => $retry ? 1 : 0,
             'retry_count' => $retry ? 1 : 0,

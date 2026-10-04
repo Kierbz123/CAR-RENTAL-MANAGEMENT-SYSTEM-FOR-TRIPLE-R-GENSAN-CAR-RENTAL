@@ -45,8 +45,9 @@ final class VehicleController
         $user=$this->guard->requireRoles(self::ROLES); if ($user instanceof Response) return $user;
         if (!Csrf::valid($request)) return Response::html('Invalid request token.',403);
         try { $data=$this->service->validate($request->form); $id=$this->service->register($data,(int)$user['id']); return Response::redirect('/fleet/vehicles/detail?vehicle_id=' . $id); }
-        catch (PDOException $e) { if ((int)($e->errorInfo[1]??0)===1062) return $this->render('fleet/vehicle-form',['vehicle'=>null,'user'=>$user,'error'=>'Plate, engine, or chassis number is already in use.']); throw $e; }
-        catch (RuntimeException $e) { return $this->render('fleet/vehicle-form',['vehicle'=>null,'user'=>$user,'error'=>$e->getMessage()]); }
+        // On an error the form comes back with what was typed, so nothing has to be entered twice.
+        catch (PDOException $e) { if ((int)($e->errorInfo[1]??0)===1062) return $this->render('fleet/vehicle-form',['vehicle'=>null,'old'=>$request->form,'user'=>$user,'error'=>'Plate, engine, or chassis number is already in use.'],409); throw $e; }
+        catch (RuntimeException $e) { return $this->render('fleet/vehicle-form',['vehicle'=>null,'old'=>$request->form,'user'=>$user,'error'=>$e->getMessage()],422); }
     }
 
     public function update(Request $request): Response
@@ -55,8 +56,16 @@ final class VehicleController
         if (!Csrf::valid($request)) return Response::html('Invalid request token.',403);
         $id=$this->id($request->form['vehicle_id']??null); if (!$id) return Response::html('Invalid vehicle.',422);
         try { $data=$this->service->validate($request->form); $this->service->update($id,$data); return Response::redirect('/fleet/vehicles/detail?vehicle_id=' . $id); }
-        catch (PDOException $e) { if ((int)($e->errorInfo[1]??0)===1062) return Response::html('Plate, engine, or chassis number is already in use.',409); throw $e; }
-        catch (RuntimeException $e) { return Response::html(htmlspecialchars($e->getMessage(),ENT_QUOTES,'UTF-8'),422); }
+        catch (PDOException $e) { if ((int)($e->errorInfo[1]??0)===1062) return $this->editAgain($id,$request,$user,'Plate, engine, or chassis number is already in use.',409); throw $e; }
+        catch (RuntimeException $e) { return $this->editAgain($id,$request,$user,$e->getMessage(),422); }
+    }
+
+    /** The edit form again, with the error and the values that were typed. */
+    private function editAgain(int $id,Request $request,array $user,string $error,int $status): Response
+    {
+        $vehicle=$this->vehicles->find($id); if (!$vehicle) return Response::html('Vehicle not found.',404);
+        $typed=array_map(static fn(mixed $v): string => is_string($v)?$v:'',array_diff_key($request->form,['_csrf'=>1,'vehicle_id'=>1]));
+        return $this->render('fleet/vehicle-form',['vehicle'=>array_merge($vehicle,$typed),'user'=>$user,'error'=>$error],$status);
     }
 
     public function detail(Request $request): Response
@@ -143,9 +152,9 @@ final class VehicleController
         return Response::redirect('/fleet/locations');
     }
 
-    private function render(string $view,array $data): Response
+    private function render(string $view,array $data,int $status=200): Response
     {
-        $csrfToken=Csrf::token(); $statuses=VehicleService::STATUSES; $locations=$data['locations']??$this->locations->selectable(); $notice=$data['notice']??null; extract($data,EXTR_SKIP); ob_start(); require APP_ROOT . '/app/Views/' . $view . '.php'; return Response::html((string)ob_get_clean());
+        $csrfToken=Csrf::token(); $statuses=VehicleService::STATUSES; $locations=$data['locations']??$this->locations->selectable(); $notice=$data['notice']??null; extract($data,EXTR_SKIP); ob_start(); require APP_ROOT . '/app/Views/' . $view . '.php'; return Response::html((string)ob_get_clean(),$status);
     }
     private function id(mixed $value): ?int { $id=filter_var($value,FILTER_VALIDATE_INT); return $id!==false && $id!==null && $id>0?(int)$id:null; }
 }
