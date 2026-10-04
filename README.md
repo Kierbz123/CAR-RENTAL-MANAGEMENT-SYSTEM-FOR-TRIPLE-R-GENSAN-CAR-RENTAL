@@ -19,14 +19,24 @@ This project has no Composer dependencies. It uses PDO and PHP's built-in extens
    CREATE USER 'triple_r_app'@'127.0.0.1' IDENTIFIED BY 'replace-with-a-long-password';
    GRANT SELECT, INSERT, UPDATE ON triple_r_rental.* TO 'triple_r_app'@'127.0.0.1';
    CREATE USER 'triple_r_migrate'@'127.0.0.1' IDENTIFIED BY 'replace-with-a-different-long-password';
-   GRANT SELECT, INSERT, UPDATE, CREATE, ALTER, DROP, INDEX, TRIGGER, REFERENCES ON triple_r_rental.* TO 'triple_r_migrate'@'127.0.0.1';
+   GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, TRIGGER, REFERENCES ON triple_r_rental.* TO 'triple_r_migrate'@'127.0.0.1';
    ```
+
+   The migration account needs `DELETE` for migration 022, which removes the retired maintenance records. The runtime account still has none.
+
+   MySQL 8 has binary logging on by default, and then only an account with `SUPER` may create triggers. Allow the migration account to create them by running this once as an administrator (it relaxes a binary-logging safety check for stored programs and grants no privilege):
+
+   ```sql
+   SET PERSIST log_bin_trust_function_creators = 1;
+   ```
+
+   `bin/migrate.php` checks both of these, and any data a pending migration cannot accept, before it starts. If something is missing it stops with a message and changes nothing.
 
 2. Copy `.env.example` to `.env`, set the runtime database details, set `APP_BASE_URL` to the site's public origin, and change the example seed password. Before sending notifications, set the dedicated `SMS_CIPHER_KEY` to a base64-encoded 32-byte key generated with `php -r "echo base64_encode(random_bytes(32)), PHP_EOL;"`.
 
    PowerShell: `Copy-Item .env.example .env`  
    Bash: `cp .env.example .env`
-3. Apply the schema using the migration account, then remove its credentials from the shell before starting the web app. MySQL 8 DDL can implicitly commit, so migrations are forward-only and recorded in `schema_migrations` with SHA-256 checksums. The runner refuses changed applied files. If a migration fails partway, inspect and repair the schema manually, then add a new forward migration. Existing installations without checksums get a one-time baseline from their current migration files. Create the first administrator using the runtime account:
+3. Apply the schema using the migration account, then remove its credentials from the shell before starting the web app. MySQL 8 DDL can implicitly commit, so migrations are forward-only and recorded in `schema_migrations` with SHA-256 checksums. The runner refuses changed applied files. If a migration fails partway, inspect and repair the schema manually, then add a new forward migration. (A server where migration 022 stopped partway because the migration account had no `DELETE` privilege is missing the damage-photo guards, and running 022 again stops at `Trigger does not exist`. Grant `DELETE`, recreate the two `photos_guard_*` triggers exactly as they appear in `database/migrations/016_photos.sql`, then run `bin/migrate.php` again. Migration 023 recreates the 022 versions of those triggers.) Existing installations without checksums get a one-time baseline from their current migration files. Create the first administrator using the runtime account:
 
    ```powershell
    $env:DB_MIGRATION_USER = 'triple_r_migrate'

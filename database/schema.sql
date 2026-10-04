@@ -5,6 +5,8 @@
 -- No data-bearing legacy object is dropped by this file. Historical migrations remain
 -- immutable and are checksum-recorded below so bin/migrate.php verifies and skips them.
 
+SET NAMES utf8mb4;
+
 -- ==========================================
 -- USERS, AUTHENTICATION, AND SECURITY
 -- ==========================================
@@ -311,7 +313,14 @@ CREATE TABLE rental_agreements (
     created_by_user_id BIGINT UNSIGNED NOT NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    -- One active agreement per vehicle and per driver (NULL unless active, so history never collides).
+    active_vehicle_id BIGINT UNSIGNED GENERATED ALWAYS AS (CASE WHEN status = 'active' THEN vehicle_id END) STORED,
+    active_driver_id BIGINT UNSIGNED GENERATED ALWAYS AS (CASE WHEN status = 'active' THEN driver_id END) STORED,
     PRIMARY KEY (agreement_id),
+    UNIQUE KEY uq_rentals_one_active_per_vehicle (active_vehicle_id),
+    UNIQUE KEY uq_rentals_one_active_per_driver (active_driver_id),
+    KEY idx_rentals_vehicle_times (vehicle_id,status,scheduled_pickup_at,scheduled_return_at),
+    KEY idx_rentals_driver_times (driver_id,status,scheduled_pickup_at,scheduled_return_at),
     KEY idx_rentals_vehicle_dates_status (vehicle_id,start_date,end_date,status),
     KEY idx_rentals_customer_status (customer_id,status),
     KEY idx_rentals_status_dates (status,start_date,end_date),
@@ -322,6 +331,7 @@ CREATE TABLE rental_agreements (
     CONSTRAINT fk_rentals_driver FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE RESTRICT,
     CONSTRAINT fk_rentals_creator FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT,
     CONSTRAINT chk_rentals_dates CHECK (end_date >= start_date),
+    CONSTRAINT chk_rentals_length CHECK (DATEDIFF(end_date, start_date) <= 366),
     CONSTRAINT chk_rentals_rate CHECK (daily_rate >= 0),
     CONSTRAINT chk_rentals_deposit CHECK (security_deposit_amount >= 0),
     CONSTRAINT chk_rentals_scheduled_times CHECK (scheduled_pickup_at IS NULL OR scheduled_return_at IS NULL OR scheduled_return_at >= scheduled_pickup_at),
@@ -950,4 +960,5 @@ INSERT INTO schema_migrations (migration,checksum) VALUES
 ('019_online_booking.sql','b0f596c6bb57ead3d1c1896085404b651cfeda862b2111166a3cc2aff49a9ff7'),
 ('020_payments.sql','98c3b62a03c0554643faf1d5fd4e716a774b74b9136fafe0f93d3b9225724ba3'),
 ('021_vehicle_tracking.sql','340bad79ccf96c905708c423aa4300c2bd4263801f7142f44346b6617e4ebf12'),
-('022_remove_maintenance_and_roles.sql','15a6c63e07256e5a41fc1a3b21baeefadb43cccc4afe9518b03320f32d0b1777');
+('022_remove_maintenance_and_roles.sql','15a6c63e07256e5a41fc1a3b21baeefadb43cccc4afe9518b03320f32d0b1777'),
+('023_booking_guards.sql','11ca84b8ee68bfb9d97d6cf74d8756f19c41fae7f5b6b69449d4bc3da0c344d2');
