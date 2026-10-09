@@ -69,8 +69,9 @@ final class Response
         }
         header('X-Content-Type-Options: nosniff');
         header('Referrer-Policy: same-origin');
-        // Only the tracker phone page needs location; nothing on the site uses the camera or microphone.
-        header('Permissions-Policy: camera=(), microphone=(), payment=(), usb=(), geolocation=(self)');
+        // The tracker phone page needs location, and staff can take a record's photo with the camera.
+        // Both are for this site's own pages only; nothing uses the microphone.
+        header('Permissions-Policy: camera=(self), microphone=(), payment=(), usb=(), geolocation=(self)');
         if (TrustedProxy::isHttps($_SERVER)) {
             header('Strict-Transport-Security: max-age=31536000');
         }

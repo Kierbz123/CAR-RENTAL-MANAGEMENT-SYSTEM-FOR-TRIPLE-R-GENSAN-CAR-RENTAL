@@ -197,6 +197,13 @@ final class VehicleTrackingService
                 'quiet' => 'Last seen ' . self::duration($position['age_seconds']) . ' ago',
                 default => (int) $row['has_link'] === 1 ? 'Waiting for the phone' : 'No phone connected',
             };
+            // "Waiting for the phone" alone does not say whether the code was ever used, so say when it was made.
+            $note = null;
+            if ($state === 'none' && (int) $row['has_link'] === 1 && $row['link_created_at'] !== null) {
+                $note = 'Tracker code made ' . Format::datetime($row['link_created_at']) . '. No phone has reported with it yet; if it is old, make a new one.';
+            } elseif ($state !== 'none' && (int) $row['has_link'] !== 1) {
+                $note = 'The phone has been disconnected. This is where it last reported.';
+            }
             $alerts = [];
             if ($overdue) {
                 $alerts[] = 'Overdue by ' . self::duration((int) $row['overdue_seconds']);
@@ -216,6 +223,7 @@ final class VehicleTrackingService
                 'tone' => $overdue ? 'danger' : ($outside ? 'warning' : ($state === 'live' ? 'success' : 'neutral')),
                 'status' => $status,
                 'alerts' => $alerts,
+                'note' => $note,
                 'connected' => (int) $row['has_link'] === 1,
                 'position' => $position,
                 'detail_url' => '/rentals/detail?agreement_id=' . (int) $row['agreement_id'],
@@ -223,6 +231,22 @@ final class VehicleTrackingService
             ];
         }
         return $vehicles;
+    }
+
+    /**
+     * What the live map says about one rental, for staff who connect phones but cannot open the
+     * map. Null while the vehicle is not out on rental.
+     *
+     * @return array{status:string,tone:string,note:?string}|null
+     */
+    public function statusFor(int $agreementId): ?array
+    {
+        foreach ($this->feed() as $vehicle) {
+            if ($vehicle['agreement_id'] === $agreementId) {
+                return ['status' => $vehicle['status'], 'tone' => $vehicle['tone'], 'note' => $vehicle['note']];
+            }
+        }
+        return null;
     }
 
     /** The rental behind a token, or null (and a security-log entry) when the token opens nothing. */

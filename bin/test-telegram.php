@@ -244,6 +244,18 @@ $suppressed = $row($suppressedId);
 check($suppressed['status'] === 'suppressed_by_policy' && $suppressed['channel'] === 'telegram' && $suppressed['provider'] === 'telegram', 'non-transactional messages stay suppressed on every channel, and the row still says which channel it was for');
 check(count(array_filter(sentTo($chat(4)), static fn (array $m): bool => $m['text'] === 'Promo')) === 0, 'a suppressed message is never sent');
 
+check($notifications->sendDirect($customerA, $phoneA, '  Your car is ready at 3 PM.  ', "tg-{$run}-direct") === 'telegram', 'a message typed by staff is queued for the connected customer\'s Telegram');
+$notifications->processBatch(50);
+check(lastTextTo($chat(4)) === 'Your car is ready at 3 PM.', 'the customer receives it as typed, without the stray spaces');
+$typed = $notifications->directMessages($customerA);
+check(count($typed) === 1 && $typed[0]['status'] === 'sent' && $typed[0]['text'] === 'Your car is ready at 3 PM.', 'staff can read it back in the customer\'s message history');
+try {
+    $notifications->sendDirect($customerA, $phoneA, '   ', "tg-{$run}-blank");
+    check(false, 'a blank message is refused');
+} catch (DomainException) {
+    check(count($notifications->directMessages($customerA)) === 1, 'a blank message is refused and nothing is queued');
+}
+
 $tokenId = $magicLinks->issue($phoneA, null, 'booking_manage', null, null, null, $customerA);
 $linkRow = $db->prepare('SELECT * FROM notifications WHERE idempotency_key = :k');
 $linkRow->execute(['k' => 'magic-link:' . $tokenId]);

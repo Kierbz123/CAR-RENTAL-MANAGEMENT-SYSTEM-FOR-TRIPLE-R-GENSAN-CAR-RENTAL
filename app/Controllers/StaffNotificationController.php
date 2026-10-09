@@ -8,6 +8,7 @@ use TripleR\Http\Request;
 use TripleR\Http\Response;
 use TripleR\Http\AuthMiddleware;
 use TripleR\Repositories\NotificationRepository;
+use TripleR\Security\Access;
 use TripleR\Security\Csrf;
 use TripleR\Services\PhoneVault;
 use TripleR\Services\SmsMessageCipher;
@@ -23,7 +24,7 @@ final class StaffNotificationController
 
     public function index(): Response
     {
-        $user = $this->guard->requireRoles(['system_admin', 'fleet_manager']);
+        $user = $this->guard->requireRoles(Access::STAFF);
         if ($user instanceof Response) {
             return $user;
         }
@@ -34,14 +35,14 @@ final class StaffNotificationController
 
     public function history(Request $request): Response
     {
-        $user = $this->guard->requireRoles(['system_admin', 'fleet_manager'], true);
+        $user = $this->guard->requireRoles(Access::STAFF, true);
         if ($user instanceof Response) {
             return $user;
         }
         $limit = filter_var($request->query['limit'] ?? 50, FILTER_VALIDATE_INT);
         $limit = $limit === false ? 50 : max(1, min(200, $limit));
         // Customer numbers are shown in full only to roles that may reveal customer contacts.
-        $fullNumbers = in_array($user['role'], CustomerController::REVEAL_ROLES, true);
+        $fullNumbers = in_array($user['role'], Access::CUSTOMERS, true);
         $vault = new PhoneVault();
         $history = array_map(function (array $item) use ($fullNumbers, $vault): array {
             // Numbers are stored sealed (migration 026); older rows still hold them plainly.

@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 
+use TripleR\Security\Access;
 use TripleR\Support\Format;
 use TripleR\Support\PaymentMethods;
 use TripleR\Support\StatusPresenter as Status;
@@ -13,16 +14,17 @@ $s = $agreement['status'];
 $isChauffeur = $agreement['rental_type'] === 'chauffeur';
 
 // What this role may do. These only decide which controls are shown; the controllers enforce access.
-$canOps = in_array($role, ['system_admin', 'front_desk'], true);
-$canTrip = in_array($role, ['system_admin', 'front_desk', 'fleet_manager'], true);
-$canFinance = in_array($role, ['system_admin', 'finance_staff'], true);
-$canDriver = in_array($role, ['system_admin', 'front_desk', 'driver_coordinator'], true);
-$canInspect = in_array($role, ['front_desk', 'fleet_manager'], true);
-$canDecideLiability = in_array($role, ['fleet_manager', 'system_admin'], true);
-$canPostDamageCharge = $role === 'finance_staff';
+$has = static fn (array $roles): bool => in_array($role, $roles, true);
+$canOps = $has(Access::CUSTOMERS);
+$canTrip = $has(Access::STAFF);
+$canFinance = $has(Access::PAYMENTS);
+// Reversing a charge, and refunding or forfeiting a deposit, are the administrator's.
+$canMoneyOut = $has(Access::MONEY_OUT);
+$canDriver = $has(Access::DRIVER_ASSIGN);
+$canInspect = $has(Access::STAFF);
+$canDecideLiability = $has(Access::DAMAGE_DECIDE);
+$canPostDamageCharge = $canFinance;
 $closed = in_array($s, ['completed', 'cancelled', 'no_show'], true);
-// Driver coordinators only schedule drivers: they see the booking, its dates and the driver panel.
-$schedulingOnly = $role === 'driver_coordinator';
 
 $steps = ['reserved' => 'Reserved', 'confirmed' => 'Confirmed', 'active' => 'Active', 'returned' => 'Returned', 'completed' => 'Completed'];
 $stepKeys = array_keys($steps);
@@ -35,7 +37,7 @@ $defaultPhase = match ($s) { 'active' => 'during', 'returned', 'completed' => 'p
 
 $csrf = '<input type="hidden" name="_csrf" value="' . $e($csrfToken) . '"><input type="hidden" name="agreement_id" value="' . $id . '">';
 
-// The 30% downpayment: it is paid online, by a proof finance verifies, or at the counter, and a
+// The 30% downpayment: it is paid online, by a proof front desk verifies, or at the counter, and a
 // reservation cannot be confirmed before that.
 $downpayment = $agreement['downpayment_status'];
 $downpaymentRequired = $downpayment !== 'not_required';
@@ -64,14 +66,14 @@ $owesBalance = $downpayment === 'received' && $outstanding > 0;
 $canRecordDownpayment = $canFinance && $downpaymentDue && $s === 'reserved' && $paymentInProgress === null;
 $canRecordBalance = $canFinance && !$downpaymentDue && in_array($s, ['confirmed', 'active', 'returned'], true) && $outstanding > 0;
 $staffMethods = PaymentMethods::staff();
-// Proofs the customer sent from their booking page. Finance decides; finance and administrators may open the screenshot.
+// Proofs the customer sent from their booking page. Front desk and administrators decide them and may open the screenshot.
 $pendingProof = null;
 foreach ($proofs as $proof) {
     if ($proof['proof_status'] === 'submitted') {
         $pendingProof = $proof;
     }
 }
-$canSeeScreenshots = in_array($role, ['system_admin', 'finance_staff'], true);
+$canSeeScreenshots = $canFinance;
 $bookedOnline = $agreement['booking_source'] === 'online';
 
 // Lifecycle actions available to this role at this stage.
@@ -115,6 +117,9 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
         </div>
     </div>
     <div class="page-header-actions">
+<?php if ($canOps): ?>
+        <a class="button button-secondary" href="/customers/detail?customer_id=<?= (int) $agreement['customer_id'] ?>">Customer record</a>
+<?php endif; ?>
         <button class="button button-secondary" type="button" data-print hidden>Print</button>
     </div>
 </header>
@@ -137,7 +142,6 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
 
 <nav class="section-nav" aria-label="On this page">
 <?php if ($isChauffeur): ?><a href="#driver">Driver</a><?php endif; ?>
-<?php if (!$schedulingOnly): ?>
     <a href="#charges">Charges</a>
 <?php if ($downpaymentRequired): ?>
     <a href="#downpayment">Downpayment</a>
@@ -145,7 +149,6 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
     <a href="#payments">Payments<?= $payments ? ' (' . count($payments) . ')' : '' ?></a>
     <a href="#deposit">Deposit</a>
     <a href="#damage">Damage inspections<?= $damageReports ? ' (' . count($damageReports) . ')' : '' ?></a>
-<?php endif; ?>
     <a href="#history">History</a>
 </nav>
 
@@ -155,13 +158,13 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
         <section class="panel" aria-labelledby="next-title">
             <div class="panel-heading"><div><h2 id="next-title">Next step</h2><p><?= $e($nextStepHelp) ?></p></div></div>
             <div class="panel-body">
-<?php if ($s === 'reserved' && $downpaymentDue && !$schedulingOnly): ?>
+<?php if ($s === 'reserved' && $downpaymentDue): ?>
 <?php if ($pendingProof !== null): ?>
-                <p class="callout" role="status"><strong>The customer sent proof of the downpayment of <?= $e(Format::money($agreement['downpayment_amount'])) ?>.</strong> <?= $canFinance ? 'Check it under' : 'Finance checks it under' ?> <a href="#downpayment">Downpayment</a>. The reservation is not cancelled while the proof is waiting.</p>
+                <p class="callout" role="status"><strong>The customer sent proof of the downpayment of <?= $e(Format::money($agreement['downpayment_amount'])) ?>.</strong> <?= $canFinance ? 'Check it under' : 'Front desk checks it under' ?> <a href="#downpayment">Downpayment</a>. The reservation is not cancelled while the proof is waiting.</p>
 <?php elseif ($paymentInProgress !== null): ?>
                 <p class="callout" role="status"><strong>The customer is paying the downpayment of <?= $e(Format::money($agreement['downpayment_amount'])) ?> online right now.</strong> Their checkout is open until <?= $e(Format::time($paymentInProgress['expires_at'])) ?>. The reservation is not cancelled while it is open; reload to see the result.</p>
 <?php else: ?>
-                <p class="callout" role="status"><strong>Waiting for the downpayment of <?= $e(Format::money($agreement['downpayment_amount'])) ?>.</strong> The customer can pay it online or send a proof from their booking page. For a payment at the counter, <?= $canRecordDownpayment ? 'record it under' : 'finance records it under' ?> <a href="#downpayment">Downpayment</a>. The hold ends <?= $e(Format::datetime($agreement['hold_expires_at'])) ?>.</p>
+                <p class="callout" role="status"><strong>Waiting for the downpayment of <?= $e(Format::money($agreement['downpayment_amount'])) ?>.</strong> The customer can pay it online or send a proof from their booking page. For a payment at the counter, <?= $canRecordDownpayment ? 'record it under' : 'front desk records it under' ?> <a href="#downpayment">Downpayment</a>. The hold ends <?= $e(Format::datetime($agreement['hold_expires_at'])) ?>.</p>
 <?php endif; ?>
 <?php endif; ?>
 <?php if (!$hasAction && !$canRecordDownpayment): ?>
@@ -179,16 +182,18 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
                     <form class="inline-form" method="post" action="/rentals/action">
                         <?= $csrf ?>
                         <input type="hidden" name="action" value="pickup">
-                        <label class="field"><span class="field-label">Odometer at pickup (km)</span><input type="number" name="mileage" min="0" max="4294967295" step="1" required></label>
+                        <label class="field"><span class="field-label">Odometer at pickup (km)</span><input type="number" name="mileage" min="<?= (int) $agreement['vehicle_mileage'] ?>" max="4294967295" step="1" required aria-describedby="last-mileage"></label>
                         <button class="button button-primary" type="submit">Record pickup</button>
+                        <small class="field-hint" id="last-mileage">Last recorded: <?= $e(number_format((int) $agreement['vehicle_mileage'])) ?> km. The new reading cannot be lower.</small>
                     </form>
 <?php endif; ?>
 <?php if ($canReturn): ?>
                     <form class="inline-form" method="post" action="/rentals/action">
                         <?= $csrf ?>
                         <input type="hidden" name="action" value="return">
-                        <label class="field"><span class="field-label">Odometer at return (km)</span><input type="number" name="mileage" min="0" max="4294967295" step="1" required></label>
+                        <label class="field"><span class="field-label">Odometer at return (km)</span><input type="number" name="mileage" min="<?= (int) $agreement['vehicle_mileage'] ?>" max="4294967295" step="1" required aria-describedby="last-mileage"></label>
                         <button class="button button-primary" type="submit">Record return</button>
+                        <small class="field-hint" id="last-mileage">Last recorded: <?= $e(number_format((int) $agreement['vehicle_mileage'])) ?> km. The new reading cannot be lower.</small>
                     </form>
 <?php endif; ?>
 <?php if ($canComplete): ?>
@@ -264,7 +269,6 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
         </section>
 <?php endif; ?>
 
-<?php if (!$schedulingOnly): ?>
         <section class="panel" id="charges" aria-labelledby="charges-title">
             <div class="panel-heading"><div><h2 id="charges-title">Charges</h2><p>Fees, discounts and taxes on top of the base amount. Entries are never edited; a wrong one is reversed.</p></div></div>
             <div class="table-wrap">
@@ -278,16 +282,20 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
                             <td class="num"><?= $e(Format::money($c['amount'])) ?></td>
                             <td><span class="nowrap"><?= $e(Format::datetime($c['created_at'])) ?></span><span class="cell-sub"><?= $e($c['actor_email']) ?></span></td>
                             <td class="actions" data-label="">
-<?php if ($canFinance && $c['entry_kind'] === 'charge'): ?>
-                                <details class="disclosure">
-                                    <summary>Reverse</summary>
-                                    <form class="disclosure-body" method="post" action="/rentals/charge/reverse">
-                                        <?= $csrf ?>
-                                        <input type="hidden" name="charge_id" value="<?= (int) $c['charge_id'] ?>">
-                                        <label class="field"><span class="field-label">Reason for reversing</span><input name="reason" maxlength="490" required></label>
-                                        <div><button class="button button-danger button-small" type="submit">Reverse charge</button></div>
-                                    </form>
-                                </details>
+<?php if ($canMoneyOut && $c['entry_kind'] === 'charge' && !$c['is_reversed']): ?>
+<?php $reverseId = 'reverse-charge-' . (int) $c['charge_id']; ?>
+                                <button class="button button-secondary button-small" type="button" popovertarget="<?= $reverseId ?>">Reverse</button>
+                                <form class="app-dialog popover-dialog" popover id="<?= $reverseId ?>" method="post" action="/rentals/charge/reverse">
+                                    <?= $csrf ?>
+                                    <input type="hidden" name="charge_id" value="<?= (int) $c['charge_id'] ?>">
+                                    <h2>Reverse this charge?</h2>
+                                    <p><?= $e($c['description']) ?>, <?= $e(Format::money($c['amount'])) ?>. The entry stays on record and a reversal is added beside it.</p>
+                                    <label class="field"><span class="field-label">Reason for reversing</span><input name="reason" maxlength="490" required autofocus></label>
+                                    <div class="app-dialog-actions">
+                                        <button class="button button-ghost" type="button" popovertarget="<?= $reverseId ?>" popovertargetaction="hide">Keep charge</button>
+                                        <button class="button button-danger" type="submit">Reverse charge</button>
+                                    </div>
+                                </form>
 <?php endif; ?>
                             </td>
                         </tr>
@@ -299,11 +307,12 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
                 </table>
             </div>
 <?php if ($canFinance && !$closed): ?>
-            <form class="toolbar" method="post" action="/rentals/charge">
+            <form class="toolbar" method="post" action="/rentals/charge" data-charge-form data-tax-amount="<?= $e($taxQuote['amount']) ?>" data-tax-description="<?= $e($taxQuote['description']) ?>">
                 <?= $csrf ?>
                 <label class="field"><span class="field-label">Type</span>
                     <select name="charge_type">
 <?php foreach (['fee', 'discount', 'tax', 'damage', 'other'] as $chargeType): ?>
+<?php if ($chargeType === 'tax' && $taxQuote['recorded']) { continue; } ?>
                         <option value="<?= $chargeType ?>"><?= $e(Status::label($chargeType)) ?></option>
 <?php endforeach; ?>
                     </select>
@@ -311,13 +320,14 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
                 <label class="field"><span class="field-label">Amount (₱)</span><input name="amount" type="number" min="0.01" step="0.01" required></label>
                 <label class="field"><span class="field-label">Description</span><input name="description" maxlength="500" required></label>
                 <button class="button button-secondary" type="submit">Add charge</button>
+                <small class="field-hint"><?= $taxQuote['recorded'] ? 'Tax is already recorded. To work it out again after changing the charges, reverse it and add it again.' : 'Tax is worked out for you: ' . \TripleR\Services\RentalService::TAX_PERCENT . '% of the rental with its fees and discounts, as they stand when it is added.' ?></small>
             </form>
 <?php endif; ?>
         </section>
 
 <?php if ($downpaymentRequired): ?>
         <section class="panel" id="downpayment" aria-labelledby="downpayment-title">
-            <div class="panel-heading"><div><h2 id="downpayment-title">Downpayment</h2><p>30% of the rental as booked, paid before the reservation is confirmed: online, by a GCash proof that finance verifies, or at the counter. It is non-refundable. The balance is paid in person at pickup.</p></div><?= Status::badge('downpayment', $downpayment) ?></div>
+            <div class="panel-heading"><div><h2 id="downpayment-title">Downpayment</h2><p>30% of the rental as booked, paid before the reservation is confirmed: online, by a GCash proof that front desk verifies, or at the counter. It is non-refundable. The balance is paid in person at pickup.</p></div><?= Status::badge('downpayment', $downpayment) ?></div>
             <div class="panel-body">
                 <dl class="facts">
                     <div><dt>Downpayment</dt><dd><?= $e(Format::money($agreement['downpayment_amount'])) ?></dd></div>
@@ -342,7 +352,7 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
                             <tr>
                                 <td class="nowrap"><?= $e(Format::datetime($proof['submitted_at'])) ?></td>
                                 <td class="mono"><?= $e($proof['reference_number']) ?></td>
-                                <td><?php if ($canSeeScreenshots): ?><a href="/payments/proof?proof_id=<?= (int) $proof['proof_id'] ?>" target="_blank" rel="noopener">Open screenshot</a><?php else: ?><span class="muted">Finance only</span><?php endif; ?></td>
+                                <td><?php if ($canSeeScreenshots): ?><a href="/payments/proof?proof_id=<?= (int) $proof['proof_id'] ?>" target="_blank" rel="noopener">Open screenshot</a><?php else: ?><span class="muted">Front desk only</span><?php endif; ?></td>
                                 <td>
 <?php if ($proof['proof_status'] === 'submitted' && $canFinance): ?>
                                     <div class="cell-actions">
@@ -364,7 +374,7 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
                                         </details>
                                     </div>
 <?php elseif ($proof['proof_status'] === 'submitted'): ?>
-                                    <span class="badge badge-warning">Waiting for finance</span>
+                                    <span class="badge badge-warning">Waiting for front desk</span>
 <?php else: ?>
                                     <span class="badge <?= $proof['proof_status'] === 'verified' ? 'badge-success' : 'badge-danger' ?>"><?= $proof['proof_status'] === 'verified' ? 'Verified' : 'Rejected' ?></span>
                                     <span class="cell-sub"><?= $e(Format::datetime($proof['reviewed_at'])) ?> · <?= $e($proof['reviewed_by_email'] ?? '') ?><?= $proof['review_note'] ? ' · ' . $e($proof['review_note']) : '' ?></span>
@@ -386,13 +396,14 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
 <?php endforeach; ?>
                         </select>
                     </label>
-                    <label class="field"><span class="field-label">Reference number</span><input name="reference" maxlength="40" autocomplete="off" pattern="[A-Za-z0-9 \-]{6,40}"><small class="field-hint">For a payment made at the counter. Leave it blank for cash. For anything else, check the account first; each reference can be used once.</small></label>
+                    <label class="field"><span class="field-label">Reference number</span><input name="reference" maxlength="40" autocomplete="off" pattern="[A-Za-z0-9 \-]{6,40}" aria-describedby="downpayment-reference-hint"></label>
                     <button class="button button-primary" type="submit">Record downpayment</button>
+                    <small class="field-hint" id="downpayment-reference-hint">For a payment made at the counter. Leave the reference blank for cash. For anything else, check the account first; each reference can be used once.</small>
                 </form>
 <?php elseif ($downpaymentDue && $paymentInProgress !== null && $s === 'reserved'): ?>
                 <p class="muted">The customer has a checkout open. A payment at the counter can be recorded once it closes.</p>
 <?php elseif ($downpaymentDue && $s === 'reserved'): ?>
-                <p class="muted">Finance or an administrator records a payment made at the counter here.</p>
+                <p class="muted">Front desk or an administrator records a payment made at the counter here.</p>
 <?php elseif ($downpaymentDue): ?>
                 <p class="muted">No downpayment was received before this agreement ended.</p>
 <?php endif; ?>
@@ -440,11 +451,12 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
                     </select>
                 </label>
                 <label class="field"><span class="field-label">Amount (₱)</span><input name="amount" type="number" min="0.01" max="<?= $e(number_format($outstanding, 2, '.', '')) ?>" step="0.01" value="<?= $e(number_format($outstanding, 2, '.', '')) ?>" required></label>
-                <label class="field"><span class="field-label">Reference number</span><input name="reference" maxlength="40" autocomplete="off" pattern="[A-Za-z0-9 \-]{6,40}"><small class="field-hint">Leave it blank for cash.</small></label>
+                <label class="field"><span class="field-label">Reference number</span><input name="reference" maxlength="40" autocomplete="off" pattern="[A-Za-z0-9 \-]{6,40}" aria-describedby="balance-reference-hint"></label>
                 <button class="button button-primary" type="submit">Record balance payment</button>
+                <small class="field-hint" id="balance-reference-hint">Leave the reference blank for cash.</small>
             </form>
 <?php elseif ($owesBalance && !$closed): ?>
-            <p class="panel-note muted"><?= $s === 'reserved' ? 'The balance is recorded here once the reservation is confirmed.' : 'Finance or an administrator records the balance here when the customer pays it.' ?></p>
+            <p class="panel-note muted"><?= $s === 'reserved' ? 'The balance is recorded here once the reservation is confirmed.' : 'Front desk or an administrator records the balance here when the customer pays it.' ?></p>
 <?php endif; ?>
         </section>
 
@@ -474,14 +486,17 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
                 <?= $csrf ?>
                 <label class="field"><span class="field-label">Deposit status</span>
                     <select name="deposit_status">
-<?php foreach (['not_required', 'due', 'held', 'released', 'refunded', 'forfeited'] as $ds): ?>
-                        <option value="<?= $e($ds) ?>"<?= $agreement['deposit_status'] === $ds ? ' selected' : '' ?>><?= $e(Status::label($ds)) ?></option>
+<?php foreach ($canMoneyOut ? ['not_required', 'due', 'held', 'released', 'refunded', 'forfeited'] : ['not_required', 'due', 'held', 'released'] as $ds): ?>
+                        <option value="<?= $e($ds) ?>"<?= $agreement['deposit_status'] === $ds ? ' selected' : '' ?>><?= $e($ds === 'released' ? 'Released (returned in full at a clean return)' : Status::label($ds)) ?></option>
 <?php endforeach; ?>
                     </select>
                 </label>
                 <label class="field"><span class="field-label">Amount (₱)</span><input name="amount" type="number" min="0" step="0.01" value="<?= $e($agreement['security_deposit_amount']) ?>" required></label>
                 <label class="field"><span class="field-label">Reason</span><input name="reason" maxlength="500" required></label>
                 <button class="button button-secondary" type="submit">Record change</button>
+<?php if (!$canMoneyOut): ?>
+                <small class="field-hint">Refunding part of a deposit, keeping it, or reversing a charge is done by the System admin.</small>
+<?php endif; ?>
             </form>
 <?php endif; ?>
         </section>
@@ -591,8 +606,6 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
 <?php endforeach; ?>
         </section>
 
-<?php endif; ?>
-
         <section class="panel" id="history" aria-labelledby="history-title">
             <div class="panel-heading"><div><h2 id="history-title">History</h2><p>Times are in Manila time.</p></div></div>
             <div class="panel-body">
@@ -616,7 +629,6 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
     </div>
 
     <aside class="split-side" aria-label="Agreement summary">
-<?php if (!$schedulingOnly): ?>
         <section class="panel">
             <div class="panel-heading"><h2>Cost summary</h2></div>
             <div class="panel-body">
@@ -634,7 +646,6 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
                 </dl>
             </div>
         </section>
-<?php endif; ?>
         <section class="panel">
             <div class="panel-heading"><h2>Schedule</h2></div>
             <div class="panel-body">
@@ -663,10 +674,15 @@ View::begin('staff', ['title' => 'Agreement #' . $id, 'crumbs' => [['Agreements'
         <section class="panel">
             <div class="panel-heading"><div><h2>Customer’s booking link</h2><p>Sends a secure link to the customer’s booking page, where they see what to pay and send their proof. The customer needs a primary phone number. They can also open it with reference <span class="mono"><?= $e($agreement['booking_reference']) ?></span> and their mobile number.</p></div></div>
             <div class="panel-body">
+<?php if ($linkChannel === null): ?>
+                <p class="callout" role="status"><strong>This link cannot be sent yet.</strong> <?= $e($agreement['customer_name']) ?> is not connected to Telegram, and SMS is not set up on this installation. <a href="/customers/detail?customer_id=<?= (int) $agreement['customer_id'] ?>#telegram">Connect them to Telegram on their customer page</a>, then come back here.</p>
+<?php else: ?>
+                <p class="muted"><?= $linkChannel === 'telegram' ? 'Goes to this customer’s Telegram.' : 'Goes by SMS to this customer’s primary phone.' ?></p>
                 <form method="post" action="/rentals/link">
                     <?= $csrf ?>
                     <button class="button button-secondary" type="submit">Send booking link</button>
                 </form>
+<?php endif; ?>
             </div>
         </section>
 <?php endif; ?>

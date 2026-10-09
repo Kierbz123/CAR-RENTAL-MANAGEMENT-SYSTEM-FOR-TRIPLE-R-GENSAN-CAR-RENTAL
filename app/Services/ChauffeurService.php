@@ -66,6 +66,13 @@ final class ChauffeurService
         }
     }
 
+    /** The drivers this agreement could be given: the same overlap rule assignDriver() enforces, so the list never offers one it would refuse. */
+    public function withoutConflicts(array $agreement, array $drivers): array
+    {
+        // ponytail: one overlap query per driver; fold into a single query if the driver list grows past a few dozen.
+        return array_values(array_filter($drivers, fn (array $d): bool => !$this->overlaps->driverConflicts((int)$d['driver_id'], $agreement['start_date'], $agreement['end_date'], (int)$agreement['agreement_id'], $agreement['scheduled_pickup_at'], $agreement['scheduled_return_at'])));
+    }
+
     public function removeDriver(int $agreementId, int $actor): void
     {
         $this->db->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');

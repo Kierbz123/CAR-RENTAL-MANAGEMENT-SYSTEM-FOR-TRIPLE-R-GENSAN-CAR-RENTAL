@@ -27,6 +27,7 @@ final class Icon
         'clock' => '<circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 2"/>',
         'alert' => '<path d="M12 4 3.5 19h17z"/><path d="M12 10v4.5M12 16.8v.2"/>',
         'check' => '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+        'cash' => '<rect x="3.5" y="6.5" width="17" height="11" rx="1.5"/><circle cx="12" cy="12" r="2.4"/><path d="M6.8 9.8v.1M17.2 14.1v.1"/>',
         'phone' => '<path d="M6.5 4h3l1.5 4-2 1.5a11 11 0 0 0 5.5 5.5l1.5-2 4 1.5v3a1.5 1.5 0 0 1-1.6 1.5A15.5 15.5 0 0 1 5 5.6 1.5 1.5 0 0 1 6.5 4z"/>',
         'calendar' => '<rect x="4" y="5.5" width="16" height="14.5" rx="2"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/>',
         'printer' => '<path d="M7 9V4.5h10V9"/><rect x="4" y="9" width="16" height="7.5" rx="1.5"/><path d="M7 14h10v5.5H7z"/>',

@@ -9,6 +9,8 @@ $e = static fn (mixed $value): string => View::e($value);
 $deleted = $customer['deleted_at'] !== null;
 $blacklisted = (int) $customer['is_blacklisted'] === 1;
 $pendingCode = $telegram['pending'] ?? null;
+// Agreements still in progress, newest first: the header button opens the first one.
+$openRentals = array_values(array_filter($rentals, static fn (array $r): bool => in_array($r['status'], ['reserved', 'confirmed', 'active', 'returned'], true)));
 $telegramEnded = [
     'customer_stop' => 'the customer sent /stop',
     'staff' => 'disconnected by staff',
@@ -37,15 +39,33 @@ View::begin('staff', ['title' => (string) $customer['full_name'], 'crumbs' => [[
 <?php endif; ?>
         </div>
     </div>
-<?php if (!$deleted): ?>
     <div class="page-header-actions">
-        <a class="button button-primary" href="/customers/edit?customer_id=<?= (int) $customer['customer_id'] ?>">Edit customer</a>
-    </div>
+<?php if ($openRentals): ?>
+        <a class="button button-secondary" href="/rentals/detail?agreement_id=<?= (int) $openRentals[0]['agreement_id'] ?>">Open agreement #<?= (int) $openRentals[0]['agreement_id'] ?></a>
+<?php if (count($openRentals) > 1): ?>
+        <a class="button button-ghost" href="#rentals">All <?= count($openRentals) ?> open agreements</a>
 <?php endif; ?>
+<?php elseif ($rentals): ?>
+        <a class="button button-ghost" href="#rentals">Rental history</a>
+<?php endif; ?>
+<?php if (!$deleted && !$blacklisted): ?>
+        <a class="button button-secondary" href="/rentals/new?customer_id=<?= (int) $customer['customer_id'] ?>">New reservation</a>
+<?php endif; ?>
+<?php if (!$deleted): ?>
+        <a class="button button-primary" href="/customers/edit?customer_id=<?= (int) $customer['customer_id'] ?>">Edit customer</a>
+<?php endif; ?>
+    </div>
 </header>
 </div>
 <?php if ($notice): ?>
 <p class="notice" role="status"><?= $e($notice) ?></p>
+<?php endif; ?>
+<?php if ($sameName && !$deleted): ?>
+<p class="callout" role="status"><strong>There is another customer record with this name.</strong> Agreements, contacts and the Telegram connection each belong to one record only, so check this is the one you mean.
+<?php foreach ($sameName as $other): ?>
+    <a href="/customers/detail?customer_id=<?= (int) $other['customer_id'] ?>"><?= $e($other['full_name']) ?>, <?= $other['company_name'] ? $e($other['company_name']) : 'no company' ?>, <?= $e(Format::plural((int) $other['rental_count'], 'agreement')) ?></a>
+<?php endforeach; ?>
+</p>
 <?php endif; ?>
 <?php if ($blacklisted && !$deleted): ?>
 <p class="callout" role="status"><strong>Blacklisted since <?= $e(Format::datetime($customer['blacklisted_at'])) ?>.</strong> <?= $e($customer['blacklist_reason']) ?></p>
@@ -189,7 +209,7 @@ View::begin('staff', ['title' => (string) $customer['full_name'], 'crumbs' => [[
 <?php endif; ?>
         </section>
 
-        <section class="panel" aria-labelledby="rentals-title">
+        <section class="panel" id="rentals" aria-labelledby="rentals-title">
             <div class="panel-heading"><h2 id="rentals-title">Rental history</h2></div>
             <div class="table-wrap">
                 <table class="data-table" data-stack>
@@ -213,6 +233,31 @@ View::begin('staff', ['title' => (string) $customer['full_name'], 'crumbs' => [[
     </div>
 
     <aside class="split-side" aria-label="Notes and status">
+        <section class="panel" aria-labelledby="photo-title">
+            <div class="panel-heading"><div><h2 id="photo-title">Photo</h2><p>JPEG, PNG or WebP, up to 8 MB.</p></div></div>
+            <div class="panel-body profile-photo">
+                <?= View::avatar($hasPhoto ? '/customers/photo?customer_id=' . (int) $customer['customer_id'] : null, (string) $customer['full_name'], 'avatar avatar--large') ?>
+
+<?php if (!$deleted): ?>
+                <div class="profile-photo-actions">
+                    <form method="post" action="/customers/photo/upload" enctype="multipart/form-data" class="cell-actions cell-actions--start">
+                        <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
+                        <input type="hidden" name="customer_id" value="<?= (int) $customer['customer_id'] ?>">
+                        <label class="button button-secondary"><?= $hasPhoto ? 'Replace photo' : 'Choose a photo' ?><input class="visually-hidden" type="file" name="photo" accept="image/jpeg,image/png,image/webp" required data-auto-submit></label>
+                        <button class="button button-secondary" type="button" data-take-photo hidden>Take photo</button>
+                        <noscript><button class="button button-primary" type="submit">Upload</button></noscript>
+                    </form>
+<?php if ($hasPhoto): ?>
+                    <form method="post" action="/customers/photo/remove" data-confirm="Remove the photo of <?= $e($customer['full_name']) ?>?" data-confirm-action="Remove photo">
+                        <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
+                        <input type="hidden" name="customer_id" value="<?= (int) $customer['customer_id'] ?>">
+                        <button class="button button-danger-quiet button-small" type="submit">Remove photo</button>
+                    </form>
+<?php endif; ?>
+                </div>
+<?php endif; ?>
+            </div>
+        </section>
         <section class="panel" aria-labelledby="notes-title">
             <div class="panel-heading"><div><h2 id="notes-title">Staff notes</h2><p>Notes are added, never edited.</p></div></div>
 <?php if (!$deleted): ?>
@@ -255,11 +300,14 @@ View::begin('staff', ['title' => (string) $customer['full_name'], 'crumbs' => [[
                 <p class="muted">Telegram is not set up on this installation yet. Once the bot token and username are added to the configuration, customers can be connected from here.</p>
 <?php elseif ($telegram['connected']): ?>
                 <p>Connected since <?= $e(Format::datetime($telegram['linked_at'])) ?>. This customer’s messages are sent to their Telegram chat. They can send <span class="mono">/stop</span> to the bot at any time.</p>
-                <form method="post" action="/customers/telegram/disconnect" data-confirm="Disconnect <?= $e($customer['full_name']) ?> from Telegram? Their messages will go by SMS until they connect again." data-confirm-action="Disconnect">
-                    <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
-                    <input type="hidden" name="customer_id" value="<?= (int) $customer['customer_id'] ?>">
-                    <button class="button button-danger" type="submit">Disconnect Telegram</button>
-                </form>
+                <div class="cell-actions cell-actions--start">
+                    <a class="button button-secondary" href="/customers/message?customer_id=<?= (int) $customer['customer_id'] ?>">Send a message</a>
+                    <form method="post" action="/customers/telegram/disconnect" data-confirm="Disconnect <?= $e($customer['full_name']) ?> from Telegram? Their messages will go by SMS until they connect again." data-confirm-action="Disconnect">
+                        <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
+                        <input type="hidden" name="customer_id" value="<?= (int) $customer['customer_id'] ?>">
+                        <button class="button button-danger" type="submit">Disconnect Telegram</button>
+                    </form>
+                </div>
 <?php else: ?>
 <?php if ($telegram['last_ended_at']): ?>
                 <p class="muted">The last connection ended on <?= $e(Format::datetime($telegram['last_ended_at'])) ?>: <?= $e($telegramEnded[$telegram['last_ended_reason']] ?? 'ended') ?><?= $telegram['last_ended_by'] ? ' (' . $e($telegram['last_ended_by']) . ')' : '' ?>.</p>
@@ -281,6 +329,9 @@ View::begin('staff', ['title' => (string) $customer['full_name'], 'crumbs' => [[
                     <input type="hidden" name="customer_id" value="<?= (int) $customer['customer_id'] ?>">
                     <button class="button <?= $pendingCode ? 'button-secondary' : 'button-primary' ?>" type="submit"><?= $pendingCode ? 'Create a new QR code' : 'Show Telegram QR code' ?></button>
                 </form>
+<?php endif; ?>
+<?php if (!$telegram['connected'] && $messageChannel !== null): ?>
+                <a class="button button-secondary" href="/customers/message?customer_id=<?= (int) $customer['customer_id'] ?>">Send a message by SMS</a>
 <?php endif; ?>
             </div>
         </section>

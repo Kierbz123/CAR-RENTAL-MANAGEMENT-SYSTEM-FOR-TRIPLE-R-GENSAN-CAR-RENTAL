@@ -15,6 +15,10 @@ use TripleR\Support\PhoneNumber;
 
 final class NotificationService
 {
+    /** Messages a staff member typed to one customer, from that customer's page. */
+    public const DIRECT_TEMPLATE = 'staff.direct_message';
+    public const DIRECT_MAX_LENGTH = 600;
+
     private ?PhoneVault $vault = null;
 
     public function __construct(
@@ -24,6 +28,18 @@ final class NotificationService
         private readonly ?RulesAcceptanceRepository $rulesAcceptances = null,
         private readonly ?TelegramLinkService $telegram = null,
     ) {
+    }
+
+    /**
+     * Where a message for this customer would go right now: 'telegram', 'sms', or null when
+     * neither can deliver (no Telegram connection, and no SMS provider key on this installation).
+     */
+    public function channelFor(?int $customerId): ?string
+    {
+        if ($customerId !== null && $this->telegram !== null && $this->telegram->isConfigured() && $this->telegram->activeLink($customerId) !== null) {
+            return 'telegram';
+        }
+        return SmsProviderFactory::smsConfigured() ? 'sms' : null;
     }
 
     /**
@@ -117,6 +133,38 @@ final class NotificationService
             }
             throw $error;
         }
+    }
+
+    /**
+     * Queues a message a staff member typed for one customer, and returns the channel it was
+     * queued for. Refuses, without counting toward the daily limit, when nothing could deliver it.
+     */
+    public function sendDirect(int $customerId, string $phone, string $text, ?string $idempotencyKey = null): string
+    {
+        $text = trim($text);
+        if ($text === '' || mb_strlen($text) > self::DIRECT_MAX_LENGTH) {
+            throw new \DomainException('Write a message of up to ' . self::DIRECT_MAX_LENGTH . ' characters.');
+        }
+        $channel = $this->channelFor($customerId);
+        if ($channel === null) {
+            throw new \DomainException('The message was not sent: this customer is not connected to Telegram, and SMS is not set up on this installation.');
+        }
+        $this->enqueue($phone, self::DIRECT_TEMPLATE, $text, 'transactional', 'normal', $idempotencyKey, false, $customerId);
+        return $channel;
+    }
+
+    /** The messages staff typed to this customer, newest first, each with its text readable again as 'text'. */
+    public function directMessages(int $customerId, int $limit = 20): array
+    {
+        return array_map(function (array $item): array {
+            try {
+                $number = $this->recipientOf($item);
+            } catch (\Throwable) {
+                $number = (string) $item['recipient_phone'];
+            }
+            $item['text'] = $this->messageCipher->staffPreview((string) $item['rendered_message'], (string) $item['template_key'], $number);
+            return $item;
+        }, $this->notifications->forCustomer($customerId, self::DIRECT_TEMPLATE, $limit));
     }
 
     public function processBatch(int $batchSize = 25): array

@@ -79,7 +79,7 @@ View::begin('staff', ['title' => (string) $driver['full_name'], 'crumbs' => [['F
 <?php foreach ($contacts as $contact): ?>
                         <tr>
                             <td><?= $e(Status::label($contact['contact_type'])) ?></td>
-                            <td><span data-pii-value><?= $e($contact['display']) ?></span><?php if ($canReveal): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="contact" data-record-id="<?= (int) $contact['contact_id'] ?>">Reveal</button><?php endif; ?></td>
+                            <td><span data-pii-value><?= $e($contact['display']) ?></span><?php if ($contact['can_reveal']): ?> <button type="button" class="button button-secondary button-small" data-reveal-kind="contact" data-record-id="<?= (int) $contact['contact_id'] ?>">Reveal</button><?php endif; ?></td>
                             <td><?= (int) $contact['is_primary'] === 1 ? '<span class="badge badge-info">Primary</span>' : '—' ?></td>
                             <td class="actions">
 <?php if ($canEdit): ?>
@@ -139,6 +139,51 @@ View::begin('staff', ['title' => (string) $driver['full_name'], 'crumbs' => [['F
     </div>
 
     <aside class="split-side" aria-label="Status and record">
+        <section class="panel" aria-labelledby="photo-title">
+            <div class="panel-heading"><div><h2 id="photo-title">Photo</h2><p>JPEG, PNG or WebP, up to 8 MB.</p></div></div>
+            <div class="panel-body profile-photo">
+                <?= View::avatar($hasPhoto ? '/fleet/drivers/photo?driver_id=' . (int) $driver['driver_id'] : null, (string) $driver['full_name'], 'avatar avatar--large') ?>
+
+<?php if ($canEdit): ?>
+                <div class="profile-photo-actions">
+                    <form method="post" action="/fleet/drivers/photo/upload" enctype="multipart/form-data" class="cell-actions cell-actions--start">
+                        <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
+                        <input type="hidden" name="driver_id" value="<?= (int) $driver['driver_id'] ?>">
+                        <label class="button button-secondary"><?= $hasPhoto ? 'Replace photo' : 'Choose a photo' ?><input class="visually-hidden" type="file" name="photo" accept="image/jpeg,image/png,image/webp" required data-auto-submit></label>
+                        <button class="button button-secondary" type="button" data-take-photo hidden>Take photo</button>
+                        <noscript><button class="button button-primary" type="submit">Upload</button></noscript>
+                    </form>
+<?php if ($hasPhoto): ?>
+                    <form method="post" action="/fleet/drivers/photo/remove" data-confirm="Remove the photo of <?= $e($driver['full_name']) ?>?" data-confirm-action="Remove photo">
+                        <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
+                        <input type="hidden" name="driver_id" value="<?= (int) $driver['driver_id'] ?>">
+                        <button class="button button-danger-quiet button-small" type="submit">Remove photo</button>
+                    </form>
+<?php endif; ?>
+                </div>
+<?php elseif (!$hasPhoto): ?>
+                <p class="muted">No photo on file.</p>
+<?php endif; ?>
+            </div>
+        </section>
+<?php if ($canAccount && !$deleted): ?>
+        <section class="panel" aria-labelledby="account-title">
+            <div class="panel-heading"><div><h2 id="account-title">Sign-in account</h2><p>Lets the driver sign in to see their own trips and share their location on them.</p></div></div>
+            <div class="panel-body">
+<?php if ($account === null): ?>
+                <p class="muted">This driver has no account yet.</p>
+<?php if ($driver['status'] === 'active'): ?>
+                <a class="button button-secondary" href="/admin/users?driver_id=<?= (int) $driver['driver_id'] ?>#create-user-title">Create sign-in</a>
+<?php else: ?>
+                <p class="muted">Make the driver active to create one.</p>
+<?php endif; ?>
+<?php else: $accountOn = $account['is_active'] && $account['deleted_at'] === null; ?>
+                <p><span class="mono"><?= $e($account['email']) ?></span> <span class="badge <?= $accountOn ? 'badge-success' : 'badge-neutral' ?>"><?= $accountOn ? 'Active' : 'Deactivated' ?></span></p>
+                <a class="button button-secondary" href="/admin/users<?= $accountOn ? '' : '?show=deactivated' ?>"><?= $accountOn ? 'Manage in Staff accounts' : 'Reactivate in Staff accounts' ?></a>
+<?php endif; ?>
+            </div>
+        </section>
+<?php endif; ?>
 <?php if ($canEdit): ?>
         <section class="panel">
             <div class="panel-heading"><h2>Availability</h2></div>

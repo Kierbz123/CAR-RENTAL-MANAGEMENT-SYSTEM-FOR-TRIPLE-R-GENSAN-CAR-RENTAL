@@ -9,17 +9,13 @@ use TripleR\Http\Request;
 use TripleR\Http\Response;
 use TripleR\Repositories\PaymentProofRepository;
 use TripleR\Repositories\PaymentRepository;
+use TripleR\Security\Access;
 use TripleR\Security\Csrf;
 use TripleR\Services\PaymentProofService;
 
 /** Staff side of payments: the GCash proofs to check and the decision on each, the money received by method, and receipts. */
 final class PaymentController
 {
-    /** Who may see payments, proofs and their screenshots. */
-    public const REVIEW = ['system_admin', 'finance_staff'];
-    /** Who may decide them, the same roles that handle every other money step. */
-    public const DECIDE = ['system_admin', 'finance_staff'];
-
     public function __construct(
         private readonly AuthMiddleware $guard,
         private readonly PaymentProofRepository $proofs,
@@ -30,7 +26,7 @@ final class PaymentController
 
     public function index(): Response
     {
-        $user = $this->guard->requireRoles(self::REVIEW);
+        $user = $this->guard->requireRoles(Access::PAYMENTS);
         if ($user instanceof Response) {
             return $user;
         }
@@ -38,7 +34,7 @@ final class PaymentController
         $decided = $this->proofs->recentlyDecided();
         $received = $this->payments->receivedByMethod(30);
         $recent = $this->payments->recent(30);
-        $canDecide = in_array($user['role'], self::DECIDE, true);
+        $canDecide = in_array($user['role'], Access::PAYMENTS, true);
         $notice = $_SESSION['_payment_notice'] ?? null;
         unset($_SESSION['_payment_notice']);
         $csrfToken = Csrf::token();
@@ -50,7 +46,7 @@ final class PaymentController
     /** One payment, laid out to print or to read back to the customer. */
     public function receipt(Request $request): Response
     {
-        $user = $this->guard->requireRoles(self::REVIEW);
+        $user = $this->guard->requireRoles(Access::PAYMENTS);
         if ($user instanceof Response) {
             return $user;
         }
@@ -79,7 +75,7 @@ final class PaymentController
 
     public function screenshot(Request $request): Response
     {
-        $user = $this->guard->requireRoles(self::REVIEW);
+        $user = $this->guard->requireRoles(Access::PAYMENTS);
         if ($user instanceof Response) {
             return $user;
         }
@@ -97,7 +93,7 @@ final class PaymentController
 
     private function decide(Request $request, callable $decision): Response
     {
-        $user = $this->guard->requireRoles(self::DECIDE);
+        $user = $this->guard->requireRoles(Access::PAYMENTS);
         if ($user instanceof Response) {
             return $user;
         }

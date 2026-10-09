@@ -10,6 +10,7 @@ use TripleR\Http\Response;
 use TripleR\Repositories\SecurityLogRepository;
 use TripleR\Repositories\SessionRepository;
 use TripleR\Repositories\StaffUserRepository;
+use TripleR\Security\Access;
 use TripleR\Security\Csrf;
 
 final class SessionController
@@ -25,7 +26,7 @@ final class SessionController
 
     public function index(Request $request): Response
     {
-        $actor = $this->guard->requireRoles(['system_admin']);
+        $actor = $this->guard->requireRoles(Access::ADMIN);
         if ($actor instanceof Response) {
             return $actor;
         }
@@ -42,7 +43,7 @@ final class SessionController
 
     public function invalidate(Request $request): Response
     {
-        $actor = $this->guard->requireRoles(['system_admin']);
+        $actor = $this->guard->requireRoles(Access::ADMIN);
         if ($actor instanceof Response) {
             return $actor;
         }

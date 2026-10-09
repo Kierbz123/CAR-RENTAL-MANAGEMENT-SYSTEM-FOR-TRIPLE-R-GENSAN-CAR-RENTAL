@@ -12,7 +12,7 @@ final class CustomerRepository
     public function list(?string $type,?string $search,bool $removed=false,?int $limit=null,int $offset=0): array
     {
         [$where,$params]=self::listFilter($type,$search,$removed);
-        $sql='SELECT customers.*, EXISTS(SELECT 1 FROM customer_telegram_links l WHERE l.active_customer_id=customers.customer_id) AS telegram_connected FROM customers WHERE '.$where.' ORDER BY full_name,customer_id';
+        $sql='SELECT customers.*, EXISTS(SELECT 1 FROM customer_telegram_links l WHERE l.active_customer_id=customers.customer_id) AS telegram_connected, (SELECT COUNT(*) FROM rental_agreements r WHERE r.customer_id=customers.customer_id) AS rental_count FROM customers WHERE '.$where.' ORDER BY full_name,customer_id';
         if ($limit!==null) $sql.=' LIMIT '.max(1,min(500,$limit)).' OFFSET '.max(0,$offset);
         $stmt=$this->db->prepare($sql); $stmt->execute($params); return $stmt->fetchAll();
     }
@@ -128,6 +128,12 @@ final class CustomerRepository
     public function documentAuditHistory(int $customerId): array
     {
         $stmt=$this->db->prepare('SELECT a.*,u.email AS actor_email FROM customer_identity_document_audit_logs a JOIN users u ON u.id=a.actor_user_id WHERE a.customer_id=:id ORDER BY a.created_at,a.audit_id'); $stmt->execute(['id'=>$customerId]); return $stmt->fetchAll();
+    }
+
+    /** Other records with the same name, so staff notice a duplicate before using the wrong one. */
+    public function sameName(int $customerId, string $fullName): array
+    {
+        $stmt=$this->db->prepare('SELECT c.customer_id,c.full_name,c.company_name,(SELECT COUNT(*) FROM rental_agreements r WHERE r.customer_id=c.customer_id) AS rental_count FROM customers c WHERE c.full_name=:name AND c.customer_id<>:id AND c.deleted_at IS NULL ORDER BY c.customer_id'); $stmt->execute(['name'=>$fullName,'id'=>$customerId]); return $stmt->fetchAll();
     }
 
     public function rentalHistory(int $customerId): array

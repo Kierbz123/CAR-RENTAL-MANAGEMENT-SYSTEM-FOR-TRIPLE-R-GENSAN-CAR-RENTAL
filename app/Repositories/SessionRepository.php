@@ -31,7 +31,7 @@ final class SessionRepository
     public function findCurrent(string $phpSessionId): ?array
     {
         $hash = hash('sha256', $phpSessionId);
-        $statement = $this->db->prepare('SELECT u.id, u.email, u.role, u.must_change_password, u.locked_at, s.id AS session_row_id FROM sessions s INNER JOIN users u ON u.id = s.user_id WHERE s.session_hash = :hash AND s.invalidated_at IS NULL AND s.expires_at > UTC_TIMESTAMP(6) AND u.is_active = 1 AND u.deleted_at IS NULL AND u.locked_at IS NULL AND (:idle = 0 OR s.last_seen_at > UTC_TIMESTAMP(6) - INTERVAL :idle_seconds SECOND) LIMIT 1');
+        $statement = $this->db->prepare('SELECT u.id, u.email, u.role, u.driver_id, u.must_change_password, u.locked_at, s.id AS session_row_id FROM sessions s INNER JOIN users u ON u.id = s.user_id WHERE s.session_hash = :hash AND s.invalidated_at IS NULL AND s.expires_at > UTC_TIMESTAMP(6) AND u.is_active = 1 AND u.deleted_at IS NULL AND u.locked_at IS NULL AND (:idle = 0 OR s.last_seen_at > UTC_TIMESTAMP(6) - INTERVAL :idle_seconds SECOND) LIMIT 1');
         // A session unused for AUTH_IDLE_TIMEOUT_SECONDS (30 minutes) ends, so a shared counter
         // computer left signed in does not stay open for the whole 12-hour session. 0 turns this off.
         $idle = \TripleR\Config::int('AUTH_IDLE_TIMEOUT_SECONDS', 1800);

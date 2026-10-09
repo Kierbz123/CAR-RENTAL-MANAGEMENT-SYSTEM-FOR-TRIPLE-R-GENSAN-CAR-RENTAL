@@ -36,7 +36,8 @@ $tag = bin2hex(random_bytes(4));
 $failures = 0;
 $passes = 0;
 
-const ALL_ROLES = ['system_admin', 'fleet_manager', 'front_desk', 'driver_coordinator', 'finance_staff'];
+/** The three staff roles. The driver role has its own section: it signs in to a different page. */
+const ALL_ROLES = ['system_admin', 'fleet_manager', 'front_desk'];
 
 function check(bool $passed, string $name, string $detail = ''): bool
 {
@@ -190,13 +191,13 @@ foreach (ALL_ROLES as $role) {
 }
 $as = static fn (string $role) => $sessions[$role]['client'];
 $get = static fn (string $role, string $path): array => request($sessions[$role]['client'], 'GET', $path);
-echo "Signed in as all five roles.\n";
+echo "Signed in as the three staff roles.\n";
 
 /* ---------------------------------------------------------------------- */
 section('M1 Accounts and sessions (system admin)');
 $usersPage = $get('system_admin', '/admin/users');
 $newEmail = "review-new-{$tag}@example.test";
-$created = submit($as('system_admin'), $usersPage['body'], '/admin/users/create', ['email' => $newEmail, 'role' => 'driver_coordinator']);
+$created = submit($as('system_admin'), $usersPage['body'], '/admin/users/create', ['email' => $newEmail, 'role' => 'fleet_manager']);
 check(in_array($created['status'], [200, 201], true) && preg_match('/class="temporary-password">([^<]+)</', $created['body'], $temp) === 1, 'admin creates an account and is shown a temporary password once', 'HTTP ' . $created['status']);
 $temporary = html_entity_decode($temp[1] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
 [$newClient, , $afterLogin] = signIn($newEmail, $temporary, false);
@@ -219,7 +220,7 @@ if (preg_match('/name="session_id"\s+value="(\d+)"/', $sessionsPage['body'], $si
 
 // Five wrong passwords lock the account; an admin unlocks it.
 $lockEmail = "review-lock-{$tag}@example.test";
-$insert->execute(['email' => $lockEmail, 'hash' => password_hash($password, PASSWORD_DEFAULT), 'role' => 'driver_coordinator']);
+$insert->execute(['email' => $lockEmail, 'hash' => password_hash($password, PASSWORD_DEFAULT), 'role' => 'fleet_manager']);
 $lockId = (int) $db->lastInsertId();
 for ($attempt = 0; $attempt < 5; $attempt++) {
     signIn($lockEmail, 'definitely-wrong-password', false);
@@ -287,13 +288,18 @@ $vehiclePage = $get('fleet_manager', '/fleet/vehicles/detail?vehicle_id=' . $veh
 check(preg_match('/photos\/show\?photo_id=(\d+)/', $vehiclePage['body'], $photoMatch) === 1, 'the uploaded photo appears on the vehicle page');
 if (isset($photoMatch[1])) {
     check($get('fleet_manager', '/fleet/vehicles/photos/show?photo_id=' . $photoMatch[1])['status'] === 200, 'the photo is served to fleet staff');
-    check($get('front_desk', '/fleet/vehicles/photos/show?photo_id=' . $photoMatch[1])['status'] === 403, 'the photo is refused to a role without fleet access');
+    check($get('front_desk', '/fleet/vehicles/photos/show?photo_id=' . $photoMatch[1])['status'] === 200, 'the photo is served to front desk too, who can see the fleet');
 }
+// Front desk sees the fleet but changes none of it.
+$deskVehicle = $get('front_desk', '/fleet/vehicles/detail?vehicle_id=' . $vehicleId);
+check($deskVehicle['status'] === 200 && formFields($deskVehicle['body'], '/fleet/vehicles/photos/upload') === null && formFields($deskVehicle['body'], '/fleet/vehicles/status') === null && formFields($deskVehicle['body'], '/fleet/vehicles/mileage') === null && !str_contains(mainOf($deskVehicle['body']), 'Edit vehicle'), 'front desk sees the vehicle page without the controls that change it');
+$deskLocations = $get('front_desk', '/fleet/locations');
+check(!str_contains(mainOf($get('front_desk', '/fleet/vehicles')['body']), 'Register vehicle') && $deskLocations['status'] === 200 && formFields($deskLocations['body'], '/fleet/locations/create') === null && formFields($deskLocations['body'], '/fleet/locations/rename') === null, 'front desk is not offered "Register vehicle", "Add location" or Rename');
 $edit = $get('fleet_manager', '/fleet/vehicles/edit?vehicle_id=' . $vehicleId);
 check($edit['status'] === 200 && formFields($edit['body'], '/fleet/vehicles/update') !== null, 'vehicle edit form renders');
 
 /* ---------------------------------------------------------------------- */
-section('M4 Drivers (fleet manager, driver coordinator)');
+section('M4 Drivers (fleet manager; front desk read-only)');
 $license = 'N01-' . strtoupper(substr($tag, 0, 6)) . '-7788';
 $driverForm = $get('fleet_manager', '/fleet/drivers/new');
 $driver = submit($as('fleet_manager'), $driverForm['body'], '/fleet/drivers/create', [
@@ -306,11 +312,16 @@ $driverPage = $get('fleet_manager', '/fleet/drivers/detail?driver_id=' . $driver
 check(str_contains($driverPage['body'], '****7788') && !str_contains($driverPage['body'], $license), 'driver page masks the licence number');
 $reveal = request($as('fleet_manager'), 'POST', '/fleet/drivers/reveal', ['_csrf' => csrfFrom($driverPage['body']), 'driver_id' => (string) $driverId, 'kind' => 'license', 'record_id' => ''], ['X-CSRF-Token: ' . csrfFrom($driverPage['body'])]);
 check($reveal['status'] === 200 && str_contains($reveal['body'], $license), 'fleet manager can reveal the licence number', 'HTTP ' . $reveal['status']);
-$coordinatorDriver = $get('driver_coordinator', '/fleet/drivers/detail?driver_id=' . $driverId);
-check($coordinatorDriver['status'] === 200 && str_contains($coordinatorDriver['body'], '****7788') && !str_contains($coordinatorDriver['body'], $license) && str_contains($coordinatorDriver['body'], 'data-reveal-kind'), 'driver coordinator sees the licence masked, with Reveal');
-$coordinatorReveal = request($as('driver_coordinator'), 'POST', '/fleet/drivers/reveal', ['_csrf' => csrfFrom($coordinatorDriver['body']), 'driver_id' => (string) $driverId, 'kind' => 'license', 'record_id' => ''], ['X-CSRF-Token: ' . csrfFrom($coordinatorDriver['body'])]);
-check($coordinatorReveal['status'] === 200 && str_contains($coordinatorReveal['body'], $license), 'driver coordinator can reveal the licence number for scheduling', 'HTTP ' . $coordinatorReveal['status']);
-check(!str_contains(mainOf($get('driver_coordinator', '/fleet/drivers')['body']), 'Add driver'), 'driver coordinator is not offered "Add driver"');
+// Front desk sees drivers read-only: the licence stays restricted, and only a phone number can be revealed.
+$deskDriver = $get('front_desk', '/fleet/drivers/detail?driver_id=' . $driverId);
+check($deskDriver['status'] === 200 && !str_contains($deskDriver['body'], '****7788') && !str_contains($deskDriver['body'], 'data-reveal-kind="license"') && str_contains($deskDriver['body'], 'data-reveal-kind="contact"') && !str_contains(mainOf($deskDriver['body']), 'Edit driver'), 'front desk sees the driver with the licence restricted, the phone revealable and no Edit');
+$deskToken = csrfFrom($deskDriver['body']);
+$deskLicence = request($as('front_desk'), 'POST', '/fleet/drivers/reveal', ['_csrf' => $deskToken, 'driver_id' => (string) $driverId, 'kind' => 'license', 'record_id' => ''], ['X-CSRF-Token: ' . $deskToken]);
+check($deskLicence['status'] === 403 && !str_contains($deskLicence['body'], $license), 'front desk cannot reveal the licence number', 'HTTP ' . $deskLicence['status']);
+$phoneContactId = (int) $db->query("SELECT contact_id FROM driver_contacts WHERE driver_id={$driverId} AND contact_type='phone' LIMIT 1")->fetchColumn();
+$deskPhone = request($as('front_desk'), 'POST', '/fleet/drivers/reveal', ['_csrf' => $deskToken, 'driver_id' => (string) $driverId, 'kind' => 'contact', 'record_id' => (string) $phoneContactId], ['X-CSRF-Token: ' . $deskToken]);
+check($deskPhone['status'] === 200 && str_contains($deskPhone['body'], '9171234567'), 'front desk can reveal the driver\'s phone number to call them', 'HTTP ' . $deskPhone['status']);
+check(!str_contains(mainOf($get('front_desk', '/fleet/drivers')['body']), 'Add driver'), 'front desk is not offered "Add driver"');
 
 /* ---------------------------------------------------------------------- */
 section('M3 Customers (front desk)');
@@ -398,46 +409,44 @@ $frontDetail = $get('front_desk', $detailPath);
 $baseAmount = '₱' . number_format((float) $db->query('SELECT base_amount FROM rental_agreements WHERE agreement_id=' . $agreementId)->fetchColumn(), 2);
 check($frontDetail['status'] === 200 && str_contains($frontDetail['body'], 'Needs driver') && str_contains($frontDetail['body'], $baseAmount), 'agreement page shows the reservation, base amount and that it needs a driver', 'expected ' . $baseAmount);
 
-// The 30% downpayment: stored at booking, recorded by finance (here as GCash at the counter), required before confirming.
+// The 30% downpayment: stored at booking, recorded by front desk (here as GCash at the counter), required before confirming.
 // For a chauffeur rental the rental cost includes the chauffeur rate for every day billed.
 $booking = $db->query('SELECT base_amount + rental_days * COALESCE(chauffeur_daily_rate, 0) AS rental_cost, downpayment_amount, downpayment_status, TIMESTAMPDIFF(MINUTE, created_at, hold_expires_at) AS hold_minutes FROM rental_agreements WHERE agreement_id=' . $agreementId)->fetch();
 $downpaymentText = '₱' . number_format((float) $booking['downpayment_amount'], 2);
-check(abs((float) $booking['downpayment_amount'] - round((float) $booking['rental_cost'] * 0.30, 2)) < 0.005 && $booking['downpayment_status'] === 'due', 'the booking stores a downpayment of 30% of the rental, marked due', $booking['downpayment_amount'] . ' of ' . $booking['base_amount']);
+check(abs((float) $booking['downpayment_amount'] - round((float) $booking['rental_cost'] * 0.30, 2)) < 0.005 && $booking['downpayment_status'] === 'due', 'the booking stores a downpayment of 30% of the rental, marked due', $booking['downpayment_amount'] . ' of ' . $booking['rental_cost']);
 check((int) $booking['hold_minutes'] >= 1439, 'the vehicle is held for 24 hours while the customer pays', $booking['hold_minutes'] . ' minutes');
 $frontMain = mainOf($frontDetail['body']);
 check(str_contains($frontMain, 'Waiting for the downpayment of ' . $downpaymentText) && formFields($frontMain, '/rentals/action', ['action' => 'confirm']) === null, 'front desk is told the downpayment is awaited and is not offered Confirm');
-check(formFields($frontMain, '/rentals/downpayment') === null, 'front desk is not offered the form to record a payment');
+check(formFields($frontMain, '/rentals/downpayment') !== null && formFields(mainOf($get('fleet_manager', $detailPath)['body']), '/rentals/downpayment') === null, 'front desk is offered the form to record a payment at the counter; the fleet manager is not');
 $forced = request($as('front_desk'), 'POST', '/rentals/action', ['_csrf' => $sessions['front_desk']['csrf'], 'action' => 'confirm', 'agreement_id' => (string) $agreementId]);
 check($forced['status'] === 303 && (string) $db->query('SELECT status FROM rental_agreements WHERE agreement_id=' . $agreementId)->fetchColumn() === 'reserved', 'posting Confirm anyway is refused by the server and the agreement stays reserved');
 check(str_contains(mainOf($get('front_desk', '/rentals?status=reserved')['body']), 'Downpayment due'), 'the agreements list flags the reservation as Downpayment due');
-$financeBooking = $get('finance_staff', $detailPath);
-$badReference = submit($as('finance_staff'), $financeBooking['body'], '/rentals/downpayment', ['agreement_id' => (string) $agreementId, 'reference' => 'x']);
+$financeBooking = $get('front_desk', $detailPath);
+$badReference = submit($as('front_desk'), $financeBooking['body'], '/rentals/downpayment', ['agreement_id' => (string) $agreementId, 'reference' => 'x']);
 check((string) $db->query('SELECT downpayment_status FROM rental_agreements WHERE agreement_id=' . $agreementId)->fetchColumn() === 'due', 'a reference number that is too short is refused');
 $gcashReference = 'GC' . strtoupper($tag) . '001';
-$paid = submit($as('finance_staff'), $financeBooking['body'], '/rentals/downpayment', ['agreement_id' => (string) $agreementId, 'reference' => $gcashReference]);
+$paid = submit($as('front_desk'), $financeBooking['body'], '/rentals/downpayment', ['agreement_id' => (string) $agreementId, 'reference' => $gcashReference]);
 $paidRow = $db->query("SELECT r.downpayment_status, p.external_reference, p.method, p.channel, p.recorded_by, p.receipt_number FROM rental_agreements r LEFT JOIN payments p ON p.paid_downpayment_agreement_id = r.agreement_id WHERE r.agreement_id=" . $agreementId)->fetch();
-check($paid['status'] === 303 && $paidRow['downpayment_status'] === 'received' && $paidRow['external_reference'] === $gcashReference && $paidRow['method'] === 'gcash' && $paidRow['channel'] === 'staff' && (int) $paidRow['recorded_by'] === $accounts['finance_staff']['id'], 'finance records the downpayment as a GCash payment with its reference', 'HTTP ' . $paid['status']);
+check($paid['status'] === 303 && $paidRow['downpayment_status'] === 'received' && $paidRow['external_reference'] === $gcashReference && $paidRow['method'] === 'gcash' && $paidRow['channel'] === 'staff' && (int) $paidRow['recorded_by'] === $accounts['front_desk']['id'], 'front desk records the downpayment as a GCash payment with its reference', 'HTTP ' . $paid['status']);
 $downpaymentReceipt = (string) $paidRow['receipt_number'];
-$financeBooking = $get('finance_staff', $detailPath);
+$financeBooking = $get('front_desk', $detailPath);
 check(str_contains(mainOf($financeBooking['body']), $gcashReference) && formFields($financeBooking['body'], '/rentals/downpayment') === null, 'the agreement shows the reference and no longer offers the form');
 check(str_contains(mainOf($financeBooking['body']), '/payments/receipt?receipt=' . $downpaymentReceipt) && formFields($financeBooking['body'], '/rentals/payment') === null, 'the payment is listed with its receipt, and the balance is not taken before the reservation is confirmed');
-$receiptPage = $get('finance_staff', '/payments/receipt?receipt=' . $downpaymentReceipt);
-check($receiptPage['status'] === 200 && str_contains($receiptPage['body'], $downpaymentReceipt) && str_contains($receiptPage['body'], $gcashReference) && str_contains($receiptPage['body'], 'Recorded at the counter'), 'finance opens the receipt for that payment');
+$receiptPage = $get('front_desk', '/payments/receipt?receipt=' . $downpaymentReceipt);
+check($receiptPage['status'] === 200 && str_contains($receiptPage['body'], $downpaymentReceipt) && str_contains($receiptPage['body'], $gcashReference) && str_contains($receiptPage['body'], 'Recorded at the counter'), 'front desk opens the receipt for that payment');
 $frontDetail = $get('front_desk', $detailPath);
 check(formFields($frontDetail['body'], '/rentals/action', ['action' => 'confirm']) !== null && !str_contains(mainOf($frontDetail['body']), 'Waiting for the downpayment'), 'front desk is now offered Confirm');
 $early = submit($as('front_desk'), $frontDetail['body'], '/rentals/action', [], ['action' => 'confirm', 'agreement_id' => (string) $agreementId], 'confirm');
 check((string) $db->query('SELECT status FROM rental_agreements WHERE agreement_id=' . $agreementId)->fetchColumn() === 'reserved', 'a chauffeur reservation cannot be confirmed without a driver');
 
-$coordinatorList = $get('driver_coordinator', '/rentals');
-check($coordinatorList['status'] === 200 && str_contains($coordinatorList['body'], 'Needs driver') && !str_contains(mainOf($coordinatorList['body']), 'Base amount'), 'driver coordinator sees the agreement list without amounts');
-$coordinatorDetail = $get('driver_coordinator', $detailPath);
-$coordinatorMain = mainOf($coordinatorDetail['body']);
-check(!str_contains($coordinatorMain, 'id="downpayment"') && !str_contains($coordinatorMain, 'ownpayment'), 'driver coordinator sees nothing about the downpayment');
-check($coordinatorDetail['status'] === 200 && !str_contains($coordinatorMain, 'Cost summary') && !str_contains($coordinatorMain, 'id="charges"') && !str_contains($coordinatorMain, 'id="deposit"') && !str_contains($coordinatorMain, 'id="damage"'), 'driver coordinator opens the agreement with no financial or damage sections');
-$assigned = submit($as('driver_coordinator'), $coordinatorDetail['body'], '/rentals/driver/assign', ['agreement_id' => (string) $agreementId, 'driver_id' => (string) $driverId]);
-check($assigned['status'] === 303 && ($assigned['headers']['location'] ?? '') === $detailPath, 'driver coordinator assigns a driver', 'HTTP ' . $assigned['status']);
-$coordinatorDetail = $get('driver_coordinator', $detailPath);
-check($coordinatorDetail['status'] === 200 && str_contains($coordinatorDetail['body'], "Review Driver {$tag}"), 'after assigning, the coordinator lands back on the agreement and sees the driver');
+// Scheduling drivers is fleet work: the fleet manager assigns one, without being offered the money controls.
+check(str_contains($get('fleet_manager', '/rentals')['body'], 'Needs driver'), 'fleet manager sees which agreement needs a driver');
+$fleetDetail = $get('fleet_manager', $detailPath);
+check($fleetDetail['status'] === 200 && formFields($fleetDetail['body'], '/rentals/downpayment') === null && formFields($fleetDetail['body'], '/rentals/charge') === null && formFields($fleetDetail['body'], '/rentals/deposit') === null, 'fleet manager opens the agreement without the payment, charge or deposit controls');
+$assigned = submit($as('fleet_manager'), $fleetDetail['body'], '/rentals/driver/assign', ['agreement_id' => (string) $agreementId, 'driver_id' => (string) $driverId]);
+check($assigned['status'] === 303 && ($assigned['headers']['location'] ?? '') === $detailPath, 'fleet manager assigns a driver', 'HTTP ' . $assigned['status']);
+$fleetDetail = $get('fleet_manager', $detailPath);
+check($fleetDetail['status'] === 200 && str_contains($fleetDetail['body'], "Review Driver {$tag}"), 'after assigning, the fleet manager lands back on the agreement and sees the driver');
 check((int) $db->query('SELECT COUNT(*) FROM rental_charges WHERE agreement_id=' . $agreementId . " AND charge_type='chauffeur_fee'")->fetchColumn() === 1, 'assigning a driver adds the chauffeur fee');
 
 $frontDetail = $get('front_desk', $detailPath);
@@ -501,53 +510,60 @@ $managerDetail = $get('fleet_manager', $detailPath);
 $decision = submit($as('fleet_manager'), $managerDetail['body'], '/rentals/damage/liability', ['agreement_id' => (string) $agreementId, 'report_id' => (string) $reportId, 'supersedes_decision_id' => '', 'customer_liable' => '1', 'liable_amount' => '800.00', 'reason' => 'Not present before pickup']);
 check($decision['status'] === 303 && (int) $db->query('SELECT COUNT(*) FROM damage_liability_decisions WHERE report_id=' . $reportId)->fetchColumn() === 1, 'fleet manager records the liability decision', 'HTTP ' . $decision['status']);
 $adminDetail = $get('system_admin', $detailPath);
-check(formFields($adminDetail['body'], '/rentals/damage/report') === null, 'system admin is not offered the inspection form (front desk and fleet manager record inspections)');
-$reportPage = $get('finance_staff', '/rentals/damage/detail?report_id=' . $reportId);
-check($reportPage['status'] === 200 && str_contains($reportPage['body'], 'Liability decision history') && preg_match('/damage\/photo\?photo_id=(\d+)/', $reportPage['body'], $damagePhoto) === 1, 'finance opens the damage report and sees its photo');
+check(formFields($adminDetail['body'], '/rentals/damage/report') !== null, 'system admin is offered the inspection form too: every staff role records inspections');
+$reportPage = $get('front_desk', '/rentals/damage/detail?report_id=' . $reportId);
+check($reportPage['status'] === 200 && str_contains($reportPage['body'], 'Liability decision history') && preg_match('/damage\/photo\?photo_id=(\d+)/', $reportPage['body'], $damagePhoto) === 1, 'front desk opens the damage report and sees its photo');
 if (isset($damagePhoto[1])) {
-    check($get('finance_staff', '/rentals/damage/photo?photo_id=' . $damagePhoto[1])['status'] === 200, 'the damage photo is served to finance');
-    check($get('driver_coordinator', '/rentals/damage/photo?photo_id=' . $damagePhoto[1])['status'] === 403, 'the damage photo is refused to a driver coordinator');
+    check($get('front_desk', '/rentals/damage/photo?photo_id=' . $damagePhoto[1])['status'] === 200, 'the damage photo is served to front desk');
+    check($get('fleet_manager', '/rentals/damage/photo?photo_id=' . $damagePhoto[1])['status'] === 200, 'the damage photo is served to the fleet manager, who decides liability');
 }
 
 /* ---------------------------------------------------------------------- */
-section('M5/M7 Money and completion (finance)');
-$financeDetail = $get('finance_staff', $detailPath);
+section('M5/M7 Money and completion (front desk)');
+$financeDetail = $get('front_desk', $detailPath);
 $financeMain = mainOf($financeDetail['body']);
-check(formFields($financeMain, '/rentals/action', ['action' => 'confirm']) === null && formFields($financeMain, '/rentals/damage/report') === null, 'finance is not offered lifecycle or inspection actions');
+check(formFields($financeMain, '/rentals/action', ['action' => 'complete']) !== null && formFields(mainOf($get('fleet_manager', $detailPath)['body']), '/rentals/action', ['action' => 'complete']) === null, 'front desk is offered Complete on a returned agreement; the fleet manager is not');
 $decisionId = (int) $db->query('SELECT decision_id FROM damage_liability_decisions WHERE report_id=' . $reportId . ' ORDER BY decision_id DESC LIMIT 1')->fetchColumn();
-$damageCharge = submit($as('finance_staff'), $financeDetail['body'], '/rentals/damage/charge', ['agreement_id' => (string) $agreementId, 'decision_id' => (string) $decisionId, 'amount' => '800.00', 'adjustment_reason' => '']);
-check($damageCharge['status'] === 303 && (int) $db->query('SELECT COUNT(*) FROM rental_charges WHERE agreement_id=' . $agreementId . " AND charge_type='damage'")->fetchColumn() === 1, 'finance posts the damage charge', 'HTTP ' . $damageCharge['status']);
-$fee = submit($as('finance_staff'), $financeDetail['body'], '/rentals/charge', ['agreement_id' => (string) $agreementId, 'charge_type' => 'fee', 'amount' => '150.00', 'description' => 'Cleaning']);
-check($fee['status'] === 303, 'finance adds a fee', 'HTTP ' . $fee['status']);
-$blockedComplete = submit($as('finance_staff'), $financeDetail['body'], '/rentals/action', [], ['action' => 'complete', 'agreement_id' => (string) $agreementId], 'complete');
+$damageCharge = submit($as('front_desk'), $financeDetail['body'], '/rentals/damage/charge', ['agreement_id' => (string) $agreementId, 'decision_id' => (string) $decisionId, 'amount' => '800.00', 'adjustment_reason' => '']);
+check($damageCharge['status'] === 303 && (int) $db->query('SELECT COUNT(*) FROM rental_charges WHERE agreement_id=' . $agreementId . " AND charge_type='damage'")->fetchColumn() === 1, 'front desk posts the damage charge', 'HTTP ' . $damageCharge['status']);
+$fee = submit($as('front_desk'), $financeDetail['body'], '/rentals/charge', ['agreement_id' => (string) $agreementId, 'charge_type' => 'fee', 'amount' => '150.00', 'description' => 'Cleaning']);
+check($fee['status'] === 303, 'front desk adds a fee', 'HTTP ' . $fee['status']);
+$blockedComplete = submit($as('front_desk'), $financeDetail['body'], '/rentals/action', [], ['action' => 'complete', 'agreement_id' => (string) $agreementId], 'complete');
 check((string) $db->query('SELECT status FROM rental_agreements WHERE agreement_id=' . $agreementId)->fetchColumn() === 'returned', 'completion is refused while the deposit is still due');
 foreach (['held', 'released'] as $depositStatus) {
-    $financeDetail = $get('finance_staff', $detailPath);
-    $deposit = submit($as('finance_staff'), $financeDetail['body'], '/rentals/deposit', ['agreement_id' => (string) $agreementId, 'deposit_status' => $depositStatus, 'amount' => '1000.00', 'reason' => 'Review ' . $depositStatus]);
-    check((string) $db->query('SELECT deposit_status FROM rental_agreements WHERE agreement_id=' . $agreementId)->fetchColumn() === $depositStatus, "finance records the deposit as {$depositStatus}", 'HTTP ' . $deposit['status']);
+    $financeDetail = $get('front_desk', $detailPath);
+    $deposit = submit($as('front_desk'), $financeDetail['body'], '/rentals/deposit', ['agreement_id' => (string) $agreementId, 'deposit_status' => $depositStatus, 'amount' => '1000.00', 'reason' => 'Review ' . $depositStatus]);
+    check((string) $db->query('SELECT deposit_status FROM rental_agreements WHERE agreement_id=' . $agreementId)->fetchColumn() === $depositStatus, "front desk records the deposit as {$depositStatus}", 'HTTP ' . $deposit['status']);
 }
-$financeDetail = $get('finance_staff', $detailPath);
+// Money going out is the administrator's: front desk is neither offered it nor allowed it by hand.
+$deskDetail = $get('front_desk', $detailPath);
+check(!str_contains($deskDetail['body'], 'value="forfeited"') && !str_contains($deskDetail['body'], 'value="refunded"') && formFields($deskDetail['body'], '/rentals/charge/reverse') === null && str_contains($deskDetail['body'], 'done by the System admin'), 'front desk is not offered a refund, a forfeit or a charge reversal, and is told who does them');
+$forfeit = request($as('front_desk'), 'POST', '/rentals/deposit', ['_csrf' => csrfFrom($deskDetail['body']), 'agreement_id' => (string) $agreementId, 'deposit_status' => 'forfeited', 'amount' => '1000.00', 'reason' => 'Review forfeit']);
+check($forfeit['status'] === 403 && (string) $db->query('SELECT deposit_status FROM rental_agreements WHERE agreement_id=' . $agreementId)->fetchColumn() === 'released', 'a hand-made forfeit by front desk is refused and changes nothing', 'HTTP ' . $forfeit['status']);
+$adminMoney = $get('system_admin', $detailPath)['body'];
+check(formFields($adminMoney, '/rentals/charge/reverse') !== null && str_contains($adminMoney, 'value="forfeited"') && str_contains($adminMoney, 'value="refunded"'), 'the system admin is offered the charge reversal, the refund and the forfeit');
+$financeDetail = $get('front_desk', $detailPath);
 $total = (string) $db->query('SELECT base_amount FROM rental_agreements WHERE agreement_id=' . $agreementId)->fetchColumn();
 check(str_contains($financeDetail['body'], 'Total to bill') && str_contains($financeDetail['body'], '₱' . number_format((float) $total, 2)), 'the cost summary shows the base amount and total');
 // The balance: what is still owed after the downpayment must be recorded before the agreement is completed.
-$owedComplete = submit($as('finance_staff'), $financeDetail['body'], '/rentals/action', [], ['action' => 'complete', 'agreement_id' => (string) $agreementId], 'complete');
-check((string) $db->query('SELECT status FROM rental_agreements WHERE agreement_id=' . $agreementId)->fetchColumn() === 'returned' && str_contains($get('finance_staff', $detailPath)['body'], 'Record the balance of'), 'completion is refused while the balance is still owed');
-check(preg_match('/name="amount" type="number" min="0\.01" max="([\d.]+)"/', (string) (preg_match('/<form\b[^>]*action="\/rentals\/payment"[^>]*>.*?<\/form>/s', $financeDetail['body'], $balanceForm) ? $balanceForm[0] : ''), $owed) === 1 && (float) $owed[1] > 1000, 'finance is offered the form to record the balance, filled in with what is owed', $owed[1] ?? 'no form');
-check(formFields($get('front_desk', $detailPath)['body'], '/rentals/payment') === null && formFields($get('fleet_manager', $detailPath)['body'], '/rentals/payment') === null, 'front desk and the fleet manager are not offered it');
-$tooMuch = submit($as('finance_staff'), $financeDetail['body'], '/rentals/payment', ['agreement_id' => (string) $agreementId, 'method' => 'cash', 'amount' => number_format((float) $owed[1] + 1, 2, '.', ''), 'reference' => '']);
+$owedComplete = submit($as('front_desk'), $financeDetail['body'], '/rentals/action', [], ['action' => 'complete', 'agreement_id' => (string) $agreementId], 'complete');
+check((string) $db->query('SELECT status FROM rental_agreements WHERE agreement_id=' . $agreementId)->fetchColumn() === 'returned' && str_contains($get('front_desk', $detailPath)['body'], 'Record the balance of'), 'completion is refused while the balance is still owed');
+check(preg_match('/name="amount" type="number" min="0\.01" max="([\d.]+)"/', (string) (preg_match('/<form\b[^>]*action="\/rentals\/payment"[^>]*>.*?<\/form>/s', $financeDetail['body'], $balanceForm) ? $balanceForm[0] : ''), $owed) === 1 && (float) $owed[1] > 1000, 'front desk is offered the form to record the balance, filled in with what is owed', $owed[1] ?? 'no form');
+check(formFields($get('fleet_manager', $detailPath)['body'], '/rentals/payment') === null, 'the fleet manager is not offered it');
+$tooMuch = submit($as('front_desk'), $financeDetail['body'], '/rentals/payment', ['agreement_id' => (string) $agreementId, 'method' => 'cash', 'amount' => number_format((float) $owed[1] + 1, 2, '.', ''), 'reference' => '']);
 check((int) $db->query("SELECT COUNT(*) FROM payments WHERE agreement_id={$agreementId} AND purpose='balance'")->fetchColumn() === 0, 'more than what is owed cannot be recorded');
-$cashPart = submit($as('finance_staff'), $financeDetail['body'], '/rentals/payment', ['agreement_id' => (string) $agreementId, 'method' => 'cash', 'amount' => '1000.00', 'reference' => '']);
+$cashPart = submit($as('front_desk'), $financeDetail['body'], '/rentals/payment', ['agreement_id' => (string) $agreementId, 'method' => 'cash', 'amount' => '1000.00', 'reference' => '']);
 $cashRow = $db->query("SELECT method, amount, external_reference, recorded_by FROM payments WHERE agreement_id={$agreementId} AND purpose='balance'")->fetch() ?: [];
-check($cashPart['status'] === 303 && ($cashRow['method'] ?? '') === 'cash' && $cashRow['amount'] === '1000.00' && $cashRow['external_reference'] === null && (int) $cashRow['recorded_by'] === $accounts['finance_staff']['id'], 'finance records part of the balance in cash, with no reference number', 'HTTP ' . $cashPart['status']);
-$financeDetail = $get('finance_staff', $detailPath);
+check($cashPart['status'] === 303 && ($cashRow['method'] ?? '') === 'cash' && $cashRow['amount'] === '1000.00' && $cashRow['external_reference'] === null && (int) $cashRow['recorded_by'] === $accounts['front_desk']['id'], 'front desk records part of the balance in cash, with no reference number', 'HTTP ' . $cashPart['status']);
+$financeDetail = $get('front_desk', $detailPath);
 $cardApproval = 'APPR' . strtoupper($tag);
-$cardRest = submit($as('finance_staff'), $financeDetail['body'], '/rentals/payment', ['agreement_id' => (string) $agreementId, 'method' => 'card', 'amount' => number_format((float) $owed[1] - 1000, 2, '.', ''), 'reference' => $cardApproval]);
-$financeDetail = $get('finance_staff', $detailPath);
+$cardRest = submit($as('front_desk'), $financeDetail['body'], '/rentals/payment', ['agreement_id' => (string) $agreementId, 'method' => 'card', 'amount' => number_format((float) $owed[1] - 1000, 2, '.', ''), 'reference' => $cardApproval]);
+$financeDetail = $get('front_desk', $detailPath);
 check($cardRest['status'] === 303 && (string) $db->query("SELECT method FROM payments WHERE external_reference='{$cardApproval}'")->fetchColumn() === 'card' && str_contains(mainOf($financeDetail['body']), 'Paid in full') && formFields($financeDetail['body'], '/rentals/payment') === null, 'the rest is recorded by card with its approval code, and the agreement shows as paid in full', 'HTTP ' . $cardRest['status']);
-$complete = submit($as('finance_staff'), $financeDetail['body'], '/rentals/action', [], ['action' => 'complete', 'agreement_id' => (string) $agreementId], 'complete');
-check((string) $db->query('SELECT status FROM rental_agreements WHERE agreement_id=' . $agreementId)->fetchColumn() === 'completed', 'finance completes the agreement', 'HTTP ' . $complete['status']);
+$complete = submit($as('front_desk'), $financeDetail['body'], '/rentals/action', [], ['action' => 'complete', 'agreement_id' => (string) $agreementId], 'complete');
+check((string) $db->query('SELECT status FROM rental_agreements WHERE agreement_id=' . $agreementId)->fetchColumn() === 'completed', 'front desk completes the agreement', 'HTTP ' . $complete['status']);
 check((string) $db->query('SELECT current_status FROM vehicles WHERE vehicle_id=' . $vehicleId)->fetchColumn() === 'available', 'the vehicle is available again');
-$closedDetail = $get('finance_staff', $detailPath);
+$closedDetail = $get('front_desk', $detailPath);
 check($closedDetail['status'] === 200 && formFields(mainOf($closedDetail['body']), '/rentals/action') === null, 'the completed agreement offers no further lifecycle action');
 // Rental and deposit history share one table with vehicle and driver history.
 // Each page must show its own kind only, and all of it.
@@ -711,18 +727,20 @@ $db->exec("UPDATE rental_agreements SET hold_expires_at = DATE_SUB(UTC_TIMESTAMP
 shell_exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(dirname(__DIR__) . '/bin/rentals-expire.php') . ' 2>&1');
 check((string) $db->query("SELECT status FROM rental_agreements WHERE agreement_id={$onlineId}")->fetchColumn() === 'reserved', 'the reservation is not cancelled at the end of its hold while a proof is waiting');
 
-$queue = $get('finance_staff', '/payments');
-check($queue['status'] === 200 && str_contains(mainOf($queue['body']), "Online Shopper {$tag}") && str_contains($queue['body'], $firstReference) && formFields($queue['body'], '/payments/verify', ['proof_id' => $firstProofId]) !== null, 'finance sees the proof under Payments to check, with Verify and Reject');
-check(str_contains(mainOf($get('finance_staff', '/staff')['body']), 'Payments to check'), 'the finance workspace flags it under Needs attention');
-$screenshot = $get('finance_staff', '/payments/proof?proof_id=' . $firstProofId);
-check($screenshot['status'] === 200 && ($screenshot['headers']['content-type'] ?? '') === 'image/png', 'finance can open the screenshot', 'HTTP ' . $screenshot['status']);
-check($get('front_desk', '/payments/proof?proof_id=' . $firstProofId)['status'] === 403, 'front desk cannot open the screenshot');
+$queue = $get('front_desk', '/payments');
+check($queue['status'] === 200 && str_contains(mainOf($queue['body']), "Online Shopper {$tag}") && str_contains($queue['body'], $firstReference) && formFields($queue['body'], '/payments/verify', ['proof_id' => $firstProofId]) !== null, 'front desk sees the proof under Payments to check, with Verify and Reject');
+check(str_contains(mainOf($get('front_desk', '/staff')['body']), 'Payments to check'), 'the front desk workspace flags it under Needs attention');
+$screenshot = $get('front_desk', '/payments/proof?proof_id=' . $firstProofId);
+check($screenshot['status'] === 200 && ($screenshot['headers']['content-type'] ?? '') === 'image/png', 'front desk can open the screenshot', 'HTTP ' . $screenshot['status']);
+check($get('fleet_manager', '/payments/proof?proof_id=' . $firstProofId)['status'] === 403, 'the fleet manager cannot open the screenshot');
 $frontOnline = mainOf($get('front_desk', $onlinePath)['body']);
-check(str_contains($frontOnline, 'Booked online') && str_contains($frontOnline, $onlineRef) && str_contains($frontOnline, 'sent proof of the downpayment') && str_contains($frontOnline, 'Waiting for finance') && formFields($frontOnline, '/payments/verify') === null, 'front desk sees an online booking whose proof is waiting for finance, with no decision controls');
+$fleetOnline = mainOf($get('fleet_manager', $onlinePath)['body']);
+check(str_contains($frontOnline, 'Booked online') && str_contains($frontOnline, $onlineRef) && str_contains($frontOnline, 'sent proof of the downpayment') && formFields($frontOnline, '/payments/verify') !== null, 'front desk sees an online booking whose proof is waiting, with the controls to decide it');
+check(str_contains($fleetOnline, 'sent proof of the downpayment') && str_contains($fleetOnline, 'Waiting for front desk') && formFields($fleetOnline, '/payments/verify') === null, 'the fleet manager sees the proof is waiting for front desk, with no decision controls');
 $rejectReason = "Receipt shows 225 pesos, not 2,250 ({$tag}).";
-$rejected = submit($as('finance_staff'), $queue['body'], '/payments/reject', ['reason' => $rejectReason], ['proof_id' => $firstProofId], 'reject proof');
+$rejected = submit($as('front_desk'), $queue['body'], '/payments/reject', ['reason' => $rejectReason], ['proof_id' => $firstProofId], 'reject proof');
 $firstProof = $db->query("SELECT proof_status, review_note, reviewed_by FROM payment_proofs WHERE proof_id={$firstProofId}")->fetch();
-check($rejected['status'] === 303 && $firstProof['proof_status'] === 'rejected' && $firstProof['review_note'] === $rejectReason && (int) $firstProof['reviewed_by'] === $accounts['finance_staff']['id'], 'finance rejects the proof with a reason');
+check($rejected['status'] === 303 && $firstProof['proof_status'] === 'rejected' && $firstProof['review_note'] === $rejectReason && (int) $firstProof['reviewed_by'] === $accounts['front_desk']['id'], 'front desk rejects the proof with a reason');
 check(str_contains($queuedText('proof-rejected-' . $firstProofId), $rejectReason), 'the customer is sent the reason');
 check((string) $db->query("SELECT downpayment_status FROM rental_agreements WHERE agreement_id={$onlineId}")->fetchColumn() === 'due', 'a rejected proof leaves the downpayment due');
 $db->exec("UPDATE rental_agreements SET hold_expires_at = DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 2 HOUR) WHERE agreement_id={$onlineId}");
@@ -734,11 +752,11 @@ $secondProofId = (int) $db->query("SELECT proof_id FROM payment_proofs WHERE agr
 check($secondProofId > $firstProofId, 'the second proof is waiting for a decision');
 $refusedSql("INSERT INTO payment_proofs (agreement_id, reference_number, storage_path, original_filename, mime, size_bytes) VALUES ({$onlineId}, 'THIRD-{$tag}', 'payments/x-{$tag}.png', 'x.png', 'image/png', 10)", 'duplicate', 'the database allows one waiting proof per booking');
 $db->exec("UPDATE rental_agreements SET hold_expires_at = DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 1 MINUTE) WHERE agreement_id={$onlineId}");
-$financeOnline = $get('finance_staff', $onlinePath);
-$verified = submit($as('finance_staff'), $financeOnline['body'], '/payments/verify', [], ['proof_id' => $secondProofId, 'return' => 'agreement'], 'verify proof from the agreement page');
+$financeOnline = $get('front_desk', $onlinePath);
+$verified = submit($as('front_desk'), $financeOnline['body'], '/payments/verify', [], ['proof_id' => $secondProofId, 'return' => 'agreement'], 'verify proof from the agreement page');
 $online = $db->query("SELECT r.status, r.downpayment_status, p.external_reference, p.recorded_by, p.proof_id, p.method FROM rental_agreements r LEFT JOIN payments p ON p.paid_downpayment_agreement_id = r.agreement_id WHERE r.agreement_id={$onlineId}")->fetch();
-check($verified['status'] === 303 && str_ends_with((string) ($verified['headers']['location'] ?? ''), '#downpayment') && $online['downpayment_status'] === 'received' && $online['external_reference'] === $secondReference && $online['method'] === 'gcash' && (int) $online['proof_id'] === $secondProofId && (int) $online['recorded_by'] === $accounts['finance_staff']['id'] && $online['status'] === 'reserved', 'finance verifies the second proof, even though the hold time has passed: the downpayment is recorded as a GCash payment tied to that proof');
-check((string) $db->query("SELECT proof_status FROM payment_proofs WHERE proof_id={$secondProofId}")->fetchColumn() === 'verified' && !str_contains(mainOf($get('finance_staff', '/payments')['body']), $secondReference . '</td><td><a href="/payments/proof'), 'the proof is marked verified and leaves the waiting list');
+check($verified['status'] === 303 && str_ends_with((string) ($verified['headers']['location'] ?? ''), '#downpayment') && $online['downpayment_status'] === 'received' && $online['external_reference'] === $secondReference && $online['method'] === 'gcash' && (int) $online['proof_id'] === $secondProofId && (int) $online['recorded_by'] === $accounts['front_desk']['id'] && $online['status'] === 'reserved', 'front desk verifies the second proof, even though the hold time has passed: the downpayment is recorded as a GCash payment tied to that proof');
+check((string) $db->query("SELECT proof_status FROM payment_proofs WHERE proof_id={$secondProofId}")->fetchColumn() === 'verified' && !str_contains(mainOf($get('front_desk', '/payments')['body']), $secondReference . '</td><td><a href="/payments/proof'), 'the proof is marked verified and leaves the waiting list');
 $refusedSql("UPDATE payment_proofs SET review_note='changed' WHERE proof_id={$firstProofId}", 'cannot be changed', 'a decided proof cannot be edited');
 $refusedSql("UPDATE rules_versions SET body='changed' WHERE rules_key='downpayment_policy'", 'append-only', 'published policy text cannot be edited');
 $refusedSql("INSERT INTO rules_acceptances (phone, action, agreement_id, recorded_at) VALUES ('+639170000000', 'accepted', {$onlineId}, UTC_TIMESTAMP(6))", 'chk_rules_acceptance_kind', 'an acceptance must name the policy version accepted');
@@ -782,8 +800,8 @@ check((request(client(), 'GET', $checkoutPath)['headers']['location'] ?? '') ===
 check(submit($payer, $payPage['body'], '/customer/booking/pay', ['method' => 'gcash'])['headers']['location'] === $checkoutPath && (int) $db->query("SELECT COUNT(*) FROM payments WHERE agreement_id={$payId}")->fetchColumn() === 1, 'choosing again returns to the checkout already open instead of starting a second payment');
 $inProgressPage = request($payer, 'GET', '/customer/booking');
 check(str_contains($inProgressPage['body'], 'You have a payment in progress') && formFields($inProgressPage['body'], '/customer/booking/proof') === null, 'the booking page says a payment is in progress and offers no other way to pay meanwhile');
-$financePaying = $get('finance_staff', $payPath);
-check(str_contains(mainOf($financePaying['body']), 'paying the downpayment of ₱1,800.00 online right now') && formFields($financePaying['body'], '/rentals/downpayment') === null, 'staff see that the customer is on the checkout, and finance is not offered the counter form meanwhile');
+$financePaying = $get('front_desk', $payPath);
+check(str_contains(mainOf($financePaying['body']), 'paying the downpayment of ₱1,800.00 online right now') && formFields($financePaying['body'], '/rentals/downpayment') === null, 'staff see that the customer is on the checkout, and front desk is not offered the counter form meanwhile');
 $forgedBody = json_encode(['receipt' => $walletReceipt, 'result' => 'paid', 'amount' => '1800.00', 'reference' => 'FORGED-' . $tag, 'detail' => null, 'reason' => null]);
 $forged = request(client(), 'POST', '/webhooks/payments', $forgedBody, ['Content-Type: application/json', 'X-Payment-Signature: ' . str_repeat('a', 64)]);
 check($forged['status'] === 200 && ($lastPayment()['payment_status'] ?? '') === 'pending' && $payState()['downpayment_status'] === 'due' && (int) $db->query("SELECT COUNT(*) FROM security_logs WHERE event_type='payment.result_rejected'")->fetchColumn() >= 1, 'a forged "paid" result sent to the webhook pays nothing and is written to the security log');
@@ -832,11 +850,12 @@ check(str_contains($queuedText('payment-received-' . $paidRow['payment_id']), $g
 check(str_contains(mainOf($get('front_desk', '/rentals?status=reserved')['body']), 'Paid, to confirm'), 'the agreements list flags the reservation as paid and waiting to be confirmed');
 $frontPaid = $get('front_desk', $payPath);
 $frontPaidMain = mainOf($frontPaid['body']);
-check(str_contains($frontPaidMain, 'The downpayment is in. Confirm the reservation.') && str_contains($frontPaidMain, 'Demonstration checkout') && str_contains($frontPaidMain, 'Visa ending 4242') && str_contains($frontPaidMain, 'Declined by the issuing bank') && !str_contains($frontPaidMain, '/payments/receipt'), 'front desk sees the payment and the attempts before it, with no link to the receipt page');
-$financeList = $get('finance_staff', '/payments');
-check(str_contains(mainOf($financeList['body']), '/payments/receipt?receipt=' . $goodReceipt) && str_contains(mainOf($financeList['body']), 'Demonstration') && str_contains(mainOf($financeList['body']), 'Not enough balance'), 'finance sees the payment, marked as a demonstration, and the failed attempts on the Payments page');
-$demoReceipt = $get('finance_staff', '/payments/receipt?receipt=' . $goodReceipt);
-check($demoReceipt['status'] === 200 && str_contains($demoReceipt['body'], 'Demonstration payment') && str_contains($demoReceipt['body'], 'The customer, online'), 'finance opens its receipt, which says no real money was received');
+check(str_contains($frontPaidMain, 'The downpayment is in. Confirm the reservation.') && str_contains($frontPaidMain, 'Demonstration checkout') && str_contains($frontPaidMain, 'Visa ending 4242') && str_contains($frontPaidMain, 'Declined by the issuing bank'), 'front desk sees the payment and the attempts before it');
+check(!str_contains(mainOf($get('fleet_manager', $payPath)['body']), '/payments/receipt'), 'the fleet manager is shown no link to the receipt page, which they cannot open');
+$financeList = $get('front_desk', '/payments');
+check(str_contains(mainOf($financeList['body']), '/payments/receipt?receipt=' . $goodReceipt) && str_contains(mainOf($financeList['body']), 'Demonstration') && str_contains(mainOf($financeList['body']), 'Not enough balance'), 'front desk sees the payment, marked as a demonstration, and the failed attempts on the Payments page');
+$demoReceipt = $get('front_desk', '/payments/receipt?receipt=' . $goodReceipt);
+check($demoReceipt['status'] === 200 && str_contains($demoReceipt['body'], 'Demonstration payment') && str_contains($demoReceipt['body'], 'The customer, online'), 'front desk opens its receipt, which says no real money was received');
 $payConfirmed = submit($as('front_desk'), $frontPaid['body'], '/rentals/action', [], ['action' => 'confirm', 'agreement_id' => (string) $payId], 'confirm the booking paid online');
 check($payState()['status'] === 'confirmed' && str_contains($queuedText("rental-{$payId}-confirmed"), 'Downpayment received: ₱1,800. Balance of ₱4,200 is due at pickup.'), 'front desk confirms it, and the customer is told the downpayment received and the balance due at pickup');
 
@@ -871,36 +890,86 @@ $mapPage = $get('fleet_manager', '/fleet/locations');
 check($mapPage['status'] === 200 && str_contains($mapPage['body'], 'data-fleet-map=') && str_contains($mapPage['body'], 'fleet-map.js') && str_contains((string) ($mapPage['headers']['content-security-policy'] ?? ''), "img-src 'self' https://tile.openstreetmap.org") && !str_contains((string) ($get('fleet_manager', '/fleet/vehicles')['headers']['content-security-policy'] ?? ''), 'img-src'), 'the Locations page carries the live map, and it is the only page allowed to load map pictures from outside');
 $feed = json_decode($get('fleet_manager', '/api/fleet/positions')['body'], true);
 check(is_array($feed['vehicles'] ?? null), 'the map\'s feed answers with the list of vehicles out on rental');
-check(str_contains(mainOf($get('front_desk', $payPath)['body']), $connectPath) && !str_contains(mainOf($get('finance_staff', $payPath)['body']), $connectPath), 'front desk is offered "Connect a tracker phone" on a confirmed agreement; finance is not');
+check(str_contains(mainOf($get('front_desk', $payPath)['body']), $connectPath) && str_contains(mainOf($get('fleet_manager', $payPath)['body']), $connectPath), 'front desk and fleet manager are both offered "Connect a tracker phone" on a confirmed agreement');
+check(is_array(json_decode($get('front_desk', '/api/fleet/positions')['body'], true)['vehicles'] ?? null), 'front desk can read the live map\'s feed');
 check(request($guest, 'POST', '/customer/booking/pay', ['method' => 'gcash'])['headers']['location'] === '/book/find' && request($guest, 'GET', '/pay/demo?receipt=' . $goodReceipt)['headers']['location'] === '/book/find' && request($guest, 'GET', '/customer/booking/payment?receipt=' . $goodReceipt)['headers']['location'] === '/book/find', 'a payment cannot be started, a checkout opened or a receipt read without an open booking');
 check(request($guest, 'GET', '/api/rentals/booking-context')['status'] === 401, 'booking details are refused without a verified secure link');
 $missing = request($guest, 'GET', '/no-such-page');
 check($missing['status'] === 404 && str_contains($missing['body'], 'Page not found'), 'an unknown address shows the styled 404 page');
 
 /* ---------------------------------------------------------------------- */
+section('Driver account (the driver role)');
+$driverEmail = "review-driver-{$tag}@example.test";
+$usersPage = $get('system_admin', '/admin/users?driver_id=' . $driverId);
+check(str_contains($usersPage['body'], '<option value="' . $driverId . '" selected>') && str_contains($usersPage['body'], '<option value="driver" selected>'), 'the "Create sign-in" link opens the account form with the driver and the Driver role chosen');
+$adminDriverPage = $get('system_admin', '/fleet/drivers/detail?driver_id=' . $driverId)['body'];
+check(str_contains($adminDriverPage, '/admin/users?driver_id=' . $driverId) && !str_contains($get('fleet_manager', '/fleet/drivers/detail?driver_id=' . $driverId)['body'], 'Sign-in account'), 'the driver\'s page offers "Create sign-in" to the system admin only');
+$noDriver = submit($as('system_admin'), $usersPage['body'], '/admin/users/create', ['email' => $driverEmail, 'role' => 'driver', 'driver_id' => '']);
+check($noDriver['status'] === 422, 'a driver account with no driver chosen is refused', 'HTTP ' . $noDriver['status']);
+$staffWithDriver = submit($as('system_admin'), $usersPage['body'], '/admin/users/create', ['email' => $driverEmail, 'role' => 'front_desk', 'driver_id' => (string) $driverId]);
+check($staffWithDriver['status'] === 422 && (int) $db->query('SELECT COUNT(*) FROM users WHERE email=' . $db->quote($driverEmail))->fetchColumn() === 0, 'a staff account cannot be tied to a driver', 'HTTP ' . $staffWithDriver['status']);
+$madeDriver = submit($as('system_admin'), $usersPage['body'], '/admin/users/create', ['email' => $driverEmail, 'role' => 'driver', 'driver_id' => (string) $driverId]);
+check(in_array($madeDriver['status'], [200, 201], true) && preg_match('/class="temporary-password">([^<]+)</', $madeDriver['body'], $driverTemp) === 1, 'admin creates the driver\'s account', 'HTTP ' . $madeDriver['status']);
+$driverAccountId = (int) $db->query('SELECT id FROM users WHERE email=' . $db->quote($driverEmail) . " AND role='driver' AND driver_id=" . $driverId)->fetchColumn();
+check($driverAccountId > 0, 'the account is stored as a driver account for that driver');
+$secondAccount = submit($as('system_admin'), $get('system_admin', '/admin/users')['body'], '/admin/users/create', ['email' => "review-driver2-{$tag}@example.test", 'role' => 'driver', 'driver_id' => (string) $driverId]);
+check($secondAccount['status'] === 422 && (int) $db->query('SELECT COUNT(*) FROM users WHERE driver_id=' . $driverId)->fetchColumn() === 1, 'a second account for the same driver is refused', 'HTTP ' . $secondAccount['status']);
+$adminToken = csrfFrom($get('system_admin', '/admin/users')['body']);
+$toStaff = request($as('system_admin'), 'POST', '/admin/users/role', ['_csrf' => $adminToken, 'user_id' => (string) $driverAccountId, 'role' => 'front_desk']);
+$toDriver = request($as('system_admin'), 'POST', '/admin/users/role', ['_csrf' => $adminToken, 'user_id' => (string) $accounts['fleet_manager']['id'], 'role' => 'driver']);
+check($toStaff['status'] === 422 && $toDriver['status'] === 422 && (string) $db->query('SELECT role FROM users WHERE id=' . $driverAccountId)->fetchColumn() === 'driver' && (string) $db->query('SELECT role FROM users WHERE id=' . $accounts['fleet_manager']['id'])->fetchColumn() === 'fleet_manager', 'an account is never turned into, or out of, a driver account', $toStaff['status'] . ' / ' . $toDriver['status']);
+check(str_contains($get('system_admin', '/fleet/drivers/detail?driver_id=' . $driverId)['body'], $driverEmail), 'the driver\'s page now shows the account');
+
+[$driverClient, , $driverFirst] = signIn($driverEmail, html_entity_decode($driverTemp[1] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8'), false);
+$driverChanged = submit($driverClient, $driverFirst['body'], '/auth/change-password', ['current_password' => html_entity_decode($driverTemp[1] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8'), 'new_password' => $password . '-drv', 'confirm_password' => $password . '-drv']);
+check($driverChanged['status'] === 303 && ($driverChanged['headers']['location'] ?? '') === '/driver', 'after the forced password change a driver lands on My trips, not the staff workspace', 'HTTP ' . $driverChanged['status'] . ' ' . ($driverChanged['headers']['location'] ?? ''));
+$tripsPage = request($driverClient, 'GET', '/driver');
+$ownReference = (string) $db->query('SELECT booking_reference FROM rental_agreements WHERE agreement_id=' . $agreementId)->fetchColumn();
+$otherTrip = $db->query('SELECT agreement_id, booking_reference FROM rental_agreements WHERE driver_id IS NULL ORDER BY agreement_id DESC LIMIT 1')->fetch();
+check($tripsPage['status'] === 200 && str_contains(mainOf($tripsPage['body']), $ownReference) && $otherTrip !== false && !str_contains($tripsPage['body'], (string) $otherTrip['booking_reference']), 'the driver sees their own trip and no one else\'s');
+check(!str_contains(mainOf($tripsPage['body']), '₱') && !str_contains($tripsPage['body'], $customerPhone), 'the driver\'s page shows no amounts and no customer phone number');
+preg_match('/<nav class="app-nav".*?<\/nav>/s', $tripsPage['body'], $driverNav);
+preg_match_all('/<span>([^<]+)<\/span><\/a>/', $driverNav[0] ?? '', $driverLabels);
+check($driverLabels[1] === ['My trips'], 'the driver\'s menu is "My trips" only', 'got: ' . implode(', ', $driverLabels[1]));
+$workspace = request($driverClient, 'GET', '/staff');
+check($workspace['status'] === 303 && ($workspace['headers']['location'] ?? '') === '/driver', 'a driver who opens the staff workspace is sent to My trips', 'HTTP ' . $workspace['status']);
+foreach (['/customers', '/rentals', $detailPath, '/payments', '/fleet/vehicles', '/fleet/locations', '/fleet/drivers', '/fleet/drivers/detail?driver_id=' . $driverId, '/staff/notifications', '/admin/users', '/staff/booking-qr'] as $staffPath) {
+    $refused = request($driverClient, 'GET', $staffPath);
+    check($refused['status'] === 403, "a driver is refused {$staffPath}", 'got ' . $refused['status']);
+}
+$driverToken = csrfFrom($tripsPage['body']);
+$notShareable = request($driverClient, 'POST', '/driver/trips/track', ['_csrf' => $driverToken, 'agreement_id' => (string) $agreementId]);
+check($notShareable['status'] === 303 && ($notShareable['headers']['location'] ?? '') === '/driver', 'location cannot be shared for a trip that is already finished', 'HTTP ' . $notShareable['status']);
+$notTheirs = request($driverClient, 'POST', '/driver/trips/track', ['_csrf' => $driverToken, 'agreement_id' => (string) ($otherTrip['agreement_id'] ?? 0)]);
+check($notTheirs['status'] === 404, 'a driver cannot start tracking a trip that is not theirs', 'HTTP ' . $notTheirs['status']);
+$sessions['driver'] = ['client' => $driverClient, 'csrf' => $driverToken, 'home' => $tripsPage['body']];
+
+/* ---------------------------------------------------------------------- */
 section('Role matrix: who may open each page');
-$editUser = '/admin/users/edit?user_id=' . $accounts['finance_staff']['id'];
+$fleet = ['system_admin', 'fleet_manager'];
+$desk = ['system_admin', 'front_desk'];
+$editUser = '/admin/users/edit?user_id=' . $accounts['front_desk']['id'];
 $pages = [
     '/staff' => ALL_ROLES,
     '/api/staff/navigation' => ALL_ROLES,
     '/admin/users' => ['system_admin'],
     $editUser => ['system_admin'],
-    '/admin/sessions?user_id=' . $accounts['finance_staff']['id'] => ['system_admin'],
+    '/admin/sessions?user_id=' . $accounts['front_desk']['id'] => ['system_admin'],
     '/staff/booking-qr' => ALL_ROLES,
-    '/payments' => ['system_admin', 'finance_staff'],
-    '/payments/proof?proof_id=' . $firstProofId => ['system_admin', 'finance_staff'],
-    '/payments/receipt?receipt=' . $downpaymentReceipt => ['system_admin', 'finance_staff'],
-    '/api/fleet/positions' => ['system_admin', 'fleet_manager'],
-    $connectPath => ['system_admin', 'fleet_manager', 'front_desk'],
-    '/staff/notifications' => ['system_admin', 'fleet_manager'],
-    '/api/staff/notifications' => ['system_admin', 'fleet_manager'],
-    '/fleet/vehicles' => ['system_admin', 'fleet_manager'],
-    '/fleet/vehicles/new' => ['system_admin', 'fleet_manager'],
-    '/fleet/vehicles/detail?vehicle_id=' . $vehicleId => ['system_admin', 'fleet_manager'],
-    '/fleet/vehicles/edit?vehicle_id=' . $vehicleId => ['system_admin', 'fleet_manager'],
-    '/fleet/locations' => ['system_admin', 'fleet_manager'],
-    '/fleet/drivers' => ['system_admin', 'fleet_manager', 'driver_coordinator'],
-    '/fleet/drivers/detail?driver_id=' . $driverId => ['system_admin', 'fleet_manager', 'driver_coordinator'],
+    '/payments' => $desk,
+    '/payments/proof?proof_id=' . $firstProofId => $desk,
+    '/payments/receipt?receipt=' . $downpaymentReceipt => $desk,
+    '/api/fleet/positions' => ALL_ROLES,
+    $connectPath => ALL_ROLES,
+    '/staff/notifications' => ALL_ROLES,
+    '/api/staff/notifications' => ALL_ROLES,
+    '/fleet/vehicles' => ALL_ROLES,
+    '/fleet/vehicles/new' => $fleet,
+    '/fleet/vehicles/detail?vehicle_id=' . $vehicleId => ALL_ROLES,
+    '/fleet/vehicles/edit?vehicle_id=' . $vehicleId => $fleet,
+    '/fleet/locations' => ALL_ROLES,
+    '/fleet/drivers' => ALL_ROLES,
+    '/fleet/drivers/detail?driver_id=' . $driverId => ALL_ROLES,
     '/fleet/drivers/new' => ['system_admin', 'fleet_manager'],
     '/fleet/drivers/edit?driver_id=' . $driverId => ['system_admin', 'fleet_manager'],
     '/customers' => ['system_admin', 'front_desk'],
@@ -911,7 +980,7 @@ $pages = [
     '/rentals' => ALL_ROLES,
     $detailPath => ALL_ROLES,
     '/rentals/new' => ['system_admin', 'front_desk'],
-    '/rentals/damage/detail?report_id=' . $reportId => ['system_admin', 'front_desk', 'fleet_manager', 'finance_staff'],
+    '/rentals/damage/detail?report_id=' . $reportId => ALL_ROLES,
 ];
 $pageChecks = 0;
 foreach ($pages as $path => $allowed) {
@@ -925,13 +994,12 @@ foreach ($pages as $path => $allowed) {
     $expectedAnonymous = str_starts_with($path, '/api/') ? 401 : 303;
     check($anonymous['status'] === $expectedAnonymous, "a signed-out visitor is turned away from {$path}", "expected {$expectedAnonymous}, got " . $anonymous['status']);
 }
-echo "Checked " . count($pages) . " pages against 5 roles and a signed-out visitor ({$pageChecks} role checks).\n";
+echo "Checked " . count($pages) . " pages against the three staff roles and a signed-out visitor ({$pageChecks} role checks).\n";
 
 /* ---------------------------------------------------------------------- */
 section('Role matrix: who is refused each action');
-$fleet = ['system_admin', 'fleet_manager'];
-$desk = ['system_admin', 'front_desk'];
-$finance = ['system_admin', 'finance_staff'];
+// Money coming in is front desk's; money going out (a reversal, a refund or forfeit) is the administrator's.
+$money = $desk;
 $actions = [
     '/admin/users/create' => ['system_admin'], '/admin/users/update' => ['system_admin'], '/admin/users/role' => ['system_admin'],
     '/admin/users/deactivate' => ['system_admin'], '/admin/users/reactivate' => ['system_admin'], '/admin/users/unlock' => ['system_admin'],
@@ -939,25 +1007,27 @@ $actions = [
     '/fleet/vehicles/create' => $fleet, '/fleet/vehicles/update' => $fleet, '/fleet/vehicles/status' => $fleet, '/fleet/vehicles/mileage' => $fleet,
     '/fleet/vehicles/photos/upload' => $fleet, '/fleet/locations/create' => $fleet, '/fleet/locations/retire' => $fleet, '/fleet/locations/remove' => ['system_admin'],
     '/fleet/drivers/create' => $fleet, '/fleet/drivers/update' => $fleet, '/fleet/drivers/status' => $fleet, '/fleet/drivers/delete' => $fleet,
-    '/fleet/drivers/contacts/add' => $fleet, '/fleet/drivers/contacts/update' => $fleet, '/fleet/drivers/contacts/remove' => $fleet, '/fleet/drivers/reveal' => ['system_admin', 'fleet_manager', 'driver_coordinator'], '/fleet/drivers/restore' => $fleet,
+    '/fleet/drivers/contacts/add' => $fleet, '/fleet/drivers/contacts/update' => $fleet, '/fleet/drivers/contacts/remove' => $fleet, '/fleet/drivers/reveal' => ALL_ROLES, '/fleet/drivers/restore' => $fleet,
     '/customers/create' => $desk, '/customers/update' => $desk, '/customers/contacts/add' => $desk, '/customers/contacts/update' => $desk,
     '/customers/contacts/remove' => $desk, '/customers/documents/add' => $desk, '/customers/documents/update' => $desk, '/customers/notes/add' => $desk,
     '/customers/blacklist' => $desk, '/customers/unblacklist' => $desk, '/customers/delete' => $desk, '/customers/restore' => $desk, '/customers/reveal' => $desk,
     '/customers/telegram/code' => $desk, '/customers/telegram/disconnect' => $desk,
     '/rentals/reserve' => $desk, '/api/rentals' => $desk, '/rentals/link' => $desk,
     '/rentals/action#confirm' => $desk, '/rentals/action#cancel' => $desk, '/rentals/action#no_show' => $desk,
-    '/rentals/action#pickup' => ['system_admin', 'front_desk', 'fleet_manager'], '/rentals/action#return' => ['system_admin', 'front_desk', 'fleet_manager'],
-    '/rentals/action#complete' => $finance,
-    '/rentals/driver/assign' => ['system_admin', 'front_desk', 'driver_coordinator'], '/rentals/driver/remove' => ['system_admin', 'front_desk', 'driver_coordinator'],
-    '/rentals/charge' => $finance, '/rentals/charge/reverse' => $finance, '/rentals/deposit' => $finance, '/rentals/downpayment' => $finance, '/rentals/payment' => $finance, '/payments/verify' => $finance, '/payments/reject' => $finance,
-    '/fleet/tracking/connect' => ['system_admin', 'fleet_manager', 'front_desk'], '/fleet/tracking/disconnect' => ['system_admin', 'fleet_manager', 'front_desk'],
-    '/rentals/damage/report' => ['front_desk', 'fleet_manager'], '/rentals/damage/liability' => ['fleet_manager', 'system_admin'], '/rentals/damage/charge' => ['finance_staff'],
+    '/rentals/action#pickup' => ALL_ROLES, '/rentals/action#return' => ALL_ROLES,
+    '/rentals/action#complete' => $money,
+    '/rentals/driver/assign' => ALL_ROLES, '/rentals/driver/remove' => ALL_ROLES,
+    '/rentals/charge' => $money, '/rentals/charge/reverse' => ['system_admin'], '/rentals/deposit' => $money, '/rentals/downpayment' => $money, '/rentals/payment' => $money, '/payments/verify' => $money, '/payments/reject' => $money,
+    '/fleet/tracking/connect' => ALL_ROLES, '/fleet/tracking/disconnect' => ALL_ROLES,
+    '/rentals/damage/report' => ALL_ROLES, '/rentals/damage/liability' => $fleet, '/rentals/damage/charge' => $money,
+    '/driver/trips/track' => ['driver'],
 ];
 $actionChecks = 0;
 $guestPost = client();
 foreach ($actions as $key => $allowed) {
     [$path, $actionValue] = array_pad(explode('#', $key, 2), 2, null);
-    foreach (ALL_ROLES as $role) {
+    // The driver account is refused every staff action, and staff are refused the driver's.
+    foreach (array_merge(ALL_ROLES, ['driver']) as $role) {
         if (in_array($role, $allowed, true)) {
             continue; // Allowed roles are exercised by the flows above; an empty post here could change data.
         }
@@ -979,9 +1049,7 @@ section('Menus: each role sees exactly its own');
 $menus = [
     'system_admin' => ['Workspace', 'Agreements', 'Payments', 'Customers', 'Vehicles', 'Locations', 'Drivers', 'Notifications', 'Staff accounts'],
     'fleet_manager' => ['Workspace', 'Agreements', 'Vehicles', 'Locations', 'Drivers', 'Notifications'],
-    'front_desk' => ['Workspace', 'Agreements', 'Customers'],
-    'driver_coordinator' => ['Workspace', 'Agreements', 'Drivers'],
-    'finance_staff' => ['Workspace', 'Agreements', 'Payments'],
+    'front_desk' => ['Workspace', 'Agreements', 'Payments', 'Customers', 'Vehicles', 'Locations', 'Drivers', 'Notifications'],
 ];
 foreach ($menus as $role => $expected) {
     $home = $get($role, '/staff')['body'];
@@ -993,15 +1061,15 @@ foreach ($menus as $role => $expected) {
 /* ---------------------------------------------------------------------- */
 section('Links: no role is shown a page it cannot open');
 $linkChecks = 0;
-foreach (ALL_ROLES as $role) {
-    $queue = ['/staff'];
+foreach (array_merge(ALL_ROLES, ['driver']) as $role) {
+    $queue = [$role === 'driver' ? '/driver' : '/staff'];
     $seen = [];
     while ($queue !== [] && count($seen) < 120) {
         $path = array_shift($queue);
         if (isset($seen[$path])) {
             continue;
         }
-        $response = $get($role, $path);
+        $response = request($sessions[$role]['client'], 'GET', $path);
         $seen[$path] = $response['status'];
         $linkChecks++;
         check($response['status'] === 200, "{$role} can open a link it is shown: {$path}", 'HTTP ' . $response['status']);
@@ -1018,7 +1086,7 @@ foreach (ALL_ROLES as $role) {
         }
     }
 }
-echo "Followed {$linkChecks} links across the five roles.\n";
+echo "Followed {$linkChecks} links across the three staff roles and the driver.\n";
 
 @unlink($png);
 echo "\n" . ($failures === 0 ? "ALL {$passes} CHECKS PASSED" : "{$failures} FAILED, {$passes} passed") . "\n";

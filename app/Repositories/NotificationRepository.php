@@ -208,6 +208,15 @@ final class NotificationRepository
         return $statement->fetchAll();
     }
 
+    /** One customer's messages of one kind, newest first. */
+    public function forCustomer(int $customerId, string $templateKey, int $limit): array
+    {
+        $limit = max(1, min(200, $limit));
+        $statement = $this->db->prepare("SELECT id, recipient_phone, recipient_ciphertext, channel, template_key, rendered_message, status, last_error, created_at, sent_at FROM notifications WHERE customer_id = :customer_id AND template_key = :template ORDER BY created_at DESC, id DESC LIMIT {$limit}");
+        $statement->execute(['customer_id' => $customerId, 'template' => $templateKey]);
+        return $statement->fetchAll();
+    }
+
     public function monthlySentCount(): int
     {
         $statement = $this->db->query("SELECT COUNT(*) FROM notifications WHERE sent_at >= DATE_FORMAT(UTC_TIMESTAMP(6), '%Y-%m-01 00:00:00')");

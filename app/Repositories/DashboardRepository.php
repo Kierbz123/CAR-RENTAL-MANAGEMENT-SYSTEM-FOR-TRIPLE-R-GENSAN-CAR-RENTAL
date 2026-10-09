@@ -33,6 +33,7 @@ final class DashboardRepository
             "SELECT
                 COALESCE(SUM(status = 'active'), 0) AS active,
                 COALESCE(SUM(status IN ('reserved','confirmed') AND start_date = :today1), 0) AS pickups_today,
+                COALESCE(SUM(status IN ('reserved','confirmed') AND start_date < :today4), 0) AS late_pickups,
                 COALESCE(SUM(status = 'active' AND end_date = :today2), 0) AS returns_today,
                 COALESCE(SUM(status = 'active' AND end_date < :today3), 0) AS overdue,
                 COALESCE(SUM(status = 'reserved'), 0) AS awaiting_confirmation,
@@ -40,11 +41,11 @@ final class DashboardRepository
                 COALESCE(SUM(rental_type = 'chauffeur' AND status = 'reserved' AND driver_id IS NULL), 0) AS needs_driver
              FROM rental_agreements"
         );
-        $q->execute(['today1' => $today, 'today2' => $today, 'today3' => $today]);
+        $q->execute(['today1' => $today, 'today2' => $today, 'today3' => $today, 'today4' => $today]);
         return array_map('intval', $q->fetch() ?: []);
     }
 
-    /** Pickups due today, plus active rentals due back today or already overdue. */
+    /** Pickups due today or missed on an earlier day, plus active rentals due back today or already overdue. */
     public function todaySchedule(string $today, int $limit = 12): array
     {
         $q = $this->db->prepare(
@@ -55,9 +56,9 @@ final class DashboardRepository
              FROM rental_agreements r
              JOIN customers c ON c.customer_id = r.customer_id
              JOIN vehicles v ON v.vehicle_id = r.vehicle_id
-             WHERE (r.status IN ('reserved','confirmed') AND r.start_date = :today1)
+             WHERE (r.status IN ('reserved','confirmed') AND r.start_date <= :today1)
                 OR (r.status = 'active' AND r.end_date <= :today2)
-             ORDER BY (r.status = 'active' AND r.end_date < :today3) DESC,
+             ORDER BY (CASE WHEN r.status = 'active' THEN r.end_date ELSE r.start_date END < :today3) DESC,
                       COALESCE(CASE WHEN r.status = 'active' THEN r.scheduled_return_at ELSE r.scheduled_pickup_at END, r.start_date),
                       r.agreement_id
              LIMIT " . max(1, min(50, $limit))

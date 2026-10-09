@@ -9,12 +9,125 @@ final class DriverRepository
 {
     public function __construct(private readonly PDO $db) {}
 
-    public function count(?string $search = null, bool $includeDeleted = false, bool $removedOnly = false): int
+    /** The four places a driver can stand today, in the order the roster lists them. */
+    public const AVAILABILITY = ['free', 'booked', 'on_trip', 'unavailable'];
+
+    /**
+     * How a driver stands on the date bound to :$today — out with a customer, not assignable
+     * (switched off, or the licence has lapsed), holding a booking that has not started, or free.
+     */
+    private static function availabilitySql(string $today): string
     {
-        [$where, $params] = self::listFilter($search, $includeDeleted, $removedOnly);
+        return "CASE WHEN EXISTS(SELECT 1 FROM rental_agreements r WHERE r.driver_id=drivers.driver_id AND r.status='active') THEN 'on_trip'"
+            . " WHEN drivers.status<>'active' OR drivers.license_expiry < :{$today} THEN 'unavailable'"
+            . " WHEN EXISTS(SELECT 1 FROM rental_agreements r WHERE r.driver_id=drivers.driver_id AND r.status IN ('reserved','confirmed')) THEN 'booked'"
+            . " ELSE 'free' END";
+    }
+
+    /** An open booking of the driver ($alias) that overlaps the dates bound to :request_start and :request_end. */
+    private static function busySql(string $alias): string
+    {
+        return "EXISTS(SELECT 1 FROM rental_agreements r WHERE r.driver_id={$alias}.driver_id AND r.status IN ('reserved','confirmed','active') AND r.start_date < :request_end AND DATE_ADD(r.end_date,INTERVAL IF(r.end_date=r.start_date,1,0) DAY) > :request_start";
+    }
+
+    /** A one-day request runs to the next morning, the same way a one-day booking does. */
+    private static function requestEnd(string $start, string $end): string
+    {
+        return $end === $start ? (new \DateTimeImmutable($end, new \DateTimeZone('Asia/Manila')))->modify('+1 day')->format('Y-m-d') : $end;
+    }
+
+    /**
+     * The WHERE clause for the roster. $filters: removed (bool), search (words of a name, in any
+     * order), license_fingerprint (an exact licence number, already hashed), state (one of
+     * AVAILABILITY), free_from and free_to (dates the driver must be free and licensed for).
+     *
+     * @return array{string,array}
+     */
+    private static function rosterFilter(array $filters, string $today): array
+    {
+        $where = empty($filters['removed']) ? 'drivers.deleted_at IS NULL' : 'drivers.deleted_at IS NOT NULL';
+        $params = [];
+        $words = preg_split('/\s+/u', trim((string) ($filters['search'] ?? '')), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        if ($words !== []) {
+            $name = [];
+            foreach (array_slice($words, 0, 6) as $n => $word) {
+                $name[] = "drivers.full_name LIKE :word{$n}";
+                $params["word{$n}"] = '%' . addcslashes($word, '\\%_') . '%'; // % and _ are searched for as typed
+            }
+            $match = implode(' AND ', $name);
+            if (!empty($filters['license_fingerprint'])) {
+                $match = "({$match}) OR drivers.license_number_fingerprint = :fingerprint";
+                $params['fingerprint'] = $filters['license_fingerprint'];
+            }
+            $where .= " AND ({$match})";
+        }
+        if (empty($filters['removed']) && in_array($filters['state'] ?? '', self::AVAILABILITY, true)) {
+            $where .= ' AND ' . self::availabilitySql('state_today') . ' = :state';
+            $params['state_today'] = $today;
+            $params['state'] = $filters['state'];
+        }
+        if (!empty($filters['free_from']) && !empty($filters['free_to'])) {
+            $where .= " AND drivers.status='active' AND drivers.license_expiry >= :licensed_until AND NOT " . self::busySql('drivers') . ')';
+            $params['licensed_until'] = max($filters['free_to'], $today);
+            $params['request_start'] = $filters['free_from'];
+            $params['request_end'] = self::requestEnd($filters['free_from'], $filters['free_to']);
+        }
+        return [$where, $params];
+    }
+
+    public function rosterCount(array $filters, string $today): int
+    {
+        [$where, $params] = self::rosterFilter($filters, $today);
         $stmt = $this->db->prepare('SELECT COUNT(*) FROM drivers WHERE ' . $where);
         $stmt->execute($params);
         return (int) $stmt->fetchColumn();
+    }
+
+    /** One page of the roster, each driver with today's availability, trips finished and whether they can sign in. */
+    public function roster(array $filters, string $today, int $limit, int $offset, string $sort = 'name'): array
+    {
+        [$where, $params] = self::rosterFilter($filters, $today);
+        $order = ['name' => 'drivers.full_name, drivers.driver_id', 'expiry' => 'drivers.license_expiry, drivers.full_name', 'trips' => 'trips_done, drivers.full_name'][$sort] ?? 'drivers.full_name, drivers.driver_id';
+        $sql = 'SELECT drivers.*, ' . self::availabilitySql('today') . ' AS availability,'
+            . " (SELECT COUNT(*) FROM rental_agreements r WHERE r.driver_id=drivers.driver_id AND r.status IN ('returned','completed')) AS trips_done,"
+            . ' EXISTS(SELECT 1 FROM users u WHERE u.driver_id=drivers.driver_id AND u.is_active=1 AND u.deleted_at IS NULL) AS has_account'
+            . ' FROM drivers WHERE ' . $where . ' ORDER BY ' . $order . ' LIMIT ' . max(1, min(500, $limit)) . ' OFFSET ' . max(0, $offset);
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($params + ['today' => $today]);
+        return $stmt->fetchAll();
+    }
+
+    /** @return array<string,int> how many current drivers stand in each availability today, plus 'removed' */
+    public function rosterTally(string $today): array
+    {
+        $tally = array_fill_keys(self::AVAILABILITY, 0);
+        $stmt = $this->db->prepare('SELECT ' . self::availabilitySql('today') . ' AS availability, COUNT(*) AS total FROM drivers WHERE drivers.deleted_at IS NULL GROUP BY availability');
+        $stmt->execute(['today' => $today]);
+        foreach ($stmt->fetchAll() as $row) $tally[(string) $row['availability']] = (int) $row['total'];
+        $tally['removed'] = (int) $this->db->query('SELECT COUNT(*) FROM drivers WHERE deleted_at IS NOT NULL')->fetchColumn();
+        return $tally;
+    }
+
+    /** @param list<int> $driverIds @return array<int,list<array>> each driver's open bookings: the one under way first, then by start date */
+    public function openBookings(array $driverIds): array
+    {
+        if ($driverIds === []) return [];
+        $ids = implode(',', array_map('intval', $driverIds));
+        $rows = $this->db->query("SELECT agreement_id, driver_id, status, start_date, end_date FROM rental_agreements WHERE driver_id IN ({$ids}) AND status IN ('reserved','confirmed','active') ORDER BY (status='active') DESC, start_date, agreement_id")->fetchAll();
+        $byDriver = [];
+        foreach ($rows as $row) $byDriver[(int) $row['driver_id']][] = $row;
+        return $byDriver;
+    }
+
+    /** @param list<int> $driverIds @return array<int,string> each driver's main phone number, still encrypted */
+    public function mainPhones(array $driverIds): array
+    {
+        if ($driverIds === []) return [];
+        $ids = implode(',', array_map('intval', $driverIds));
+        $rows = $this->db->query("SELECT driver_id, contact_ciphertext FROM driver_contacts WHERE driver_id IN ({$ids}) AND contact_type='phone' AND deleted_at IS NULL ORDER BY is_primary DESC, contact_id")->fetchAll();
+        $phones = [];
+        foreach ($rows as $row) $phones[(int) $row['driver_id']] ??= (string) $row['contact_ciphertext'];
+        return $phones;
     }
 
     /** Current drivers; with $includeDeleted removed ones too; with $removedOnly only the removed ones. @return array{string,array} */
@@ -32,7 +145,7 @@ final class DriverRepository
     public function list(?string $search = null, bool $includeDeleted = false, bool $removedOnly = false, ?int $limit = null, int $offset = 0): array
     {
         [$where, $params] = self::listFilter($search, $includeDeleted, $removedOnly);
-        $sql = 'SELECT * FROM drivers WHERE ' . $where . ' ORDER BY full_name, driver_id';
+        $sql = "SELECT drivers.*, (SELECT COUNT(*) FROM rental_agreements r WHERE r.driver_id = drivers.driver_id AND r.status IN ('reserved','confirmed','active')) AS open_assignments FROM drivers WHERE " . $where . ' ORDER BY full_name, driver_id';
         if ($limit !== null) $sql .= ' LIMIT ' . max(1, min(500, $limit)) . ' OFFSET ' . max(0, $offset);
         $stmt = $this->db->prepare($sql);
         $stmt->execute($params);
@@ -48,9 +161,8 @@ final class DriverRepository
 
     public function availableForAssignment(string $manilaDate, string $start, string $end, ?int $excludeAgreementId = null): array
     {
-        $requestEnd = $end === $start ? (new \DateTimeImmutable($end, new \DateTimeZone('Asia/Manila')))->modify('+1 day')->format('Y-m-d') : $end;
-        $sql = "SELECT d.driver_id, d.full_name, d.license_expiry FROM drivers d WHERE d.status='active' AND d.deleted_at IS NULL AND d.license_expiry >= :today AND NOT EXISTS(SELECT 1 FROM rental_agreements r WHERE r.driver_id=d.driver_id AND r.status IN ('reserved','confirmed','active') AND r.start_date < :request_end AND DATE_ADD(r.end_date,INTERVAL IF(r.end_date=r.start_date,1,0) DAY) > :request_start";
-        $params = ['today' => $manilaDate, 'request_start' => $start, 'request_end' => $requestEnd];
+        $sql = "SELECT d.driver_id, d.full_name, d.license_expiry FROM drivers d WHERE d.status='active' AND d.deleted_at IS NULL AND d.license_expiry >= :today AND NOT " . self::busySql('d');
+        $params = ['today' => $manilaDate, 'request_start' => $start, 'request_end' => self::requestEnd($start, $end)];
         if ($excludeAgreementId !== null) { $sql .= " AND r.agreement_id<>:exclude"; $params['exclude'] = $excludeAgreementId; }
         $sql .= ") ORDER BY d.full_name, d.driver_id";
         $stmt = $this->db->prepare($sql);
@@ -127,6 +239,17 @@ final class DriverRepository
     {
         $stmt = $this->db->prepare('SELECT h.*,u.email AS actor_email FROM status_logs h JOIN users u ON u.id=h.actor_user_id WHERE h.driver_id=:id AND h.subject=\'driver\' ORDER BY h.created_at,h.status_log_id');
         $stmt->execute(['id'=>$driverId]);
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * A driver's own chauffeur bookings, newest first: what they need to turn up, and nothing about
+     * money or the customer beyond a name.
+     */
+    public function trips(int $driverId): array
+    {
+        $stmt = $this->db->prepare("SELECT a.agreement_id, a.booking_reference, a.status, a.start_date, a.end_date, a.scheduled_pickup_at, a.scheduled_return_at, c.full_name AS customer_name, v.plate_number, v.make, v.model, v.color FROM rental_agreements a JOIN customers c ON c.customer_id = a.customer_id JOIN vehicles v ON v.vehicle_id = a.vehicle_id WHERE a.driver_id = :driver AND a.rental_type = 'chauffeur' AND a.status NOT IN ('cancelled','no_show') ORDER BY a.start_date DESC, a.agreement_id DESC LIMIT 100");
+        $stmt->execute(['driver' => $driverId]);
         return $stmt->fetchAll();
     }
 

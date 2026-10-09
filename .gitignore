@@ -16,3 +16,5 @@ Thumbs.db
 /Triple Car Rental System Credentials.txt
 /.tmp-*.cjs
 /*.local.txt
+# Database backups hold customer details and sign-in hashes. Never commit these.
+/backup-*.sql

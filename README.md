@@ -57,7 +57,7 @@ This project has no Composer dependencies. It uses PDO and PHP's built-in extens
    php -S 127.0.0.1:8000 -t public public/router.php
    ```
 
-5. Sign in at `http://127.0.0.1:8000/staff/login`; `/staff` is the role-aware workspace and the live SMS history is at `/staff/notifications` for `system_admin` and `fleet_manager`.
+5. Sign in at `http://127.0.0.1:8000/staff/login`; `/staff` is the role-aware workspace and the live SMS history is at `/staff/notifications` for every staff role.
 
 ## Front end: layouts, styles and the public site
 
@@ -94,13 +94,36 @@ The staff workspace is light; the entry pages are dark like the public site and 
 
 **Behind a tunnel or proxy.** By default the connecting address is treated as the visitor. When the app sits behind a tunnel or reverse proxy, list the proxy's address in `TRUSTED_PROXIES`; only then are `X-Forwarded-For` and `X-Forwarded-Proto` used for the visitor's address (sign-in rate limits, security log) and for marking the session cookie Secure. `bin/demo-online.ps1` puts the local copy online for a presentation through a Cloudflare quick tunnel and sets this for its own run; see [docs/DEPLOYMENT_PLAN.md](docs/DEPLOYMENT_PLAN.md).
 
-**Checking roles end to end.** `bin/test-roles-http.php` signs in as each of the five roles on a migrated, seeded, otherwise empty database and (1) drives a full rental, damage and secure-link flow through the real pages, checking each rendered form carries the fields the server reads; (2) checks every page and action against every role; (3) follows every link each role is shown. It needs `ROLES_HTTP_BASE_URL` and `ROLES_HTTP_TEST_PASSWORD`. Results of the last run are in [docs/FEATURE_REVIEW.md](docs/FEATURE_REVIEW.md).
+**Checking roles end to end.** `bin/test-roles-http.php` signs in as each of the three staff roles, and as a driver, on a migrated, seeded, otherwise empty database and (1) drives a full rental, damage and secure-link flow through the real pages, checking each rendered form carries the fields the server reads; (2) checks every page and action against every role; (3) follows every link each role is shown. It needs `ROLES_HTTP_BASE_URL` and `ROLES_HTTP_TEST_PASSWORD`. Results of the last run are in [docs/FEATURE_REVIEW.md](docs/FEATURE_REVIEW.md).
 
 **Error pages.** A controller that returns a short plain-text message with a 4xx or 5xx status (`Response::html('Vehicle not found.', 404)`) gets the shared error page automatically. For 5xx the message is written to the error log and a generic message is shown instead.
 
 ## Staff authentication (M1)
 
-There are five staff roles: `system_admin`, `fleet_manager`, `front_desk`, `driver_coordinator` and `finance_staff`. Migration `003_auth_sessions.sql` first created eight; migration `022_remove_maintenance_and_roles.sql` removed `mechanic`, `auditor` and `support_staff` (existing mechanics became fleet managers; auditor and support accounts were deactivated). Existing `system_admin` and `fleet_manager` rows map to the same values. The migration flags all existing users for a password change. The first seeded administrator signs in with the configured seed password and must change it before opening protected pages.
+There are four roles: three for staff (`system_admin`, `fleet_manager`, `front_desk`) and `driver`, an account that signs in as one driver record. Who may do what is written once, in `app/Security/Access.php`; controllers and the menu read it from there.
+
+| Area | System admin | Fleet manager | Front desk | Driver |
+|---|---|---|---|---|
+| Workspace, Agreements (view) | yes | yes | yes | no |
+| Customers, new booking, confirm / cancel / no-show, booking link, messages | yes | no | yes | no |
+| Pickup and return, connect a tracker phone, record damage, assign a driver | yes | yes | yes | no |
+| Payments page, payment proofs, record payments, add a charge, complete a rental, deposit due / held / released, post a damage charge | yes | no | yes | no |
+| Reverse a charge, deposit refunded / forfeited | yes | no | no | no |
+| Vehicles, Locations, live map, Drivers: view | yes | yes | yes | no |
+| Vehicles, Locations, Drivers: add and change | yes | yes | no | no |
+| Driver private details: reveal | all | all | phone only | no |
+| Decide damage liability | yes | yes | no | no |
+| Notifications history | yes | yes | yes | no |
+| Staff accounts, sessions, delete a location | yes | no | no | no |
+| My trips, my record, share my location (`/driver`) | no | no | no | yes |
+
+A driver's account is created on the Staff accounts page by choosing the Driver role and the driver (or from "Create sign-in" on the driver's page). Each driver has one account, tied to the record by `users.driver_id`; a deactivated one is reactivated, not replaced, and an account is never turned into or out of a driver's account. The database enforces this as well (a unique key, a foreign key and the `chk_users_driver_link` check).
+
+Migration `003_auth_sessions.sql` first created eight roles; migration `022_remove_maintenance_and_roles.sql` removed `mechanic`, `auditor` and `support_staff` (existing mechanics became fleet managers; auditor and support accounts were deactivated). Migration `029_roles_and_driver_accounts.sql` moved `driver_coordinator` accounts to `fleet_manager` and `finance_staff` accounts to `front_desk`, and added `driver`; `database/rollback/029_down.sql` undoes it.
+
+**Still to regenerate after migration 029:** the database documentation `.docx` and `TRGCRMS_views_procedures_functions.sql` describe the five-role layout and the `users` table without `driver_id`.
+
+Existing `system_admin` and `fleet_manager` rows map to the same values. The migration flags all existing users for a password change. The first seeded administrator signs in with the configured seed password and must change it before opening protected pages.
 
 Admin users manage accounts at `/admin/users` and active sessions at `/admin/sessions?user_id=<id>`. A new account receives a cryptographically generated temporary password shown once in the administrator response; deliver it out of band. Only its password hash is stored, and the plaintext credential is excluded from application/security/error logs. Users must change temporary passwords before accessing role-protected pages. Passwords must be at least 14 characters.
 

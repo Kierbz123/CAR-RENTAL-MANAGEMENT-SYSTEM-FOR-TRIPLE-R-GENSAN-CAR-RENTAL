@@ -89,23 +89,46 @@ final class StaffUserRepository
         return $statement->fetchColumn() !== false;
     }
 
-    public function list(int $limit = 200, int $offset = 0): array
+    /** Accounts that can sign in plus the system account; with $deactivated, the ones switched off instead. */
+    public function list(int $limit = 200, int $offset = 0, bool $deactivated = false): array
     {
         $limit = max(1, min(200, $limit));
         $offset = max(0, $offset);
-        return $this->db->query("SELECT id, email, role, is_active, failed_login_count, locked_at, must_change_password, deleted_at, created_at FROM users ORDER BY email LIMIT {$limit} OFFSET {$offset}")->fetchAll();
+        // Working accounts by role, then deactivated ones, then the system account: the order the list groups them in.
+        $system = self::SYSTEM_EMAIL;
+        return $this->db->query("SELECT id, email, role, driver_id, (SELECT full_name FROM drivers WHERE drivers.driver_id = users.driver_id) AS driver_name, is_active, failed_login_count, locked_at, must_change_password, deleted_at, created_at FROM users WHERE " . self::shown($deactivated) . " ORDER BY CASE WHEN email = '{$system}' THEN 2 WHEN is_active = 1 AND deleted_at IS NULL THEN 0 ELSE 1 END, FIELD(role, 'system_admin', 'fleet_manager', 'front_desk', 'driver'), email LIMIT {$limit} OFFSET {$offset}")->fetchAll();
     }
 
-    public function count(): int
+    public function count(bool $deactivated = false): int
     {
-        return (int) $this->db->query('SELECT COUNT(*) FROM users')->fetchColumn();
+        return (int) $this->db->query('SELECT COUNT(*) FROM users WHERE ' . self::shown($deactivated))->fetchColumn();
     }
 
-    public function create(string $email, string $passwordHash, string $role): int
+    private static function shown(bool $deactivated): string
     {
-        $statement = $this->db->prepare('INSERT INTO users (email, password_hash, role, is_active, must_change_password) VALUES (:email, :password_hash, :role, 1, 1)');
-        $statement->execute(['email' => mb_strtolower(trim($email)), 'password_hash' => $passwordHash, 'role' => $role]);
+        return ($deactivated ? 'NOT ' : '') . "((is_active = 1 AND deleted_at IS NULL) OR email = '" . self::SYSTEM_EMAIL . "')";
+    }
+
+    /** $driverId is given for a driver's account and for no other. */
+    public function create(string $email, string $passwordHash, string $role, ?int $driverId = null): int
+    {
+        $statement = $this->db->prepare('INSERT INTO users (email, password_hash, role, driver_id, is_active, must_change_password) VALUES (:email, :password_hash, :role, :driver_id, 1, 1)');
+        $statement->execute(['email' => mb_strtolower(trim($email)), 'password_hash' => $passwordHash, 'role' => $role, 'driver_id' => $driverId]);
         return (int) $this->db->lastInsertId();
+    }
+
+    /** Active drivers who have never had an account. A driver gets one account, which is reactivated rather than replaced. */
+    public function driversWithoutAccount(): array
+    {
+        return $this->db->query("SELECT d.driver_id, d.full_name FROM drivers d LEFT JOIN users u ON u.driver_id = d.driver_id WHERE u.id IS NULL AND d.deleted_at IS NULL AND d.status = 'active' ORDER BY d.full_name, d.driver_id")->fetchAll();
+    }
+
+    /** The account that signs in as this driver, working or deactivated, if there is one. */
+    public function accountForDriver(int $driverId): ?array
+    {
+        $statement = $this->db->prepare('SELECT id, email, is_active, deleted_at FROM users WHERE driver_id = :driver_id LIMIT 1');
+        $statement->execute(['driver_id' => $driverId]);
+        return $statement->fetch() ?: null;
     }
 
     public function setRole(int $userId, string $role): bool

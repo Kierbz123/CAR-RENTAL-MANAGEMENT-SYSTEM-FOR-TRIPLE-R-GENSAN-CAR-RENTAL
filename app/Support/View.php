@@ -56,6 +56,17 @@ final class View
         return '<span class="rise">' . implode(' ', $spans) . '</span>';
     }
 
+    /** A round photo of a person, or their initials when there is no photo. Returns escaped HTML. */
+    public static function avatar(?string $src, string $name, string $class = 'avatar'): string
+    {
+        if ($src !== null) {
+            return '<img class="' . self::e($class) . '" src="' . self::e($src) . '" alt="" loading="lazy">';
+        }
+        $words = preg_split('/\s+/u', trim($name), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        $initials = mb_strtoupper(mb_substr($words[0] ?? '', 0, 1) . (count($words) > 1 ? mb_substr((string) end($words), 0, 1) : ''));
+        return '<span class="' . self::e($class) . ' avatar--initials" aria-hidden="true">' . self::e($initials) . '</span>';
+    }
+
     public static function partial(string $name, array $data = []): void
     {
         extract($data, EXTR_SKIP);

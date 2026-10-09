@@ -8,6 +8,7 @@ use TripleR\Http\AuthMiddleware;
 use TripleR\Http\Request;
 use TripleR\Http\Response;
 use TripleR\Repositories\RentalRepository;
+use TripleR\Security\Access;
 use TripleR\Security\Csrf;
 use TripleR\Services\VehicleTrackingService;
 
@@ -17,11 +18,6 @@ use TripleR\Services\VehicleTrackingService;
  */
 final class TrackingController
 {
-    /** Who may see where rented vehicles are: the roles that open the Locations page. */
-    public const WATCH = ['system_admin', 'fleet_manager'];
-    /** Who may connect a phone to a rental: the roles that hand a vehicle over at pickup. */
-    public const CONNECT = ['system_admin', 'fleet_manager', 'front_desk'];
-
     public function __construct(
         private readonly AuthMiddleware $guard,
         private readonly VehicleTrackingService $tracking,
@@ -32,7 +28,7 @@ final class TrackingController
     /** The live feed: every vehicle out on rental with its latest position. Asked for every few seconds by the map. */
     public function positions(): Response
     {
-        $user = $this->guard->requireRoles(self::WATCH, true);
+        $user = $this->guard->requireRoles(Access::FLEET_VIEW, true);
         if ($user instanceof Response) {
             return $user;
         }
@@ -41,7 +37,7 @@ final class TrackingController
 
     public function connectForm(Request $request): Response
     {
-        $user = $this->guard->requireRoles(self::CONNECT);
+        $user = $this->guard->requireRoles(Access::STAFF);
         if ($user instanceof Response) {
             return $user;
         }
@@ -55,7 +51,7 @@ final class TrackingController
     /** Creates a fresh tracker link and shows it once, as a QR code to scan with the phone. */
     public function connect(Request $request): Response
     {
-        $user = $this->guard->requireRoles(self::CONNECT);
+        $user = $this->guard->requireRoles(Access::STAFF);
         if ($user instanceof Response) {
             return $user;
         }
@@ -76,7 +72,7 @@ final class TrackingController
 
     public function disconnect(Request $request): Response
     {
-        $user = $this->guard->requireRoles(self::CONNECT);
+        $user = $this->guard->requireRoles(Access::STAFF);
         if ($user instanceof Response) {
             return $user;
         }
@@ -103,8 +99,10 @@ final class TrackingController
     {
         unset($_SESSION['_tracking_notice']);
         $connected = $this->tracking->isConnected((int) $agreement['agreement_id']);
+        // The page itself says whether the phone is reporting, so nobody has to open the map to find out.
+        $phoneStatus = $this->tracking->statusFor((int) $agreement['agreement_id']);
         $canConnect = in_array($agreement['status'], ['confirmed', 'active'], true);
-        $canWatch = in_array($user['role'], self::WATCH, true);
+        $canWatch = in_array($user['role'], Access::FLEET_VIEW, true);
         $isLocalAddress = $link !== null && in_array(strtolower((string) parse_url($link, PHP_URL_HOST)), ['localhost', '127.0.0.1'], true);
         $csrfToken = Csrf::token();
         ob_start();

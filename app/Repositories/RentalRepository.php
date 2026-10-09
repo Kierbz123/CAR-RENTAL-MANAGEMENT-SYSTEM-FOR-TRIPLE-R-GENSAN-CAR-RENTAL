@@ -81,17 +81,25 @@ final class RentalRepository
     /** Open bookings first (status_rank, migration 027), then by start date; one page when $limit is given. */
     public function list(array $filters=[],?int $limit=null,int $offset=0): array
     {
-        $sql='SELECT r.*,c.full_name AS customer_name,v.plate_number,v.make,v.model FROM rental_agreements r JOIN customers c ON c.customer_id=r.customer_id JOIN vehicles v ON v.vehicle_id=r.vehicle_id WHERE 1=1'; $params=[];
-        if (!empty($filters['status'])) { $sql.=' AND r.status=:status'; $params['status']=$filters['status']; }
-        $sql.=' ORDER BY r.status_rank,r.start_date,r.agreement_id'.self::page($limit,$offset);
+        [$where,$params]=self::listFilter($filters);
+        $sql='SELECT r.*,c.full_name AS customer_name,v.plate_number,v.make,v.model FROM rental_agreements r JOIN customers c ON c.customer_id=r.customer_id JOIN vehicles v ON v.vehicle_id=r.vehicle_id WHERE '.$where.' ORDER BY r.status_rank,r.start_date,r.agreement_id'.self::page($limit,$offset);
         $q=$this->db->prepare($sql);$q->execute($params);return $q->fetchAll();
     }
 
     public function count(array $filters=[]): int
     {
-        $sql='SELECT COUNT(*) FROM rental_agreements r WHERE 1=1'; $params=[];
-        if (!empty($filters['status'])) { $sql.=' AND r.status=:status'; $params['status']=$filters['status']; }
-        $q=$this->db->prepare($sql);$q->execute($params);return (int)$q->fetchColumn();
+        [$where,$params]=self::listFilter($filters);
+        $q=$this->db->prepare('SELECT COUNT(*) FROM rental_agreements r JOIN customers c ON c.customer_id=r.customer_id JOIN vehicles v ON v.vehicle_id=r.vehicle_id WHERE '.$where);$q->execute($params);return (int)$q->fetchColumn();
+    }
+
+    /** status 'current' means everything except cancelled and no-show. @return array{string,array} */
+    private static function listFilter(array $filters): array
+    {
+        $where='1=1'; $params=[];
+        if (($filters['status']??'')==='current') { $where.=" AND r.status NOT IN ('cancelled','no_show')"; }
+        elseif (!empty($filters['status'])) { $where.=' AND r.status=:status'; $params['status']=$filters['status']; }
+        if (trim((string)($filters['search']??''))!=='') { $where.=' AND (c.full_name LIKE :name_search OR v.plate_number LIKE :plate_search OR r.booking_reference LIKE :reference_search)'; $params['name_search']=$params['plate_search']=$params['reference_search']='%'.trim((string)$filters['search']).'%'; }
+        return [$where,$params];
     }
 
     private static function page(?int $limit,int $offset): string
@@ -102,7 +110,7 @@ final class RentalRepository
     public function find(int $id,bool $lock=false): ?array
     {
         $base=null;if($lock){$lockQuery=$this->db->prepare('SELECT * FROM rental_agreements WHERE agreement_id=:id FOR UPDATE');$lockQuery->execute(['id'=>$id]);$base=$lockQuery->fetch();if(!$base)return null;}
-        $q=$this->db->prepare('SELECT r.*,c.full_name AS customer_name,c.customer_type,v.plate_number,v.make,v.model,v.current_status AS vehicle_status FROM rental_agreements r JOIN customers c ON c.customer_id=r.customer_id JOIN vehicles v ON v.vehicle_id=r.vehicle_id WHERE r.agreement_id=:id');$q->execute(['id'=>$id]);$row=$q->fetch();return $row?($base===null?$row:array_merge($row,$base)) : null;
+        $q=$this->db->prepare('SELECT r.*,c.full_name AS customer_name,c.customer_type,v.plate_number,v.make,v.model,v.current_status AS vehicle_status,v.current_mileage AS vehicle_mileage FROM rental_agreements r JOIN customers c ON c.customer_id=r.customer_id JOIN vehicles v ON v.vehicle_id=r.vehicle_id WHERE r.agreement_id=:id');$q->execute(['id'=>$id]);$row=$q->fetch();return $row?($base===null?$row:array_merge($row,$base)) : null;
     }
 
     public function lockVehicle(int $id): ?array { $q=$this->db->prepare('SELECT * FROM vehicles WHERE vehicle_id=:id FOR UPDATE');$q->execute(['id'=>$id]);$r=$q->fetch();return $r?:null; }

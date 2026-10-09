@@ -38,7 +38,7 @@ $schemaMeta = & $mysql --host=127.0.0.1 --port=3307 --user=root --batch --skip-c
 if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect consolidated schema metadata.' }
 $schemaExpectedChecksum = (Get-FileHash -Algorithm SHA256 (Join-Path $PSScriptRoot 'database\migrations\022_remove_maintenance_and_roles.sql')).Hash.ToLowerInvariant()
 $schemaMetaFields = (($schemaMeta -join "`n").Trim() -split "`t")
-if ($schemaMetaFields.Count -ne 4 -or $schemaMetaFields[0] -ne '32' -or $schemaMetaFields[1] -ne '32' -or $schemaMetaFields[2] -ne '57' -or $schemaMetaFields[3] -ne $schemaExpectedChecksum) { throw "Consolidated schema metadata mismatch: $($schemaMeta -join ' ')" }
+if ($schemaMetaFields.Count -ne 4 -or $schemaMetaFields[0] -ne '34' -or $schemaMetaFields[1] -ne '34' -or $schemaMetaFields[2] -ne '61' -or $schemaMetaFields[3] -ne $schemaExpectedChecksum) { throw "Consolidated schema metadata mismatch: $($schemaMeta -join ' ')" }
 "Canonical schema import verified: $($schemaMetaFields[0]) tables, $($schemaMetaFields[1]) primary keys, $($schemaMetaFields[2]) foreign keys, migration 022 checksum matches."
 
 # Process-local environment overrides the existing ignored .env without changing it.

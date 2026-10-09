@@ -17,14 +17,24 @@ View::begin('staff', ['title' => 'Notifications', 'crumbs' => [['Administration'
         <span class="stat-value" id="monthly-count">—</span>
         <span class="stat-hint">Messages the provider accepted</span>
     </div>
+    <div class="stat-card">
+        <span class="stat-label">Waiting to send</span>
+        <span class="stat-value" id="queued-count">—</span>
+        <span class="stat-hint">Among the latest messages below</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-label">Failed</span>
+        <span class="stat-value" id="failed-count">—</span>
+        <span class="stat-hint">Among the latest messages below</span>
+    </div>
 </div>
 <p id="load-error" class="alert" role="alert" hidden></p>
 <section class="panel" aria-labelledby="history-title">
     <div class="panel-heading"><div><h2 id="history-title">Recent notifications</h2></div><span id="last-updated" class="muted" role="status">Loading…</span></div>
     <div class="table-wrap">
         <table class="data-table" data-stack>
-            <thead><tr><th scope="col">Created</th><th scope="col">Recipient</th><th scope="col">Channel</th><th scope="col">Template</th><th scope="col">Message</th><th scope="col">Class</th><th scope="col">Status</th><th scope="col">Priority</th><th scope="col">Attempts</th><th scope="col">Provider</th><th scope="col">Last error</th></tr></thead>
-            <tbody id="notification-rows"><tr><td class="empty-state" colspan="11">Loading notifications…</td></tr></tbody>
+            <thead><tr><th scope="col">Created</th><th scope="col">Recipient</th><th scope="col">Message</th><th scope="col">Status</th><th scope="col" class="num">Attempts</th><th scope="col">Last error</th></tr></thead>
+            <tbody id="notification-rows"><tr><td class="empty-state" colspan="6">Loading notifications…</td></tr></tbody>
         </table>
     </div>
 </section>

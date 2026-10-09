@@ -34,7 +34,7 @@ View::begin('staff', ['title' => 'New reservation', 'crumbs' => [['Agreements', 
                                 <option value="<?= (int) $c['customer_id'] ?>"<?= (string) ($v['customer_id'] ?? '') === (string) $c['customer_id'] ? ' selected' : '' ?>><?= $e($c['full_name']) ?><?= $c['company_name'] ? ' — ' . $e($c['company_name']) : '' ?></option>
 <?php endforeach; ?>
                             </select>
-                            <small class="field-hint">Blacklisted customers are not listed. <a href="/customers/new">Add a new customer</a></small>
+                            <small class="field-hint">Blacklisted customers are not listed. <a href="/customers/new?return=reservation">Add a new customer</a></small>
                         </label>
                         <label class="field"><span class="field-label">Rental type</span>
                             <select name="rental_type" required data-rental-type>

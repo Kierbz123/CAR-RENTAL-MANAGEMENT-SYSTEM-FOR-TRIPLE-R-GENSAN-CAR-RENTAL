@@ -1,12 +1,15 @@
 <?php
 declare(strict_types=1);
 
+use TripleR\Security\Access;
 use TripleR\Support\StatusPresenter as Status;
 use TripleR\Support\View;
 
 // $user here is the account being edited (set by UserController::edit), not the signed-in admin.
 $e = static fn (mixed $value): string => View::e($value);
-$roles = ['system_admin', 'fleet_manager', 'front_desk', 'driver_coordinator', 'finance_staff'];
+// A driver's account belongs to a driver record, so its role is not one that can be picked or changed here.
+$isDriver = $user['role'] === 'driver';
+$roles = Access::STAFF_ROLES;
 
 View::begin('staff', ['title' => 'Edit staff account', 'crumbs' => [['Administration', null], ['Staff accounts', '/admin/users'], ['Edit', null]]]);
 ?>
@@ -22,6 +25,9 @@ View::begin('staff', ['title' => 'Edit staff account', 'crumbs' => [['Administra
     <div class="panel-body">
         <div class="form-grid">
             <label class="field"><span class="field-label">Email</span><input name="email" type="email" maxlength="191" value="<?= $e((string) $user['email']) ?>" required autocomplete="off"></label>
+<?php if ($isDriver): ?>
+            <div class="field"><span class="field-label">Role</span><input type="hidden" name="role" value="driver"><p>Driver. This account belongs to a driver record, so its role cannot be changed.</p></div>
+<?php else: ?>
             <label class="field"><span class="field-label">Role</span>
                 <select name="role" required>
 <?php foreach ($roles as $role): ?>
@@ -29,6 +35,7 @@ View::begin('staff', ['title' => 'Edit staff account', 'crumbs' => [['Administra
 <?php endforeach; ?>
                 </select>
             </label>
+<?php endif; ?>
         </div>
     </div>
     <div class="form-actions">

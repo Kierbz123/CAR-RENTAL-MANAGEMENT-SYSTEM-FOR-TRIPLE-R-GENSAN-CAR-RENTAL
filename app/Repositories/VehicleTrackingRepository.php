@@ -85,7 +85,8 @@ final class VehicleTrackingRepository
         return $this->db->query("SELECT r.agreement_id, r.booking_reference, r.rental_type, r.scheduled_return_at, r.actual_pickup_at, c.full_name AS customer_name, v.vehicle_id, v.plate_number, v.make, v.model, "
             . "p.latitude, p.longitude, p.accuracy_m, p.speed_kph, p.heading_degrees, p.recorded_at, TIMESTAMPDIFF(SECOND, p.recorded_at, UTC_TIMESTAMP(6)) AS age_seconds, TIMESTAMPDIFF(SECOND, p.stopped_since, UTC_TIMESTAMP(6)) AS stopped_seconds, "
             . "TIMESTAMPDIFF(SECOND, r.scheduled_return_at, UTC_TIMESTAMP(6)) AS overdue_seconds, "
-            . "EXISTS(SELECT 1 FROM booking_access_tokens t WHERE t.booking_id = r.agreement_id AND t.purpose = '" . self::PURPOSE . "' AND t.used_at IS NULL AND t.expires_at > UTC_TIMESTAMP(6)) AS has_link "
+            . "EXISTS(SELECT 1 FROM booking_access_tokens t WHERE t.booking_id = r.agreement_id AND t.purpose = '" . self::PURPOSE . "' AND t.used_at IS NULL AND t.expires_at > UTC_TIMESTAMP(6)) AS has_link, "
+            . "(SELECT MAX(t.created_at) FROM booking_access_tokens t WHERE t.booking_id = r.agreement_id AND t.purpose = '" . self::PURPOSE . "' AND t.used_at IS NULL AND t.expires_at > UTC_TIMESTAMP(6)) AS link_created_at "
             . "FROM rental_agreements r JOIN vehicles v ON v.vehicle_id = r.vehicle_id JOIN customers c ON c.customer_id = r.customer_id "
             . "LEFT JOIN vehicle_positions p ON p.vehicle_id = r.vehicle_id AND p.agreement_id = r.agreement_id "
             . "WHERE r.status = 'active' ORDER BY r.scheduled_return_at IS NULL, r.scheduled_return_at, r.agreement_id")->fetchAll();

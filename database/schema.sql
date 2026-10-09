@@ -15,18 +15,21 @@ CREATE TABLE users (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     email VARCHAR(191) NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
-    role ENUM('system_admin','fleet_manager','front_desk','driver_coordinator','finance_staff') NOT NULL DEFAULT 'fleet_manager',
+    role ENUM('system_admin','fleet_manager','front_desk','driver') NOT NULL DEFAULT 'fleet_manager',
+    -- The driver record a driver's account signs in as; its foreign key is added below, once drivers exists.
+    driver_id BIGINT UNSIGNED NULL,
     is_active TINYINT(1) NOT NULL DEFAULT 1,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
     failed_login_count SMALLINT UNSIGNED NOT NULL DEFAULT 0,
     locked_at DATETIME(6) NULL,
     must_change_password TINYINT(1) NOT NULL DEFAULT 0,
     deleted_at DATETIME(6) NULL,
     PRIMARY KEY (id),
     UNIQUE KEY uq_users_email (email),
+    UNIQUE KEY uq_users_driver (driver_id),
     KEY idx_users_role_active (role,is_active),
-    KEY idx_users_active_role (is_active,role,deleted_at)
+    KEY idx_users_active_role (is_active,role,deleted_at),
+    CONSTRAINT chk_users_driver_link CHECK ((role = 'driver') = (driver_id IS NOT NULL))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- Every counter that limits how often something may happen, told apart by scope:
@@ -86,7 +89,6 @@ CREATE TABLE vehicle_locations (
     name VARCHAR(120) NOT NULL,
     location_status ENUM('active','retired') NOT NULL DEFAULT 'active',
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
     deleted_at DATETIME(6) NULL,
     PRIMARY KEY (location_id),
     UNIQUE KEY uq_vehicle_locations_name (name),
@@ -116,7 +118,6 @@ CREATE TABLE vehicles (
     insurance_provider VARCHAR(80) NULL,
     notes TEXT NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
     deleted_at DATETIME(6) NULL,
     PRIMARY KEY (vehicle_id),
     UNIQUE KEY uq_vehicles_plate (plate_number),
@@ -167,7 +168,6 @@ CREATE TABLE customers (
     blacklisted_at DATETIME(6) NULL,
     blacklisted_by_user_id BIGINT UNSIGNED NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
     deleted_at DATETIME(6) NULL,
     PRIMARY KEY (customer_id),
     KEY idx_customers_eligibility (is_blacklisted,deleted_at,customer_type),
@@ -186,7 +186,6 @@ CREATE TABLE customer_contacts (
     contact_fingerprint CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     is_primary TINYINT(1) NOT NULL DEFAULT 0,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
     deleted_at DATETIME(6) NULL,
     PRIMARY KEY (contact_id),
     KEY idx_customer_contacts_owner (customer_id,contact_type,deleted_at,is_primary),
@@ -203,7 +202,6 @@ CREATE TABLE customer_identity_documents (
     document_fingerprint CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     expires_on DATE NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
     PRIMARY KEY (document_id),
     UNIQUE KEY uq_customer_identity_fingerprint (document_fingerprint),
     KEY idx_customer_documents_owner (customer_id,document_type),
@@ -258,7 +256,6 @@ CREATE TABLE drivers (
     status ENUM('active','inactive') NOT NULL DEFAULT 'active',
     notes TEXT NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
     deleted_at DATETIME(6) NULL,
     PRIMARY KEY (driver_id),
     UNIQUE KEY uq_drivers_license_fingerprint (license_number_fingerprint),
@@ -268,6 +265,10 @@ CREATE TABLE drivers (
     CONSTRAINT chk_drivers_emergency_pair CHECK ((emergency_contact_name_ciphertext IS NULL AND emergency_contact_phone_ciphertext IS NULL) OR (emergency_contact_name_ciphertext IS NOT NULL AND emergency_contact_phone_ciphertext IS NOT NULL))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+-- A driver's sign-in account (users.driver_id). A driver who has one can only be soft-removed.
+ALTER TABLE users
+    ADD CONSTRAINT fk_users_driver FOREIGN KEY (driver_id) REFERENCES drivers (driver_id) ON DELETE RESTRICT ON UPDATE RESTRICT;
+
 CREATE TABLE driver_contacts (
     contact_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     driver_id BIGINT UNSIGNED NOT NULL,
@@ -275,7 +276,6 @@ CREATE TABLE driver_contacts (
     contact_ciphertext VARBINARY(2048) NOT NULL,
     is_primary TINYINT(1) NOT NULL DEFAULT 0,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
     deleted_at DATETIME(6) NULL,
     PRIMARY KEY (contact_id),
     KEY idx_driver_contacts_owner (driver_id,contact_type,deleted_at,is_primary),
@@ -314,7 +314,6 @@ CREATE TABLE rental_agreements (
     status ENUM('reserved','confirmed','active','returned','completed','cancelled','no_show') NOT NULL DEFAULT 'reserved',
     created_by_user_id BIGINT UNSIGNED NOT NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
     -- One active agreement per vehicle and per driver (NULL unless active, so history never collides).
     active_vehicle_id BIGINT UNSIGNED GENERATED ALWAYS AS (CASE WHEN status = 'active' THEN vehicle_id END) STORED,
     active_driver_id BIGINT UNSIGNED GENERATED ALWAYS AS (CASE WHEN status = 'active' THEN driver_id END) STORED,
@@ -464,7 +463,6 @@ CREATE TABLE notifications (
     sent_at DATETIME(6) NULL,
     last_error VARCHAR(512) NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
     PRIMARY KEY (id),
     UNIQUE KEY uq_notifications_idempotency (idempotency_key),
     UNIQUE KEY uq_notifications_provider_message_id (provider_message_id),
@@ -1065,4 +1063,6 @@ INSERT INTO schema_migrations (migration,checksum) VALUES
 ('025_record_lifecycle_logs.sql','3cd877a9934c931eeae6ccfb3888f9a1f08d0fe7d541dc7998604e163e09ecab'),
 ('026_sealed_phone_numbers.sql','8f41d7f00365d3b6fae9b5e415529ce010fa40e3fdc4aca212e4afb0758608c5'),
 ('027_rental_list_order.sql','85e615e20c964fdb96654c704ddfb445cd3f7f3bc9d9776e71db0f579a026899'),
-('028_timestamps_system_actor_audit_seals.sql','8a6436ee9a1bfde4b8c906b6ffdb639d4a2283542b712f9e218efb1ce7615212');
+('028_timestamps_system_actor_audit_seals.sql','8a6436ee9a1bfde4b8c906b6ffdb639d4a2283542b712f9e218efb1ce7615212'),
+('029_roles_and_driver_accounts.sql','731b9e15306d6980f65309af067c53c810566d411ca6c164e8fa663eacc3c98b'),
+('030_drop_unused_updated_at.sql','93e09bee94103b26a2879b754e5a6efb1e1a85321ce26458a9981a0e4a3d2013');

@@ -23,6 +23,25 @@
         });
     });
 
+    // Tax is worked out by the server; choosing it fills in the amount and locks both fields.
+    document.querySelectorAll('[data-charge-form]').forEach((chargeForm) => {
+        const type = chargeForm.querySelector('[name="charge_type"]');
+        const amount = chargeForm.querySelector('[name="amount"]');
+        const description = chargeForm.querySelector('[name="description"]');
+        if (!type || !amount || !description) return;
+        const sync = () => {
+            const tax = type.value === 'tax';
+            if (tax || amount.readOnly) {
+                amount.value = tax ? chargeForm.dataset.taxAmount : '';
+                description.value = tax ? chargeForm.dataset.taxDescription : '';
+            }
+            amount.readOnly = tax;
+            description.readOnly = tax;
+        };
+        type.addEventListener('change', sync);
+        sync();
+    });
+
     const form = document.querySelector('form[action="/rentals/reserve"]');
     if (!form) return;
 

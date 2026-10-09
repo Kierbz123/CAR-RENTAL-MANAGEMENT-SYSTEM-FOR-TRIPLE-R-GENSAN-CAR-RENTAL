@@ -22,6 +22,8 @@ final class RentalService
     public const CHARGE_TYPES=['fee','discount','tax','damage','chauffeur_fee','other'];
     /** Share of the rental paid before a reservation can be confirmed. Non-refundable; the rest is paid at pickup. */
     public const DOWNPAYMENT_PERCENT=30;
+    /** VAT added on top of the rental. The amount is always worked out by taxQuote(), never typed. */
+    public const TAX_PERCENT=12;
     /** The sole charge-sign mapping used by every total calculation. */
     private const CHARGE_SIGN=['fee'=>1,'discount'=>-1,'tax'=>1,'damage'=>1,'chauffeur_fee'=>1,'other'=>1];
 
@@ -48,8 +50,22 @@ final class RentalService
         if($pickup!==null&&$return!==null&&$return<$pickup)throw new RuntimeException('Scheduled return must not be before scheduled pickup.');
         $id=$this->rentals->createInTransaction(['customer_id'=>$customer,'vehicle_id'=>$vehicle,'rental_type'=>$rentalType,'start_date'=>$start,'end_date'=>$end,'scheduled_pickup_at'=>$pickup,'scheduled_return_at'=>$return,'deposit_amount'=>$deposit,'downpayment_percent'=>self::DOWNPAYMENT_PERCENT,'booking_source'=>$source,'hold_minutes'=>Config::int('RESERVATION_HOLD_MINUTES',1440)],$actor);
         // The reservation is durable even if provider queuing fails; staff can reissue from the detail view.
-        try{$phone=$this->primaryCustomerPhone($customer);if($phone!==null){$r=$this->rentals->find($id);$this->magicLinks->issue($phone,null,'booking_manage',$id,new DateTimeImmutable((string)$r['hold_expires_at'],new DateTimeZone('UTC')),(string)$r['booking_reference'],$customer);}}catch(\Throwable $e){error_log('Booking management link could not be queued for agreement '.$id.': '.get_class($e));}
+        // Nothing is queued when neither Telegram nor SMS could deliver it; that would only use up one of the booking's links.
+        try{$phone=$this->primaryCustomerPhone($customer);if($phone!==null&&$this->linkChannel($customer)!==null){$r=$this->rentals->find($id);$this->magicLinks->issue($phone,null,'booking_manage',$id,new DateTimeImmutable((string)$r['hold_expires_at'],new DateTimeZone('UTC')),(string)$r['booking_reference'],$customer);}}catch(\Throwable $e){error_log('Booking management link could not be queued for agreement '.$id.': '.get_class($e));}
         return $id;
+    }
+
+    /**
+     * A booking made by staff: also assigns the driver picked on the form. The reservation stands
+     * even when the driver cannot be assigned; driver_error then says why.
+     * @return array{id:int,driver_error:?string}
+     */
+    public function createForStaff(array $input,int $actor): array
+    {
+        $id=$this->create($input,$actor);$error=null;
+        $driver=filter_var($input['driver_id']??null,FILTER_VALIDATE_INT);
+        if(($input['rental_type']??'')==='chauffeur'&&$driver){try{$this->chauffeurs->assignDriver($id,$driver,$actor);}catch(RuntimeException $e){$error=$e->getMessage();}}
+        return ['id'=>$id,'driver_error'=>$error];
     }
 
     public function transition(int $id,string $action,int $actor,?string $reason=null,?int $mileage=null,?int $locationId=null): void
@@ -124,9 +140,34 @@ final class RentalService
     public function addCharge(int $id,string $type,string $amount,string $description,int $actor,?callable $beforeAppend=null,?int $damageDecisionId=null,?string $damageAdjustmentReason=null): int
     {
         if(!in_array($type,self::CHARGE_TYPES,true)||$type==='chauffeur_fee')throw new RuntimeException('Choose a supported charge type.');
-        $amount=$this->money($amount,'charge amount');$description=trim($description);if($description===''||mb_strlen($description)>500)throw new RuntimeException('Enter a charge description up to 500 characters.');
-        if(Money::cents($amount)<=0)throw new RuntimeException('Charge amount must be greater than zero.');
-        $this->db->beginTransaction();try{$r=$this->rentals->find($id,true);if(!$r)throw new RuntimeException('Rental agreement not found.');if(in_array($r['status'],['completed','cancelled','no_show'],true))throw new RuntimeException('Charges are locked for terminal agreements.');if($beforeAppend!==null)$beforeAppend();$this->charges->appendCharge($id,$type,$amount,$description,$actor,$damageDecisionId,$damageAdjustmentReason);$chargeId=(int)$this->db->lastInsertId();if($this->totalCents($id)<0)throw new RuntimeException('Discounts cannot make the rental total negative.');$this->db->commit();return $chargeId;}catch(\Throwable $e){if($this->db->inTransaction())$this->db->rollBack();throw $e;}
+        // Tax is worked out inside the transaction below; whatever was typed for it is ignored.
+        $tax=$type==='tax';
+        if(!$tax){
+            $amount=$this->money($amount,'charge amount');$description=trim($description);if($description===''||mb_strlen($description)>500)throw new RuntimeException('Enter a charge description up to 500 characters.');
+            if(Money::cents($amount)<=0)throw new RuntimeException('Charge amount must be greater than zero.');
+        }
+        $this->db->beginTransaction();try{$r=$this->rentals->find($id,true);if(!$r)throw new RuntimeException('Rental agreement not found.');if(in_array($r['status'],['completed','cancelled','no_show'],true))throw new RuntimeException('Charges are locked for terminal agreements.');
+            if($tax){$quote=$this->taxQuote($id);if($quote['recorded'])throw new RuntimeException('Tax is already recorded on this agreement. Reverse it first to work it out again.');if(Money::cents($quote['amount'])<=0)throw new RuntimeException('There is nothing to tax on this agreement.');$amount=$quote['amount'];$description=$quote['description'];}
+            if($beforeAppend!==null)$beforeAppend();$this->charges->appendCharge($id,$type,$amount,$description,$actor,$damageDecisionId,$damageAdjustmentReason);$chargeId=(int)$this->db->lastInsertId();if($this->totalCents($id)<0)throw new RuntimeException('Discounts cannot make the rental total negative.');$this->db->commit();return $chargeId;}catch(\Throwable $e){if($this->db->inTransaction())$this->db->rollBack();throw $e;}
+    }
+
+    /**
+     * The tax this agreement would be charged now: TAX_PERCENT of the rental with its fees and
+     * discounts. Damage charges and tax itself are not taxed. 'recorded' is true while a tax
+     * charge stands, so it is never charged twice.
+     * @return array{amount:string,description:string,recorded:bool}
+     */
+    public function taxQuote(int $id): array
+    {
+        $r=$this->rentals->find($id);if(!$r)throw new RuntimeException('Rental agreement not found.');
+        $taxable=Money::cents((string)$r['base_amount']);$recorded=false;
+        foreach($this->charges->forAgreement($id) as $charge){
+            if($charge['charge_type']==='tax'){$recorded=$recorded||($charge['entry_kind']==='charge'&&!$charge['is_reversed']);continue;}
+            if($charge['charge_type']==='damage')continue;
+            $taxable+=Money::cents((string)$charge['amount'])*self::CHARGE_SIGN[$charge['charge_type']]*($charge['entry_kind']==='reversal'?-1:1);
+        }
+        $taxable=max(0,$taxable);
+        return ['amount'=>Money::amount(intdiv($taxable*self::TAX_PERCENT+50,100)),'description'=>'VAT '.self::TAX_PERCENT.'% of '.Money::pesos($taxable),'recorded'=>$recorded];
     }
 
     public function reverseCharge(int $id,int $chargeId,string $reason,int $actor): void
@@ -217,11 +258,17 @@ final class RentalService
         return ['agreement_id'=>(int)$r['agreement_id'],'booking_reference'=>$r['booking_reference'],'status'=>$r['status'],'start_date'=>$r['start_date'],'end_date'=>$r['end_date'],'pickup_at'=>$r['scheduled_pickup_at'],'return_at'=>$r['scheduled_return_at'],'vehicle'=>trim($r['plate_number'].' '.$r['make'].' '.$r['model']),'base_amount'=>$r['base_amount'],'rental_days'=>(int)$r['rental_days'],'total_amount'=>$this->total($id),'downpayment_amount'=>$r['downpayment_amount'],'downpayment_status'=>$r['downpayment_status'],'balance_at_pickup'=>Money::amount(max(0,$this->totalCents($id)-Money::cents((string)$r['downpayment_amount'])-$this->payments->paidCents($id,'balance')))];
     }
 
-    public function issueManagementLink(int $id): void
+    /** Where this customer's messages go right now: 'telegram', 'sms', or null when nothing can deliver them. */
+    public function linkChannel(int $customerId): ?string { return $this->notifications->channelFor($customerId); }
+
+    /** Returns the channel the link was queued for. Refuses, without using up one of the booking's links, when nothing could deliver it. */
+    public function issueManagementLink(int $id): string
     {
         $r=$this->rentals->find($id);if(!$r)throw new RuntimeException('Rental agreement not found.');if(in_array($r['status'],['completed','cancelled','no_show'],true))throw new RuntimeException('Management links cannot be issued for terminal agreements.');$phone=$this->primaryCustomerPhone((int)$r['customer_id']);if($phone===null)throw new RuntimeException('The customer has no primary phone contact.');
+        $channel=$this->linkChannel((int)$r['customer_id']);if($channel===null)throw new RuntimeException('The link was not sent: this customer is not connected to Telegram, and SMS is not set up on this installation. Connect them to Telegram on their customer page, then send the link again.');
         $hold=$r['status']==='reserved'&&$r['hold_expires_at']!==null?new DateTimeImmutable((string)$r['hold_expires_at'],new DateTimeZone('UTC')):null;
         $this->magicLinks->issue($phone,null,'booking_manage',(int)$r['agreement_id'],$hold,null,(int)$r['customer_id']);
+        return $channel;
     }
 
     public function expireReservation(int $id,int $actor): bool

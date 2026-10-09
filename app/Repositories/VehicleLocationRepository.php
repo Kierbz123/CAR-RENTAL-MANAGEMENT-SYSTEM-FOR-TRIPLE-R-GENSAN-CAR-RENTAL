@@ -16,7 +16,27 @@ final class VehicleLocationRepository
 
     public function all(): array
     {
-        return $this->db->query('SELECT * FROM vehicle_locations WHERE deleted_at IS NULL ORDER BY name')->fetchAll();
+        // vehicle_count is every vehicle recorded at the location; out_count is how many of those are out on rental right now.
+        return $this->db->query("SELECT l.*, (SELECT COUNT(*) FROM vehicles v WHERE v.current_location_id = l.location_id AND v.deleted_at IS NULL) AS vehicle_count, (SELECT COUNT(*) FROM vehicles v WHERE v.current_location_id = l.location_id AND v.deleted_at IS NULL AND v.current_status = 'rented') AS out_count FROM vehicle_locations l WHERE l.deleted_at IS NULL ORDER BY l.location_status = 'retired', l.name")->fetchAll();
+    }
+
+    public function find(int $id): ?array
+    {
+        $stmt = $this->db->prepare('SELECT * FROM vehicle_locations WHERE location_id = :id AND deleted_at IS NULL');
+        $stmt->execute(['id'=>$id]); return $stmt->fetch() ?: null;
+    }
+
+    /** A name another location already has raises the database's duplicate-key error (1062). */
+    public function rename(int $id, string $name): void
+    {
+        $this->db->prepare('UPDATE vehicle_locations SET name = :name WHERE location_id = :id AND deleted_at IS NULL')->execute(['name'=>$name,'id'=>$id]);
+    }
+
+    /** Puts a retired location back in use. False when it was not retired. */
+    public function reactivate(int $id): bool
+    {
+        $stmt = $this->db->prepare("UPDATE vehicle_locations SET location_status = 'active' WHERE location_id = :id AND location_status = 'retired' AND deleted_at IS NULL");
+        $stmt->execute(['id'=>$id]); return $stmt->rowCount() === 1;
     }
 
     public function create(string $name): int

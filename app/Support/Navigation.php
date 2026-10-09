@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace TripleR\Support;
 
+use TripleR\Security\Access;
+
 /**
  * The single role-to-menu map for the staff workspace. The sidebar layout and
  * the /api/staff/navigation endpoint both read it, so they cannot drift apart.
@@ -10,23 +12,24 @@ namespace TripleR\Support;
  */
 final class Navigation
 {
-    private const ALL = ['system_admin', 'fleet_manager', 'front_desk', 'driver_coordinator', 'finance_staff'];
-
     private const GROUPS = [
         'Operations' => [
-            ['label' => 'Workspace', 'href' => '/staff', 'icon' => 'home', 'roles' => self::ALL],
-            ['label' => 'Agreements', 'href' => '/rentals', 'icon' => 'document', 'roles' => ['system_admin', 'fleet_manager', 'front_desk', 'finance_staff', 'driver_coordinator']],
-            ['label' => 'Payments', 'href' => '/payments', 'icon' => 'check', 'roles' => ['system_admin', 'finance_staff']],
-            ['label' => 'Customers', 'href' => '/customers', 'icon' => 'users', 'roles' => ['system_admin', 'front_desk']],
+            ['label' => 'Workspace', 'href' => '/staff', 'icon' => 'home', 'roles' => Access::STAFF],
+            ['label' => 'Agreements', 'href' => '/rentals', 'icon' => 'document', 'roles' => Access::STAFF],
+            ['label' => 'Payments', 'href' => '/payments', 'icon' => 'cash', 'roles' => Access::PAYMENTS],
+            ['label' => 'Customers', 'href' => '/customers', 'icon' => 'users', 'roles' => Access::CUSTOMERS],
         ],
         'Fleet' => [
-            ['label' => 'Vehicles', 'href' => '/fleet/vehicles', 'icon' => 'car', 'roles' => ['system_admin', 'fleet_manager']],
-            ['label' => 'Locations', 'href' => '/fleet/locations', 'icon' => 'pin', 'roles' => ['system_admin', 'fleet_manager']],
-            ['label' => 'Drivers', 'href' => '/fleet/drivers', 'icon' => 'id', 'roles' => ['system_admin', 'fleet_manager', 'driver_coordinator']],
+            ['label' => 'Vehicles', 'href' => '/fleet/vehicles', 'icon' => 'car', 'roles' => Access::FLEET_VIEW],
+            ['label' => 'Locations', 'href' => '/fleet/locations', 'icon' => 'pin', 'roles' => Access::FLEET_VIEW],
+            ['label' => 'Drivers', 'href' => '/fleet/drivers', 'icon' => 'id', 'roles' => Access::DRIVERS_VIEW],
         ],
         'Administration' => [
-            ['label' => 'Notifications', 'href' => '/staff/notifications', 'icon' => 'bell', 'roles' => ['system_admin', 'fleet_manager']],
-            ['label' => 'Staff accounts', 'href' => '/admin/users', 'icon' => 'shield', 'roles' => ['system_admin'], 'also' => ['/admin/sessions']],
+            ['label' => 'Notifications', 'href' => '/staff/notifications', 'icon' => 'bell', 'roles' => Access::STAFF],
+            ['label' => 'Staff accounts', 'href' => '/admin/users', 'icon' => 'shield', 'roles' => Access::ADMIN, 'also' => ['/admin/sessions']],
+        ],
+        'Driver' => [
+            ['label' => 'My trips', 'href' => '/driver', 'icon' => 'car', 'roles' => Access::DRIVER],
         ],
     ];
 

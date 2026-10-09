@@ -35,8 +35,8 @@ View::begin('staff', ['title' => $editing ? 'Edit driver' : 'Add driver', 'crumb
         <div class="form-section-heading"><h2>Driver and licence</h2></div>
         <div class="form-grid">
             <label class="field field--wide"><span class="field-label">Full name</span><input name="full_name" maxlength="160" value="<?= $e($d['full_name'] ?? '') ?>" required></label>
-            <label class="field"><span class="field-label">Licence number</span><input name="license_number" maxlength="100" <?= $editing ? '' : 'required ' ?>autocomplete="off"><?php if ($editing): ?><small class="field-hint">Leave blank to keep the number already on file.</small><?php endif; ?></label>
-            <label class="field"><span class="field-label">Licence expiry</span><input type="date" name="license_expiry" value="<?= $e($d['license_expiry'] ?? '') ?>" required></label>
+            <label class="field"><span class="field-label">Licence number</span><input name="license_number" maxlength="100" minlength="5" <?= $editing ? '' : 'required ' ?>autocomplete="off"><?php if ($editing): ?><small class="field-hint">Leave blank to keep the number already on file.</small><?php endif; ?></label>
+            <label class="field"><span class="field-label">Licence expiry</span><input type="date" name="license_expiry" value="<?= $e($d['license_expiry'] ?? '') ?>" min="2000-01-01" required><small class="field-hint">A driver whose licence has expired can be saved, but not given a booking.</small></label>
         </div>
     </div>
 <?php if (!$editing): ?>

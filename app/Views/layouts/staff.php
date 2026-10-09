@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 
+use TripleR\Security\Access;
 use TripleR\Security\Csrf;
 use TripleR\Support\Icon;
 use TripleR\Support\Navigation;
@@ -18,6 +19,9 @@ $title = (string) ($options['title'] ?? 'Staff workspace');
 $crumbs = $options['crumbs'] ?? [];
 $scripts = $options['scripts'] ?? [];
 $role = (string) ($user['role'] ?? '');
+// A driver's home is their own trips, not the staff workspace.
+$home = Access::home($role);
+$homeLabel = $role === 'driver' ? 'My trips' : 'Workspace';
 $groups = $user !== null ? Navigation::groupsFor($role, View::currentPath()) : [];
 ?>
 <!doctype html>
@@ -37,7 +41,7 @@ $groups = $user !== null ? Navigation::groupsFor($role, View::currentPath()) : [
 <body class="app">
 <a class="skip-link" href="#main">Skip to content</a>
 <aside class="app-sidebar" id="app-sidebar" aria-label="Staff navigation">
-    <a class="app-sidebar-brand" href="/staff" aria-label="Triple R Gensan staff workspace">
+    <a class="app-sidebar-brand" href="<?= $e($home) ?>" aria-label="Triple R Gensan, <?= $e(strtolower($homeLabel)) ?>">
         <?= Icon::mark() ?>
         <span class="app-brand-name">TRIPLE R<small>GENSAN · OPERATIONS</small></span>
     </a>
@@ -70,7 +74,7 @@ $groups = $user !== null ? Navigation::groupsFor($role, View::currentPath()) : [
         <a class="app-menu-button" href="#app-sidebar" role="button" aria-controls="app-sidebar" aria-expanded="false" data-drawer-open><?= Icon::svg('menu') ?><span>Menu</span></a>
         <nav class="breadcrumbs" aria-label="Breadcrumb">
             <ol>
-                <li><a href="/staff">Workspace</a></li>
+                <li><a href="<?= $e($home) ?>"><?= $e($homeLabel) ?></a></li>
 <?php foreach ($crumbs as $index => $crumb): [$label, $href] = [$crumb[0], $crumb[1] ?? null]; $last = $index === array_key_last($crumbs); ?>
                 <li<?= $last ? ' aria-current="page"' : '' ?>><?php if ($href !== null && !$last): ?><a href="<?= $e($href) ?>"><?= $e($label) ?></a><?php else: ?><?= $e($label) ?><?php endif; ?></li>
 <?php endforeach; ?>

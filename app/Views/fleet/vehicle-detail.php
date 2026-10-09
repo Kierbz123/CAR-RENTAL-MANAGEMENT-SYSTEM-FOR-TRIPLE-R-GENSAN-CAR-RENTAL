@@ -8,6 +8,7 @@ use TripleR\Support\View;
 $e = static fn (mixed $value): string => View::e($value);
 $superseded = array_map('intval', array_filter(array_column($mileageHistory, 'correction_of_log_id')));
 $retired = $vehicle['deleted_at'] !== null;
+$canEdit = $canManage && !$retired;
 $name = $vehicle['model_year'] . ' ' . $vehicle['make'] . ' ' . $vehicle['model'];
 $text = static fn (mixed $value): string => ($value === null || $value === '') ? '—' : (string) $value;
 
@@ -23,7 +24,7 @@ View::begin('staff', ['title' => (string) $vehicle['plate_number'], 'crumbs' => 
             <span><?= $e($vehicle['location_name'] ?? 'Location not recorded') ?></span>
         </div>
     </div>
-<?php if (!$retired): ?>
+<?php if ($canEdit): ?>
     <div class="page-header-actions">
         <a class="button button-primary" href="/fleet/vehicles/edit?vehicle_id=<?= (int) $vehicle['vehicle_id'] ?>">Edit vehicle</a>
     </div>
@@ -60,24 +61,36 @@ View::begin('staff', ['title' => (string) $vehicle['plate_number'], 'crumbs' => 
         </section>
 
         <section class="panel" aria-labelledby="photos-title">
-            <div class="panel-heading"><div><h2 id="photos-title">Photos</h2><p>JPEG, PNG or WebP, up to 8 MB each.</p></div></div>
+            <div class="panel-heading"><div><h2 id="photos-title">Photos</h2><p>JPEG, PNG or WebP, up to 8 MB each. The cover photo is the one the vehicle list shows.</p></div></div>
             <div class="panel-body">
-<?php if (!$retired): ?>
+<?php if ($canEdit): ?>
                 <form class="inline-form" method="post" action="/fleet/vehicles/photos/upload" enctype="multipart/form-data">
                     <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
                     <input type="hidden" name="vehicle_id" value="<?= (int) $vehicle['vehicle_id'] ?>">
                     <label class="field"><span class="field-label">Add a photo</span><input type="file" name="photo" accept="image/jpeg,image/png,image/webp" required></label>
                     <button class="button button-secondary" type="submit">Upload photo</button>
+                    <button class="button button-secondary" type="button" data-take-photo hidden>Take photo</button>
                 </form>
 <?php endif; ?>
 <?php if (!$photos): ?>
                 <p class="muted">No photos uploaded yet.</p>
 <?php else: ?>
                 <div class="photo-grid">
-<?php foreach ($photos as $photo): $src = '/fleet/vehicles/photos/show?photo_id=' . (int) $photo['photo_id']; ?>
+<?php foreach ($photos as $position => $photo): $src = '/fleet/vehicles/photos/show?photo_id=' . (int) $photo['photo_id']; ?>
                     <figure>
                         <a href="<?= $e($src) ?>" target="_blank" rel="noopener"><img src="<?= $e($src) ?>" alt="<?= $e($photo['original_filename']) ?>" loading="lazy"></a>
-                        <figcaption><?= $e($photo['original_filename']) ?></figcaption>
+                        <figcaption><?= $e($photo['original_filename']) ?>
+<?php if ($position === 0): ?>
+                            <span class="badge badge-info">Cover</span>
+<?php elseif ($canEdit): ?>
+                            <form method="post" action="/fleet/vehicles/photos/cover">
+                                <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
+                                <input type="hidden" name="vehicle_id" value="<?= (int) $vehicle['vehicle_id'] ?>">
+                                <input type="hidden" name="photo_id" value="<?= (int) $photo['photo_id'] ?>">
+                                <button class="button button-secondary button-small" type="submit">Make cover</button>
+                            </form>
+<?php endif; ?>
+                        </figcaption>
                     </figure>
 <?php endforeach; ?>
                 </div>
@@ -87,7 +100,7 @@ View::begin('staff', ['title' => (string) $vehicle['plate_number'], 'crumbs' => 
 
         <section class="panel" aria-labelledby="status-title">
             <div class="panel-heading"><div><h2 id="status-title">Status history</h2><p>Every change is kept. Times are in Manila time.</p></div></div>
-<?php if (!$retired): ?>
+<?php if ($canEdit): ?>
             <form class="toolbar" method="post" action="/fleet/vehicles/status" data-confirm="Change this vehicle’s status? The change is recorded in its history." data-confirm-action="Change status" data-confirm-tone="neutral">
                 <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
                 <input type="hidden" name="vehicle_id" value="<?= (int) $vehicle['vehicle_id'] ?>">
@@ -125,7 +138,7 @@ View::begin('staff', ['title' => (string) $vehicle['plate_number'], 'crumbs' => 
 
         <section class="panel" aria-labelledby="mileage-title">
             <div class="panel-heading"><div><h2 id="mileage-title">Odometer readings</h2><p>Readings are never edited. A wrong reading is fixed by adding a correction, which only a system admin can do.</p></div></div>
-<?php if (!$retired): ?>
+<?php if ($canEdit): ?>
             <form class="toolbar" method="post" action="/fleet/vehicles/mileage">
                 <input type="hidden" name="_csrf" value="<?= $e($csrfToken) ?>">
                 <input type="hidden" name="vehicle_id" value="<?= (int) $vehicle['vehicle_id'] ?>">

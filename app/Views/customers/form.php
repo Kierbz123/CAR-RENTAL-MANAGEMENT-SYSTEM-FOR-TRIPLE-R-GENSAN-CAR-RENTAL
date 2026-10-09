@@ -9,7 +9,9 @@ $e = static fn (mixed $value): string => View::e($value);
 $old = array_map(static fn (mixed $v): string => is_string($v) ? $v : '', $old ?? []);
 $c = $customer ?? $old;
 $editing = $customer !== null;
-$backHref = $editing ? '/customers/detail?customer_id=' . (int) $c['customer_id'] : '/customers';
+// Opened from the New reservation form: saving returns there with this customer selected.
+$forReservation = !$editing && ($old['return'] ?? '') === 'reservation';
+$backHref = $editing ? '/customers/detail?customer_id=' . (int) $c['customer_id'] : ($forReservation ? '/rentals/new' : '/customers');
 $crumbs = [['Customers', '/customers']];
 if ($editing) {
     $crumbs[] = [(string) $c['full_name'], $backHref];
@@ -32,6 +34,9 @@ View::begin('staff', ['title' => $editing ? 'Edit customer' : 'Add customer', 'c
 <?php if ($editing): ?>
     <input type="hidden" name="customer_id" value="<?= (int) $c['customer_id'] ?>">
 <?php endif; ?>
+<?php if ($forReservation): ?>
+    <input type="hidden" name="return" value="reservation">
+<?php endif; ?>
     <div class="panel-body form-section">
         <div class="form-section-heading"><h2>Customer</h2></div>
         <div class="form-grid">
@@ -43,22 +48,22 @@ View::begin('staff', ['title' => $editing ? 'Edit customer' : 'Add customer', 'c
 <?php endforeach; ?>
                 </select>
             </label>
-            <label class="field"><span class="field-label">Company name</span><input name="company_name" maxlength="160" value="<?= $e($c['company_name'] ?? '') ?>"><small class="field-hint">Required for corporate customers.</small></label>
-            <label class="field"><span class="field-label">Referred by</span><input name="referral_source" maxlength="160" value="<?= $e($c['referral_source'] ?? '') ?>"><small class="field-hint">Required for referral customers.</small></label>
+            <label class="field"><span class="field-label">Company name <span class="optional">(optional)</span></span><input name="company_name" maxlength="160" value="<?= $e($c['company_name'] ?? '') ?>"><small class="field-hint">Required only for corporate customers.</small></label>
+            <label class="field"><span class="field-label">Referred by <span class="optional">(optional)</span></span><input name="referral_source" maxlength="160" value="<?= $e($c['referral_source'] ?? '') ?>"><small class="field-hint">Required only for referral customers.</small></label>
         </div>
     </div>
 <?php if (!$editing): ?>
     <div class="panel-body form-section">
         <div class="form-section-heading"><h2>Contact</h2><p>Optional now, encrypted when saved. A phone number is needed to send the booking link by SMS.</p></div>
         <div class="form-grid">
-            <label class="field"><span class="field-label">Phone</span><input name="phone" type="tel" maxlength="40" autocomplete="off" value="<?= $e($old['phone'] ?? '') ?>"></label>
-            <label class="field"><span class="field-label">Email</span><input name="email" type="email" maxlength="254" autocomplete="off" value="<?= $e($old['email'] ?? '') ?>"></label>
+            <label class="field"><span class="field-label">Phone <span class="optional">(optional)</span></span><input name="phone" type="tel" maxlength="40" autocomplete="off" value="<?= $e($old['phone'] ?? '') ?>"></label>
+            <label class="field"><span class="field-label">Email <span class="optional">(optional)</span></span><input name="email" type="email" maxlength="254" autocomplete="off" value="<?= $e($old['email'] ?? '') ?>"></label>
         </div>
     </div>
     <div class="panel-body form-section">
         <div class="form-section-heading"><h2>Identity document</h2><p>Optional now, encrypted when saved. More can be added on the customer’s page.</p></div>
         <div class="form-grid form-grid--three">
-            <label class="field"><span class="field-label">Document type</span>
+            <label class="field"><span class="field-label">Document type <span class="optional">(optional)</span></span>
                 <select name="document_type">
                     <option value="">None yet</option>
 <?php foreach ($documentTypes as $docType): ?>
@@ -66,13 +71,13 @@ View::begin('staff', ['title' => $editing ? 'Edit customer' : 'Add customer', 'c
 <?php endforeach; ?>
                 </select>
             </label>
-            <label class="field"><span class="field-label">Document number</span><input name="document_number" maxlength="100" autocomplete="off" value="<?= $e($old['document_number'] ?? '') ?>"></label>
-            <label class="field"><span class="field-label">Expiry date</span><input type="date" name="expires_on" value="<?= $e($old['expires_on'] ?? '') ?>"></label>
+            <label class="field"><span class="field-label">Document number <span class="optional">(optional)</span></span><input name="document_number" maxlength="100" autocomplete="off" value="<?= $e($old['document_number'] ?? '') ?>"></label>
+            <label class="field"><span class="field-label">Expiry date <span class="optional">(optional)</span></span><input type="date" name="expires_on" value="<?= $e($old['expires_on'] ?? '') ?>"></label>
         </div>
     </div>
 <?php endif; ?>
     <div class="form-actions">
-        <button class="button button-primary" type="submit"><?= $editing ? 'Save customer' : 'Create customer' ?></button>
+        <button class="button button-primary" type="submit"><?= $editing ? 'Save customer' : ($forReservation ? 'Create customer and return to reservation' : 'Create customer') ?></button>
         <a class="button button-ghost" href="<?= $e($backHref) ?>">Cancel</a>
     </div>
 </form>

@@ -67,6 +67,9 @@ final class StatusPresenter
         'location' => [
             'active' => 'success', 'retired' => 'neutral',
         ],
+        'message' => [
+            'queued' => 'info', 'sending' => 'info', 'sent' => 'success', 'failed' => 'danger',
+        ],
         'severity' => [
             'minor' => 'warning', 'moderate' => 'warning', 'severe' => 'danger',
         ],

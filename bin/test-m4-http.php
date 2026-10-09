@@ -24,8 +24,7 @@ $driverId = (new DriverService($db, new DriverRepository($db), new DriverPiiCiph
 ], 1);
 
 $accounts = [
-    'coordinator' => ['email' => "m4-coord-$tag@example.test", 'role' => 'driver_coordinator'],
-    'finance' => ['email' => "m4-finance-$tag@example.test", 'role' => 'finance_staff'],
+    'desk' => ['email' => "m4-desk-$tag@example.test", 'role' => 'front_desk'],
     'manager' => ['email' => "m4-manager-$tag@example.test", 'role' => 'fleet_manager'],
     'admin' => ['email' => "m4-admin-$tag@example.test", 'role' => 'system_admin'],
 ];
@@ -116,23 +115,18 @@ checkHttp($guestPage['status'] === 303, 'Unauthenticated driver page redirects t
 $guestReveal = httpRequest($guest, 'POST', '/fleet/drivers/reveal', ['driver_id' => $driverId, 'kind' => 'license']);
 checkHttp($guestReveal['status'] === 401, 'Unauthenticated PII reveal is rejected', 'HTTP ' . $guestReveal['status']);
 
-[$coordinator, $coordinatorCsrf] = loginClient($accounts['coordinator']);
+[$desk, $deskCsrf] = loginClient($accounts['desk']);
 $driverQuery = '/fleet/drivers?' . http_build_query(['search' => 'M4 HTTP Driver ' . $tag]);
-$coordinatorList = httpRequest($coordinator, 'GET', $driverQuery);
-checkHttp($coordinatorList['status'] === 200 && !str_contains($coordinatorList['body'], 'Restricted') && !str_contains($coordinatorList['body'], $license), 'driver_coordinator can view driver list with license masked', 'HTTP ' . $coordinatorList['status'] . ' ' . substr(strip_tags($coordinatorList['body']), 0, 120));
-$coordinatorDetail = httpRequest($coordinator, 'GET', '/fleet/drivers/detail?' . http_build_query(['driver_id' => $driverId]));
-checkHttp($coordinatorDetail['status'] === 200 && str_contains($coordinatorDetail['body'], 'data-reveal-kind') && !str_contains($coordinatorDetail['body'], $license), 'driver_coordinator sees PII masked on driver detail, with Reveal', 'HTTP ' . $coordinatorDetail['status'] . ' ' . substr(strip_tags($coordinatorDetail['body']), 0, 120));
-$coordinatorReveal = httpRequest($coordinator, 'POST', '/fleet/drivers/reveal', ['_csrf' => $coordinatorCsrf, 'driver_id' => $driverId, 'kind' => 'license']);
-$coordinatorJson = json_decode($coordinatorReveal['body'], true);
-checkHttp($coordinatorReveal['status'] === 200 && ($coordinatorJson['value'] ?? null) === $license, 'driver_coordinator can reveal PII for scheduling', 'HTTP ' . $coordinatorReveal['status']);
-$coordinatorNew = httpRequest($coordinator, 'GET', '/fleet/drivers/new');
-checkHttp($coordinatorNew['status'] === 403, 'driver_coordinator cannot open driver mutation form', 'HTTP ' . $coordinatorNew['status'] . ' ' . substr(strip_tags($coordinatorNew['body']), 0, 120));
-$coordinatorMutation = httpRequest($coordinator, 'POST', '/fleet/drivers/status', ['_csrf' => $coordinatorCsrf, 'driver_id' => $driverId, 'status' => 'inactive']);
-checkHttp($coordinatorMutation['status'] === 403, 'driver_coordinator cannot mutate driver status', 'HTTP ' . $coordinatorMutation['status']);
-
-[$finance] = loginClient($accounts['finance']);
-$financePage = httpRequest($finance, 'GET', '/fleet/drivers');
-checkHttp($financePage['status'] === 403, 'finance_staff cannot access driver management', 'HTTP ' . $financePage['status'] . ' ' . substr(strip_tags($financePage['body']), 0, 120));
+$deskList = httpRequest($desk, 'GET', $driverQuery);
+checkHttp($deskList['status'] === 200 && str_contains($deskList['body'], 'M4 HTTP Driver ' . $tag) && !str_contains($deskList['body'], $license), 'front_desk can view the driver list without the licence number', 'HTTP ' . $deskList['status'] . ' ' . substr(strip_tags($deskList['body']), 0, 120));
+$deskDetail = httpRequest($desk, 'GET', '/fleet/drivers/detail?' . http_build_query(['driver_id' => $driverId]));
+checkHttp($deskDetail['status'] === 200 && !str_contains($deskDetail['body'], 'data-reveal-kind="license"') && !str_contains($deskDetail['body'], $license), 'front_desk sees the driver with no way to reveal the licence', 'HTTP ' . $deskDetail['status'] . ' ' . substr(strip_tags($deskDetail['body']), 0, 120));
+$deskReveal = httpRequest($desk, 'POST', '/fleet/drivers/reveal', ['_csrf' => $deskCsrf, 'driver_id' => $driverId, 'kind' => 'license']);
+checkHttp($deskReveal['status'] === 403 && !str_contains($deskReveal['body'], $license), 'front_desk cannot reveal the licence number', 'HTTP ' . $deskReveal['status']);
+$deskNew = httpRequest($desk, 'GET', '/fleet/drivers/new');
+checkHttp($deskNew['status'] === 403, 'front_desk cannot open driver mutation form', 'HTTP ' . $deskNew['status'] . ' ' . substr(strip_tags($deskNew['body']), 0, 120));
+$deskMutation = httpRequest($desk, 'POST', '/fleet/drivers/status', ['_csrf' => $deskCsrf, 'driver_id' => $driverId, 'status' => 'inactive']);
+checkHttp($deskMutation['status'] === 403, 'front_desk cannot mutate driver status', 'HTTP ' . $deskMutation['status']);
 
 foreach (['manager', 'admin'] as $roleKey) {
     [$manager, $csrf] = loginClient($accounts[$roleKey]);
@@ -147,7 +141,7 @@ foreach (['manager', 'admin'] as $roleKey) {
     curl_close($manager);
 }
 
-foreach ([$guest, $coordinator, $finance] as $client) {
+foreach ([$guest, $desk] as $client) {
     curl_close($client);
 }
 

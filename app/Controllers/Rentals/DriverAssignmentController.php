@@ -7,18 +7,17 @@ use RuntimeException;
 use TripleR\Http\AuthMiddleware;
 use TripleR\Http\Request;
 use TripleR\Http\Response;
+use TripleR\Security\Access;
 use TripleR\Security\Csrf;
 use TripleR\Services\ChauffeurService;
 
 final class DriverAssignmentController
 {
-    private const ROLES = ['system_admin', 'front_desk', 'driver_coordinator'];
-
     public function __construct(private readonly AuthMiddleware $guard, private readonly ChauffeurService $chauffeurs) {}
 
     public function assign(Request $request): Response
     {
-        $user = $this->guard->requireRoles(self::ROLES);
+        $user = $this->guard->requireRoles(Access::DRIVER_ASSIGN);
         if ($user instanceof Response) return $user;
         if (!Csrf::valid($request)) return Response::html('Invalid request token.', 403);
         
@@ -39,7 +38,7 @@ final class DriverAssignmentController
 
     public function remove(Request $request): Response
     {
-        $user = $this->guard->requireRoles(self::ROLES);
+        $user = $this->guard->requireRoles(Access::DRIVER_ASSIGN);
         if ($user instanceof Response) return $user;
         if (!Csrf::valid($request)) return Response::html('Invalid request token.', 403);
         

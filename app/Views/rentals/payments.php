@@ -25,7 +25,7 @@ View::begin('staff', ['title' => 'Payments', 'crumbs' => [['Payments', null]]]);
 <header class="page-header">
     <div class="page-header-text">
         <h1>Payments</h1>
-        <p class="page-lead">A downpayment arrives in one of three ways: the customer pays on the online checkout, sends a GCash reference with a screenshot for you to check here, or pays at the counter, where you record it on the agreement. Once it is in, front desk confirms the reservation.</p>
+        <p class="page-lead">Downpayments and balances as they come in: paid on the online checkout, sent as a GCash proof for you to check here, or taken at the counter and recorded on the agreement.</p>
     </div>
 </header>
 <?php if ($notice): ?>
@@ -77,7 +77,7 @@ View::begin('staff', ['title' => 'Payments', 'crumbs' => [['Payments', null]]]);
 </section>
 
 <section class="panel" id="received" aria-labelledby="received-title">
-    <div class="panel-heading"><div><h2 id="received-title">Money received, last 30 days</h2><p>By payment method. Payments made on the demonstration checkout are listed apart: no real money came in for them.</p></div><span class="badge badge-neutral"><?= $e(Format::money($receivedTotal - $demoTotal)) ?> real</span></div>
+    <div class="panel-heading"><div><h2 id="received-title">Money received, last 30 days</h2><p>By payment method. Payments made on the demonstration checkout are listed apart: no real money came in for them.</p></div><span class="badge badge-neutral"><?= $e(Format::money($receivedTotal - $demoTotal)) ?> without demonstration payments</span></div>
     <div class="table-wrap">
         <table class="data-table" data-stack>
             <thead><tr><th scope="col">Method</th><th scope="col">Received through</th><th scope="col" class="num">Payments</th><th scope="col" class="num">Total</th></tr></thead>

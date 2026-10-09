@@ -9,6 +9,7 @@ use PDO;
 use RuntimeException;
 use TripleR\Repositories\DriverRepository;
 use TripleR\Repositories\RecordLifecycleRepository;
+use TripleR\Support\Format;
 
 final class DriverService
 {
@@ -25,12 +26,16 @@ final class DriverService
             $licenseFingerprint = $existing['license_number_fingerprint'];
         } else {
             $normalized = DriverPiiCipher::normalizeLicense($rawLicense);
+            if (strlen($normalized) < 5) throw new RuntimeException('Enter the whole licence number: at least 5 letters or digits.');
             $licenseCipher = $this->cipher->encrypt($rawLicense, 'driver-license');
             $licenseFingerprint = $this->cipher->licenseFingerprint($normalized);
         }
         $expiry = trim((string)($input['license_expiry'] ?? ''));
         if ($expiry === '' && $existing !== null) $expiry = $existing['license_expiry'];
         $expiry = $this->validDate($expiry, 'license expiry');
+        // A licence runs for 10 years at most, so a date outside this window is a typing slip, not a licence.
+        $latest = (new DateTimeImmutable('now', new DateTimeZone('Asia/Manila')))->modify('+10 years')->format('Y-m-d');
+        if ($expiry < '2000-01-01' || $expiry > $latest) throw new RuntimeException('Check the licence expiry date. It should be between the year 2000 and ' . Format::date($latest) . '.');
 
         $address = trim((string)($input['address'] ?? ''));
         if (($input['clear_address'] ?? '') === '1') {

@@ -16,19 +16,22 @@ $available = $vehicleCounts['available'] ?? 0;
 $inFleet = $vehicleCounts !== null ? array_sum($vehicleCounts) : 0;
 
 // "Needs attention" lists only what this role is the one to act on, matching who may perform each step.
-$mine = static fn (string ...$roles): bool => in_array($user['role'], $roles, true);
+// Pickups, returns and assigning a driver are open to every staff role, so those are listed for all.
 $attention = [];
 if ($rentalCounts !== null) {
-    if ($rentalCounts['overdue'] > 0 && $mine('system_admin', 'front_desk', 'fleet_manager')) {
+    if ($rentalCounts['overdue'] > 0) {
         $attention[] = ['count' => $rentalCounts['overdue'], 'danger' => true, 'title' => 'Overdue returns', 'sub' => 'Active rentals past their return date', 'href' => '/rentals?status=active'];
     }
-    if ($rentalCounts['needs_driver'] > 0 && $mine('system_admin', 'front_desk', 'driver_coordinator')) {
+    if ($rentalCounts['late_pickups'] > 0) {
+        $attention[] = ['count' => $rentalCounts['late_pickups'], 'danger' => true, 'title' => 'Pickups overdue', 'sub' => 'Booked for an earlier day and not picked up: record the pickup, or cancel', 'href' => '/rentals'];
+    }
+    if ($rentalCounts['needs_driver'] > 0) {
         $attention[] = ['count' => $rentalCounts['needs_driver'], 'danger' => true, 'title' => 'Chauffeur bookings without a driver', 'sub' => 'A driver is required before confirmation', 'href' => '/rentals?status=reserved'];
     }
-    if ($rentalCounts['awaiting_confirmation'] > 0 && $mine('system_admin', 'front_desk')) {
+    if ($rentalCounts['awaiting_confirmation'] > 0 && $canCreateRentals) {
         $attention[] = ['count' => $rentalCounts['awaiting_confirmation'], 'danger' => false, 'title' => 'Reservations to confirm', 'sub' => 'Held reservations expire if not confirmed', 'href' => '/rentals?status=reserved'];
     }
-    if ($rentalCounts['awaiting_completion'] > 0 && $mine('system_admin', 'finance_staff')) {
+    if ($rentalCounts['awaiting_completion'] > 0 && $canTakePayments) {
         $attention[] = ['count' => $rentalCounts['awaiting_completion'], 'danger' => false, 'title' => 'Returned, awaiting completion', 'sub' => 'Reconcile charges and deposit to close', 'href' => '/rentals?status=returned'];
     }
 }
@@ -65,10 +68,10 @@ View::begin('staff', ['title' => 'Workspace']);
     <h2 class="visually-hidden" id="today-heading">Today at a glance</h2>
     <div class="stat-grid">
 <?php if ($rentalCounts !== null): ?>
-        <a class="stat-card" href="/rentals?status=confirmed">
+        <a class="stat-card<?= $rentalCounts['late_pickups'] > 0 ? ' stat-card--alert' : '' ?>" href="/rentals">
             <span class="stat-label">Pickups today</span>
             <span class="stat-value" data-count-up><?= (int) $rentalCounts['pickups_today'] ?></span>
-            <span class="stat-hint">Reserved or confirmed to start today</span>
+            <span class="stat-hint"><?= $rentalCounts['late_pickups'] > 0 ? $e($rentalCounts['late_pickups'] . ' overdue from earlier days') : 'Reserved or confirmed to start today' ?></span>
         </a>
         <a class="stat-card<?= $rentalCounts['overdue'] > 0 ? ' stat-card--alert' : '' ?>" href="/rentals?status=active">
             <span class="stat-label">Returns today</span>
@@ -82,15 +85,11 @@ View::begin('staff', ['title' => 'Workspace']);
         </a>
 <?php endif; ?>
 <?php if ($vehicleCounts !== null): ?>
-<?php if ($canManageFleet): ?>
         <a class="stat-card" href="/fleet/vehicles?status=available">
-<?php else: ?>
-        <div class="stat-card">
-<?php endif; ?>
             <span class="stat-label">Vehicles available</span>
             <span class="stat-value" data-count-up><?= (int) $available ?></span>
             <span class="stat-hint">of <?= $e(Format::plural($inFleet, 'vehicle')) ?> in service</span>
-<?= $canManageFleet ? '        </a>' : '        </div>' ?>
+        </a>
 
 <?php endif; ?>
     </div>
@@ -117,23 +116,24 @@ View::begin('staff', ['title' => 'Workspace']);
 
 <?php if ($rentalCounts !== null): ?>
     <section class="panel" aria-labelledby="schedule-heading">
-        <div class="panel-heading"><div><h2 id="schedule-heading">Today’s pickups and returns</h2><p>Times in Manila time. Overdue returns are listed first.</p></div></div>
+        <div class="panel-heading"><div><h2 id="schedule-heading">Today’s pickups and returns</h2><p>Times in Manila time. Anything overdue is listed first.</p></div></div>
 <?php if ($schedule === []): ?>
         <p class="empty-state"><strong>No movements today</strong>No vehicles are due to leave or come back today.</p>
 <?php else: ?>
         <ul class="item-list">
 <?php foreach ($schedule as $row):
     $isReturn = $row['movement'] === 'return';
-    $overdue = $isReturn && $row['end_date'] < Format::today();
+    $dueDate = $isReturn ? $row['end_date'] : $row['start_date'];
+    $overdue = $dueDate < Format::today();
     $time = $isReturn ? $row['scheduled_return_at'] : $row['scheduled_pickup_at'];
 ?>
             <li>
-                <span class="badge <?= $overdue ? 'badge-danger' : ($isReturn ? 'badge-warning' : 'badge-info') ?>"><?= $overdue ? 'Overdue' : ($isReturn ? 'Return' : 'Pickup') ?></span>
+                <span class="badge <?= $overdue ? 'badge-danger' : ($isReturn ? 'badge-warning' : 'badge-info') ?>"><?= $overdue ? ($isReturn ? 'Return overdue' : 'Pickup overdue') : ($isReturn ? 'Return' : 'Pickup') ?></span>
                 <span class="item-main">
                     <a class="item-link item-title" href="/rentals/detail?agreement_id=<?= (int) $row['agreement_id'] ?>"><?= $e($row['customer_name']) ?></a>
                     <span class="item-sub"><span class="mono"><?= $e($row['plate_number']) ?></span> · <?= $e($row['make'] . ' ' . $row['model']) ?> · #<?= (int) $row['agreement_id'] ?></span>
                 </span>
-                <span class="item-aside"><?= $overdue ? 'Due ' . $e(Format::date($row['end_date'])) : $e($time ? Format::time($time) : 'Time not set') ?></span>
+                <span class="item-aside"><?= $overdue ? 'Due ' . $e(Format::date($dueDate)) : $e($time ? Format::time($time) : 'Time not set') ?></span>
             </li>
 <?php endforeach; ?>
         </ul>
@@ -143,21 +143,4 @@ View::begin('staff', ['title' => 'Workspace']);
 </div>
 <?php endif; ?>
 
-<section class="panel" aria-labelledby="tools-heading">
-    <div class="panel-heading"><div><h2 id="tools-heading">Your tools</h2><p>Everything your role can open. The same links are in the menu.</p></div></div>
-    <div class="panel-body">
-        <div class="quick-actions">
-<?php if ($canViewRentals): ?><a class="button button-secondary" href="/rentals"><?= Icon::svg('document') ?>Agreements</a><?php endif; ?>
-<?php if ($canManageCustomers): ?><a class="button button-secondary" href="/customers"><?= Icon::svg('users') ?>Customers</a><?php endif; ?>
-<?php if ($canManageFleet): ?><a class="button button-secondary" href="/fleet/vehicles"><?= Icon::svg('car') ?>Vehicles</a><?php endif; ?>
-<?php if ($canManageFleet): ?><a class="button button-secondary" href="/fleet/locations"><?= Icon::svg('pin') ?>Locations</a><?php endif; ?>
-<?php if ($canReadDrivers): ?><a class="button button-secondary" href="/fleet/drivers"><?= Icon::svg('id') ?>Drivers</a><?php endif; ?>
-<?php if ($canViewNotifications): ?><a class="button button-secondary" href="/staff/notifications"><?= Icon::svg('bell') ?>SMS notifications</a><?php endif; ?>
-<?php if ($canManageUsers): ?><a class="button button-secondary" href="/admin/users"><?= Icon::svg('shield') ?>Staff accounts</a><?php endif; ?>
-        </div>
-<?php if (!$canViewRentals && !$canManageFleet && !$canReadDrivers && !$canViewNotifications && !$canManageUsers && !$canManageCustomers): ?>
-        <p class="muted">Your account is active. Tools for your role will appear here as they are released.</p>
-<?php endif; ?>
-    </div>
-</section>
 <?php View::end(); ?>

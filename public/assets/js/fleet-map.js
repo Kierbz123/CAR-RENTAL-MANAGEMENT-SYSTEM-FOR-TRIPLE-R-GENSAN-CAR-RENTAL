@@ -20,6 +20,8 @@
     const countBadge = document.querySelector('[data-map-count]');
     const updatedNote = document.querySelector('[data-map-updated]');
     const tilesFailedNote = document.querySelector('[data-map-tiles-failed]');
+    const problemNote = document.querySelector('[data-map-problem]');
+    const pageTitle = document.title;
     // Tiles come from an outside server; when none of them load, say so instead of showing a blank grey box.
     let tilesLoaded = 0;
     let tilesFailed = 0;
@@ -45,6 +47,7 @@
     let animating = false;
     const tiles = new Map();     // "zoom/x/y@column" -> <img>
     const vehicles = new Map();  // agreement id -> { data, marker, arrow, trailLine, shown, from, to, startedAt, trail }
+    const rows = new Map();      // agreement id -> the parts of its row in the list, kept between refreshes
 
     /* ---- Web Mercator: the projection every web map uses ---------------------------- */
     const worldSize = (z) => TILE * 2 ** z;
@@ -66,7 +69,9 @@
     /* ---- Drawing ----------------------------------------------------------------------- */
     const area = document.createElementNS(SVG, 'circle');
     area.setAttribute('class', 'fleet-map-area');
-    overlay.append(area);
+    const accuracyRing = document.createElementNS(SVG, 'circle');
+    accuracyRing.setAttribute('class', 'fleet-map-accuracy');
+    overlay.append(area, accuracyRing);
 
     // Redraws on the next frame. A tab in the background gets no frames, so a timer is the fallback.
     function requestDraw() {
@@ -128,6 +133,16 @@
         area.setAttribute('cy', String(hub.y - top));
         area.setAttribute('r', String(config.radiusKm * 1000 / metresPerPixel(home.lat, zoom)));
 
+        // How sure the phone is of the selected vehicle's position: it is somewhere inside this ring.
+        const picked = vehicles.get(selected);
+        const sure = picked && picked.shown && picked.data.position ? picked.data.position.accuracy : null;
+        if (sure) {
+            const at = project(picked.shown.lat, picked.shown.lng, zoom);
+            accuracyRing.setAttribute('cx', String(at.x - left));
+            accuracyRing.setAttribute('cy', String(at.y - top));
+        }
+        accuracyRing.setAttribute('r', sure ? String(sure / metresPerPixel(picked.shown.lat, zoom)) : '0');
+
         // Vehicles and the line of where each has been since this page was opened.
         for (const vehicle of vehicles.values()) {
             if (!vehicle.shown) {
@@ -150,7 +165,11 @@
     function panBy(dx, dy) {
         const middle = project(center.lat, center.lng, zoom);
         center = unproject(middle.x + dx, middle.y + dy, zoom);
-        following = false;
+        // Moving the map by hand lets go of the vehicle it was following.
+        if (following) {
+            following = false;
+            syncSelection();
+        }
         requestDraw();
     }
 
@@ -170,6 +189,7 @@
     function fitAll() {
         const places = [...vehicles.values()].filter((vehicle) => vehicle.shown).map((vehicle) => vehicle.shown);
         following = false;
+        syncSelection();
         if (places.length === 0) {
             center = { ...home };
             zoom = config.zoom;
@@ -189,6 +209,13 @@
         requestDraw();
     }
 
+    // The map takes the mouse wheel and touches only after it has been clicked or tapped, so it
+    // never traps the page's own scrolling. Esc, or a click anywhere else, hands them back.
+    const active = () => root.contains(document.activeElement);
+    root.addEventListener('click', (event) => {
+        if (!event.target.closest('button, a')) root.focus({ preventScroll: true });
+    });
+
     const pointers = new Map();
     let pinchDistance = 0;
     const offsetOf = (event) => {
@@ -197,6 +224,7 @@
     };
     root.addEventListener('pointerdown', (event) => {
         if (event.target.closest('button, a')) return;
+        if (event.pointerType === 'touch' && !active()) return; // The first tap only wakes the map.
         root.setPointerCapture(event.pointerId);
         pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
         root.classList.add('is-dragging');
@@ -232,6 +260,7 @@
 
     let wheelTravel = 0;
     root.addEventListener('wheel', (event) => {
+        if (!active()) return; // Not woken yet: the wheel scrolls the page as usual.
         event.preventDefault();
         wheelTravel += event.deltaY;
         if (Math.abs(wheelTravel) < 60) return;
@@ -245,6 +274,10 @@
         zoomBy(1, at.x, at.y);
     });
     root.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            document.activeElement.blur();
+            return;
+        }
         if (event.target !== root) return;
         const moves = { ArrowLeft: [-80, 0], ArrowRight: [80, 0], ArrowUp: [0, -80], ArrowDown: [0, 80] };
         if (moves[event.key]) {
@@ -265,14 +298,26 @@
     function select(agreementId) {
         selected = agreementId;
         following = agreementId !== null;
-        for (const [id, vehicle] of vehicles) vehicle.marker.classList.toggle('is-selected', id === selected);
-        list.querySelectorAll('li[data-agreement]').forEach((row) => row.classList.toggle('is-selected', Number(row.dataset.agreement) === selected));
+        syncSelection();
         const vehicle = vehicles.get(agreementId);
         if (vehicle && vehicle.shown) {
             center = { ...vehicle.shown };
             if (zoom < 15) zoom = 15;
+            // On a narrow screen the map sits above the list; bring it back into view.
+            root.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         }
         requestDraw();
+    }
+
+    // Marks the selected vehicle on the map and in the list, and says whether the map is following it.
+    function syncSelection() {
+        for (const [id, vehicle] of vehicles) vehicle.marker.classList.toggle('is-selected', id === selected);
+        for (const [id, parts] of rows) {
+            const followed = id === selected && following;
+            parts.row.classList.toggle('is-selected', id === selected);
+            parts.show.textContent = followed ? 'Following' : 'Show on map';
+            parts.show.setAttribute('aria-pressed', String(followed));
+        }
     }
 
     function makeVehicle(data) {
@@ -339,8 +384,8 @@
             if (data.position.heading !== null) vehicle.arrow.style.transform = `rotate(${data.position.heading}deg)`;
             if (!vehicle.shown) {
                 vehicle.shown = target;
-            } else if (metresBetween(vehicle.shown, target) > 1) {
-                // Remember where it was, then glide to where it is.
+            } else if (metresBetween(vehicle.shown, target) > Math.min(50, Math.max(10, data.position.accuracy || 0))) {
+                // A real move, not a parked phone's GPS wandering a few metres: remember where it was, then glide to where it is.
                 if (vehicle.trail.length === 0 || metresBetween(vehicle.trail[vehicle.trail.length - 1], vehicle.shown) > 5) {
                     vehicle.trail.push({ ...vehicle.shown });
                     if (vehicle.trail.length > 300) vehicle.trail.shift();
@@ -363,6 +408,9 @@
             fittedOnce = true;
             fitAll();
         }
+        // A followed vehicle stays in the middle even when its move was not animated (a jump, or a tab that gets no frames).
+        const followed = following ? vehicles.get(selected) : null;
+        if (followed && followed.shown && !followed.to) center = { ...followed.shown };
         draw();
         if (!animating && [...vehicles.values()].some((vehicle) => vehicle.to)) {
             animating = true;
@@ -379,52 +427,125 @@
 
     function renderList(feed) {
         const withPosition = feed.filter((data) => data.position).length;
-        countBadge.textContent = `${feed.length} out · ${withPosition} on the map`;
-        countBadge.className = `badge ${feed.some((data) => data.tone === 'danger') ? 'badge-danger' : (feed.length ? 'badge-info' : 'badge-neutral')}`;
+        const needing = feed.filter((data) => data.alerts.length > 0).length;
+        countBadge.textContent = `${feed.length} out · ${withPosition} on the map${needing ? ` · ${needing} ${needing === 1 ? 'needs' : 'need'} attention` : ''}`;
+        countBadge.className = `badge ${needing ? 'badge-danger' : (feed.length ? 'badge-info' : 'badge-neutral')}`;
+        // The tab's title carries the count, so it is noticed while staff work in another tab.
+        document.title = (needing ? `(${needing}) ` : '') + pageTitle;
         if (feed.length === 0) {
+            rows.clear();
             const empty = element('li', 'empty-state');
             empty.append(element('strong', '', 'No vehicle is out on rental'), document.createTextNode('A vehicle appears here when its pickup is recorded.'));
             list.replaceChildren(empty);
             return;
         }
-        list.replaceChildren(...feed.map((data) => {
-            const row = element('li', data.agreement_id === selected ? 'is-selected' : '');
-            row.dataset.agreement = String(data.agreement_id);
-            const main = element('div', 'item-main');
-            const pick = element('button', 'fleet-map-pick', `${data.plate} ${data.vehicle}`);
-            pick.type = 'button';
-            pick.disabled = !data.position;
-            pick.addEventListener('click', () => select(data.agreement_id));
-            main.append(pick, element('span', 'item-sub', `${data.customer} · ${data.due_back ? 'due back ' + data.due_back : 'no return time set'}`));
-            for (const alert of data.alerts) main.append(element('span', 'item-sub fleet-map-alert', alert));
-            const links = element('span', 'item-sub');
-            const agreement = element('a', '', 'Agreement');
-            agreement.href = data.detail_url;
-            const connect = element('a', '', data.connected ? 'Tracker phone' : 'Connect a phone');
-            connect.href = data.connect_url;
-            links.append(agreement, document.createTextNode(' · '), connect);
-            main.append(links);
-            row.append(main, element('span', `badge badge-${data.tone === 'neutral' ? 'neutral' : data.tone}`, data.status));
-            return row;
-        }));
+        // Rows are kept and updated in place. Rebuilding them every few seconds would drop a click
+        // that lands mid-refresh and throw keyboard focus out of the list.
+        const wanted = new Set(feed.map((data) => data.agreement_id));
+        for (const [id, parts] of rows) {
+            if (wanted.has(id)) continue;
+            parts.row.remove();
+            rows.delete(id);
+        }
+        feed.forEach((data, index) => {
+            let parts = rows.get(data.agreement_id);
+            if (!parts) {
+                parts = makeRow(data.agreement_id);
+                rows.set(data.agreement_id, parts);
+            }
+            updateRow(parts, data);
+            if (list.children[index] !== parts.row) list.insertBefore(parts.row, list.children[index] || null);
+        });
+        // What the server wrote before the first answer (or the empty state) makes way for the live rows.
+        while (list.children.length > feed.length) list.lastElementChild.remove();
+        syncSelection();
+    }
+
+    function makeRow(id) {
+        const row = element('li');
+        row.dataset.agreement = String(id);
+        const main = element('div', 'item-main');
+        const pick = element('button', 'fleet-map-pick');
+        pick.type = 'button';
+        pick.addEventListener('click', () => select(id));
+        const who = element('span', 'item-sub');
+        const links = element('span', 'item-sub');
+        const agreement = element('a', '', 'Agreement');
+        const connect = element('a');
+        links.append(agreement, document.createTextNode(' · '), connect);
+        // With several vehicles out, this is how staff jump from one to the next. Pressing it
+        // again while the map is following lets go of the vehicle.
+        const show = element('button', 'button button-secondary button-small fleet-map-show', 'Show on map');
+        show.type = 'button';
+        show.addEventListener('click', () => {
+            if (selected === id && following) {
+                following = false;
+                syncSelection();
+            } else {
+                select(id);
+            }
+        });
+        const badge = element('span', 'badge');
+        main.append(pick, who, links, show);
+        row.append(main, badge);
+        return { row, pick, who, links, agreement, connect, show, badge };
+    }
+
+    function updateRow(parts, data) {
+        const tip = data.position ? 'Show on the map and follow it' : 'No position yet. Connect a phone to see this vehicle on the map.';
+        parts.pick.textContent = `${data.plate} ${data.vehicle}`;
+        parts.pick.disabled = !data.position;
+        parts.pick.title = tip;
+        parts.show.disabled = !data.position;
+        parts.show.title = tip;
+        parts.who.textContent = `${data.customer} · ${data.due_back ? 'due back ' + data.due_back : 'no return time set'}`;
+        // The lines that come and go (alerts, the tracker note, the position) are plain text, so they are simply rewritten.
+        parts.row.querySelectorAll('[data-line]').forEach((line) => line.remove());
+        const lines = data.alerts.map((alert) => element('span', 'item-sub fleet-map-alert', alert));
+        if (data.note) lines.push(element('span', 'item-sub', data.note));
+        if (data.position) {
+            const accuracy = data.position.accuracy === null ? '' : ` · within ${data.position.accuracy} m`;
+            lines.push(element('span', 'item-sub', `Phone at ${data.position.latitude.toFixed(5)}, ${data.position.longitude.toFixed(5)}${accuracy}`));
+        }
+        for (const line of lines) {
+            line.dataset.line = '';
+            parts.links.before(line);
+        }
+        parts.agreement.href = data.detail_url;
+        parts.connect.textContent = data.connected ? 'Tracker phone' : 'Connect a phone';
+        parts.connect.href = data.connect_url;
+        parts.badge.className = `badge badge-${data.tone}`;
+        parts.badge.textContent = data.status;
     }
 
     /* ---- Asking for positions ---------------------------------------------------------- */
     let stopped = false;
+    let hiddenTicks = 0;
+    // A problem is shown above the map and announced once; the "Updated" line below is not announced at all.
+    const setProblem = (text) => {
+        if (problemNote.textContent !== text) problemNote.textContent = text;
+        problemNote.hidden = text === '';
+    };
     async function refresh() {
-        if (stopped || document.hidden) return;
+        if (stopped) return;
+        // In a background tab, ask only every sixth time: enough to keep the count in the tab's title honest.
+        if (document.hidden) {
+            hiddenTicks += 1;
+            if (hiddenTicks % 6 !== 0) return;
+        }
         try {
             const response = await fetch(config.feed, { headers: { Accept: 'application/json' }, cache: 'no-store' });
             if (response.status === 401 || response.status === 403) {
                 stopped = true;
-                updatedNote.textContent = 'You are signed out. Sign in again to see positions.';
+                setProblem('You are signed out. Sign in again to see positions.');
                 return;
             }
             if (!response.ok) throw new Error('feed');
             apply((await response.json()).vehicles);
-            updatedNote.textContent = `Updated ${new Date().toLocaleTimeString()}. Positions are asked for every ${config.interval} seconds.`;
+            setProblem('');
+            updatedNote.textContent = `Updated ${new Date().toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila' })}, Manila time. Positions are asked for every ${config.interval} seconds.`;
         } catch {
-            updatedNote.textContent = 'Positions could not be refreshed. Trying again…';
+            setProblem('Positions could not be refreshed, so what is shown may be out of date. Trying again…');
         }
     }
 

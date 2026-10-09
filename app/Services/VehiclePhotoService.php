@@ -24,6 +24,20 @@ final class VehiclePhotoService
         } catch (\Throwable $e) { $this->removeEvidence($stored['storage_path']); throw $e; }
     }
 
+    /** Puts one photo first. The first photo is the cover: the one the vehicle list shows. */
+    public function makeCover(int $photoId, int $vehicleId): void
+    {
+        $this->db->beginTransaction();
+        try {
+            $stmt=$this->db->prepare('SELECT photo_id FROM photos WHERE vehicle_id=:id ORDER BY sort_order, photo_id FOR UPDATE'); $stmt->execute(['id'=>$vehicleId]);
+            $ids=array_map('intval',$stmt->fetchAll(PDO::FETCH_COLUMN));
+            if (!in_array($photoId,$ids,true)) throw new RuntimeException('Photo not found.');
+            $place=$this->db->prepare('UPDATE photos SET sort_order=:position WHERE photo_id=:id');
+            foreach (array_merge([$photoId],array_diff($ids,[$photoId])) as $position=>$id) $place->execute(['position'=>$position,'id'=>$id]);
+            $this->db->commit();
+        } catch (\Throwable $e) { if ($this->db->inTransaction()) $this->db->rollBack(); throw $e; }
+    }
+
     public function stream(int $photoId): array
     {
         // Photos of every kind share one table: this route serves vehicle photos only.
@@ -56,6 +70,17 @@ final class VehiclePhotoService
         $root=$this->storageRoot(); $realRoot=realpath($root); $realPath=realpath($root . DIRECTORY_SEPARATOR . $relativePath);
         if (!$realRoot || !$realPath || !str_starts_with($realPath,$realRoot . DIRECTORY_SEPARATOR) || !is_file($realPath)) throw new RuntimeException('Photo file is unavailable.');
         $body=file_get_contents($realPath); if ($body===false) throw new RuntimeException('Photo file is unavailable.'); return $body;
+    }
+
+    /** The image files directly inside one private folder, as paths readEvidence() accepts. */
+    public function listEvidence(string $relativeDirectory): array
+    {
+        $relativeDirectory=trim(str_replace('\\','/',$relativeDirectory),'/');
+        if ($relativeDirectory==='' || preg_match('~(^|/)\.\.?(/|$)~',$relativeDirectory)) return [];
+        $dir=$this->storageRoot() . DIRECTORY_SEPARATOR . str_replace('/',DIRECTORY_SEPARATOR,$relativeDirectory);
+        if (!is_dir($dir)) return [];
+        $names=array_filter(scandir($dir) ?: [], static fn(string $name): bool => preg_match('/^[a-f0-9]+\.(jpg|png|webp)$/',$name)===1);
+        return array_values(array_map(static fn(string $name): string => $relativeDirectory . '/' . $name, $names));
     }
 
     public function removeEvidence(string $relativePath): void

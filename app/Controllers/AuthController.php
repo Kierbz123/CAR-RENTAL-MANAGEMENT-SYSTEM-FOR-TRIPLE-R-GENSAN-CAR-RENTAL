@@ -7,6 +7,7 @@ use TripleR\Config;
 use TripleR\Http\Request;
 use TripleR\Http\Response;
 use TripleR\Services\AuthService;
+use TripleR\Security\Access;
 use TripleR\Security\Csrf;
 use TripleR\Security\StaffAuth;
 
@@ -25,7 +26,7 @@ final class AuthController
             if ($user['must_change_password']) {
                 return Response::redirect('/auth/change-password');
             }
-            return Response::redirect('/staff');
+            return Response::redirect(Access::home((string) $user['role']));
         }
         return $this->render('login.php', ['csrfToken' => Csrf::token(), 'error' => null], 200);
     }
@@ -47,7 +48,7 @@ final class AuthController
         if ($result === 'password_change_required') {
             return Response::redirect('/auth/change-password');
         }
-        return Response::redirect('/staff');
+        return Response::redirect(Access::home((string) ($this->auth->user()['role'] ?? '')));
     }
 
     public function showChangePassword(): Response
@@ -57,7 +58,7 @@ final class AuthController
             return Response::redirect('/staff/login');
         }
         if (!$user['must_change_password']) {
-            return Response::redirect('/staff');
+            return Response::redirect(Access::home((string) $user['role']));
         }
         return $this->render('change-password.php', ['csrfToken' => Csrf::token(), 'error' => null], 200);
     }
@@ -80,7 +81,7 @@ final class AuthController
         if (!$this->authService->changePassword((int) $user['id'], $current, $password, $request->ip, $request->userAgent)) {
             return $this->render('change-password.php', ['csrfToken' => Csrf::token(), 'error' => 'The current password is incorrect or the new password does not meet the requirements.'], 422);
         }
-        return Response::redirect('/staff');
+        return Response::redirect(Access::home((string) $user['role']));
     }
 
     public function logout(Request $request): Response

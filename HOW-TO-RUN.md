@@ -54,7 +54,8 @@ This is the one to use for anything a phone must do: scanning the booking QR cod
 | Customer finds their booking | `/book/find` |
 | Staff sign in | `/staff/login` |
 | Staff workspace | `/staff` |
-| Payments (finance) | `/payments` |
+| Driver: my trips | `/driver` (a driver account lands here after signing in at `/staff/login`) |
+| Payments (front desk) | `/payments` |
 | Live map of rented vehicles | `/fleet/locations` |
 | Vehicle tracker for a phone | `/track` (opened from the QR code staff make on an agreement) |
 

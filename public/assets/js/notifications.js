@@ -6,6 +6,19 @@
     const errorBox = document.querySelector('#load-error');
     const count = document.querySelector('#monthly-count');
     const updated = document.querySelector('#last-updated');
+    const queued = document.querySelector('#queued-count');
+    const failed = document.querySelector('#failed-count');
+    // Stored in UTC; shown in Manila time like the rest of the workspace.
+    const when = (value) => {
+        const date = new Date(String(value ?? '').replace(' ', 'T').slice(0, 19) + 'Z');
+        return Number.isNaN(date.getTime()) ? String(value ?? '') : date.toLocaleString('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+    };
+    // "magic_link.booking_manage" reads as "Magic link booking manage".
+    const words = (key) => {
+        const text = String(key ?? '').replace(/[._]+/g, ' ').trim();
+        return text.charAt(0).toUpperCase() + text.slice(1);
+    };
+    const tones = { sent: 'success', failed: 'danger', queued: 'info', sending: 'info' };
     const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
     })[character]);
@@ -25,19 +38,21 @@
             if (!response.ok) throw new Error('Could not load notification history.');
             const items = Array.isArray(data.notifications) ? data.notifications : [];
             rows.innerHTML = items.length ? items.map((item) => `<tr>
-                <td>${escapeHtml(item.created_at)}</td><td>${escapeHtml(item.recipient_phone)}</td>
-                <td>${item.channel === 'telegram' ? 'Telegram' : 'SMS'}</td>
-                <td>${escapeHtml(item.template_key)}</td><td>${escapeHtml(item.message_preview)}</td><td>${escapeHtml(item.message_class)}</td>
-                <td>${escapeHtml(item.status)}${item.provider_status ? ` · ${escapeHtml(item.provider_status)}` : ''}</td>
-                <td>${escapeHtml(item.priority)}</td><td>${escapeHtml(item.attempt_count)} (${escapeHtml(item.retry_count)} retries)</td>
-                <td>${escapeHtml(item.provider)}</td><td>${escapeHtml(item.last_error || '—')}</td></tr>`).join('') : '<tr><td colspan="11">No notifications have been queued.</td></tr>';
+                <td class="nowrap">${escapeHtml(when(item.created_at))}</td>
+                <td class="nowrap"><span class="mono">${escapeHtml(item.recipient_phone)}</span><span class="cell-sub">${item.channel === 'telegram' ? 'Telegram' : 'SMS'} · ${escapeHtml(words(item.provider))}</span></td>
+                <td>${escapeHtml(words(item.template_key))}<span class="cell-sub">${escapeHtml(item.message_preview)}</span></td>
+                <td><span class="badge badge-${tones[item.status] || 'neutral'}">${escapeHtml(words(item.status))}</span>${item.provider_status ? `<span class="cell-sub">${escapeHtml(item.provider_status)}</span>` : ''}</td>
+                <td class="num">${escapeHtml(item.attempt_count)}</td>
+                <td>${escapeHtml(item.last_error || '—')}</td></tr>`).join('') : '<tr><td class="empty-state" colspan="6"><strong>No notifications yet</strong>Messages appear here as they are queued.</td></tr>';
             count.textContent = String(data.monthly_sent_count ?? 0);
+            queued.textContent = String(items.filter((item) => item.status === 'queued' || item.status === 'sending').length);
+            failed.textContent = String(items.filter((item) => item.status === 'failed').length);
             updated.textContent = `Updated ${new Date().toLocaleTimeString()}`;
             errorBox.hidden = true;
         } catch (error) {
             errorBox.textContent = error.message || 'Could not load notification history.';
             errorBox.hidden = false;
-            if (!rows.children.length) rows.innerHTML = '<tr><td colspan="11">History is temporarily unavailable.</td></tr>';
+            if (!rows.children.length) rows.innerHTML = '<tr><td class="empty-state" colspan="6">History is temporarily unavailable.</td></tr>';
         }
     }
 

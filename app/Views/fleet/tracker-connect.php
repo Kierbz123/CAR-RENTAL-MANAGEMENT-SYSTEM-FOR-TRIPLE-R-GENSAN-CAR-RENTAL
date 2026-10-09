@@ -58,6 +58,12 @@ View::begin('staff', [
 <section class="panel" aria-labelledby="state-title">
     <div class="panel-heading"><div><h2 id="state-title">Tracker phone</h2><p>One phone can be connected to a rental at a time. Its link stops working when the vehicle is returned.</p></div><span class="badge <?= $connected ? 'badge-success' : 'badge-neutral' ?>"><?= $connected ? 'A phone is connected' : 'No phone connected' ?></span></div>
     <div class="panel-body">
+<?php if ($phoneStatus !== null && ($connected || $phoneStatus['note'] !== null)): ?>
+        <p>What the live map shows for this vehicle now: <span class="badge badge-<?= $e($phoneStatus['tone']) ?>"><?= $e($phoneStatus['status']) ?></span> <a href="/fleet/tracking/connect?agreement_id=<?= $id ?>">Check again</a></p>
+<?php if ($phoneStatus['note'] !== null): ?>
+        <p class="muted"><?= $e($phoneStatus['note']) ?></p>
+<?php endif; ?>
+<?php endif; ?>
 <?php if (!$canConnect): ?>
         <p class="muted"><?= in_array($agreement['status'], ['reserved'], true) ? 'A phone can be connected once this reservation is confirmed.' : 'This rental is over, so there is nothing to track.' ?></p>
 <?php else: ?>
